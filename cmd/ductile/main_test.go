@@ -1137,7 +1137,7 @@ pipelines:
 		},
 		Tokens: []config.TokenEntry{{Name: "relay-lab-v1", Key: "shared-secret"}},
 	}
-	receiver, err := relay.NewReceiver(receiverCfg, q, engine, contexts, slog.Default())
+	receiver, err := relay.NewReceiver(receiverCfg, q, engine, contexts, state.NewAdmitter(q, state.DefaultMaxContextBytes), slog.Default())
 	if err != nil {
 		t.Fatalf("NewReceiver: %v", err)
 	}

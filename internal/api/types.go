@@ -104,6 +104,16 @@ type ErrorResponse struct {
 	Error string `json:"error"`
 }
 
+// BaggageOverlimitResponse is returned with HTTP 413 when a pipeline ingress
+// request's baggage would exceed the configured event_context size cap. The
+// `bytes_actual` and `bytes_limit` fields give callers a precise hint without
+// requiring them to parse the error message (P2-04).
+type BaggageOverlimitResponse struct {
+	Error       string `json:"error"`
+	BytesActual int64  `json:"bytes_actual"`
+	BytesLimit  int64  `json:"bytes_limit"`
+}
+
 // RootResponse is returned by GET / — a human/agent-readable index of the gateway.
 type RootResponse struct {
 	Name          string            `json:"name"`

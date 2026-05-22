@@ -182,6 +182,38 @@ func (s *Server) handlePipelineTrigger(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Admission gate (P2-04): reject oversized baggage with HTTP 413 BEFORE
+	// any event_context row is written. The previous code path raised the
+	// size-cap error inside ContextStore.Create and surfaced it as an opaque
+	// 500 with a half-written pipeline-instance context.
+	if s.admitter != nil && s.contextStore != nil {
+		for i, plan := range contextPlans {
+			admission, err := s.admitter.Admit(r.Context(), state.AdmissionInput{
+				AccumulatedJSON: plan.updates,
+			})
+			if err != nil {
+				s.logger.Error("admission check failed for pipeline entry", "pipeline", pipeline.Name, "step_id", plan.stepID, "error", err)
+				s.writeError(w, http.StatusInternalServerError, "failed to admit pipeline entry")
+				return
+			}
+			if admission.Decision == state.AdmissionRejectOverlimit {
+				s.logger.Warn("pipeline entry baggage rejected: exceeds max context size",
+					"pipeline", pipeline.Name,
+					"step_id", plan.stepID,
+					"dispatch_index", i,
+					"bytes_actual", admission.BytesActual,
+					"bytes_limit", admission.BytesLimit,
+				)
+				respondJSON(w, http.StatusRequestEntityTooLarge, BaggageOverlimitResponse{
+					Error:       "pipeline baggage exceeds maximum context size",
+					BytesActual: admission.BytesActual,
+					BytesLimit:  admission.BytesLimit,
+				})
+				return
+			}
+		}
+	}
+
 	var pipelineRootContextID *string
 	if s.contextStore != nil {
 		root, err := s.createPipelineInstanceContext(r.Context(), pipeline.Name, dispatches[0].RouteMaxDepth)

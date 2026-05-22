@@ -42,6 +42,7 @@ type Dispatcher struct {
 	queue    *queue.Queue
 	state    *state.Store
 	contexts *state.ContextStore
+	admitter AdmissionGate
 	router   router.Engine
 	registry *plugin.Registry
 	cfg      *config.Config
@@ -53,6 +54,27 @@ type Dispatcher struct {
 	completions    map[string]chan struct{}
 	pollLifecycles map[string]pollLifecycleJob
 	mu             sync.RWMutex
+}
+
+// AdmissionGate decides whether a routed dispatch should proceed to durable
+// context creation. Implemented by *state.Admitter. Defined locally so the
+// dispatch package depends on the small interface, not the concrete admitter.
+type AdmissionGate interface {
+	Admit(ctx context.Context, in state.AdmissionInput) (state.AdmissionResult, error)
+}
+
+// Option configures optional Dispatcher behaviour at construction time.
+type Option func(*Dispatcher)
+
+// WithAdmitter wires the admission boundary that decides whether a routed
+// dispatch should proceed to durable event_context creation (P2-09). The
+// production runtime supplies state.NewAdmitter(queue, state.DefaultMaxContextBytes).
+// Tests that do not exercise replay paths may omit this option; the admit
+// check no-ops when the admitter is nil.
+func WithAdmitter(a AdmissionGate) Option {
+	return func(d *Dispatcher) {
+		d.admitter = a
+	}
 }
 
 type pollLifecycleJob struct {
@@ -75,8 +97,9 @@ func New(
 	reg *plugin.Registry,
 	hub *events.Hub,
 	cfg *config.Config,
+	opts ...Option,
 ) *Dispatcher {
-	return &Dispatcher{
+	d := &Dispatcher{
 		queue:          q,
 		state:          st,
 		contexts:       contexts,
@@ -88,6 +111,12 @@ func New(
 		completions:    make(map[string]chan struct{}),
 		pollLifecycles: make(map[string]pollLifecycleJob),
 	}
+	for _, opt := range opts {
+		if opt != nil {
+			opt(d)
+		}
+	}
+	return d
 }
 
 // Start runs the main dispatch loop with bounded concurrency. It tracks active
@@ -783,6 +812,31 @@ func (d *Dispatcher) routeEventsWithOptions(
 			if sourceStepID != "" {
 				if _, exists := next.Event.Payload["ductile_upstream_step_id"]; !exists {
 					next.Event.Payload["ductile_upstream_step_id"] = sourceStepID
+				}
+			}
+
+			// Admission boundary (P2-09): decide BEFORE writing routed
+			// event_context rows whether this dispatch is a replay the queue
+			// would dedupe. On AdmissionReplay we skip context creation AND
+			// enqueue entirely; the queue's dedupe path remains authoritative
+			// on job-side idempotency but we avoid leaking orphan lineage rows.
+			if d.admitter != nil {
+				admission, err := d.admitter.Admit(ctx, state.AdmissionInput{
+					DedupeKey: next.Event.DedupeKey,
+					Plugin:    next.Plugin,
+					Command:   next.Command,
+				})
+				if err != nil {
+					return fmt.Errorf("admit routed dispatch (%s:%s): %w", next.Plugin, next.Command, err)
+				}
+				if admission.Decision == state.AdmissionReplay {
+					logger.Info("skipping routed job (admission: replay)",
+						"plugin", next.Plugin,
+						"command", next.Command,
+						"dedup_key", strings.TrimSpace(next.Event.DedupeKey),
+						"existing_job_id", admission.ExistingJobID,
+					)
+					continue
 				}
 			}
 

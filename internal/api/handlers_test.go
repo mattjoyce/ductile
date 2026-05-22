@@ -130,7 +130,7 @@ func setupTestServer(t *testing.T, db *sql.DB, reg PluginRegistry) *Server {
 	q := queue.New(db)
 	cs := state.NewContextStore(db)
 	hub := events.NewHub(10)
-	return New(cfg, q, reg, &mockRouter{}, &mockWaiter{}, cs, hub, logger)
+	return New(cfg, q, reg, &mockRouter{}, &mockWaiter{}, cs, state.NewAdmitter(q, state.DefaultMaxContextBytes), hub, logger)
 }
 
 func newTestServer(reg PluginRegistry) *Server {
@@ -150,7 +150,23 @@ func setupTestServerWithDB(db *sql.DB, reg PluginRegistry) *Server {
 	q := queue.New(db)
 	cs := state.NewContextStore(db)
 	hub := events.NewHub(10)
-	return New(cfg, q, reg, &mockRouter{}, &mockWaiter{}, cs, hub, logger)
+	return New(cfg, q, reg, &mockRouter{}, &mockWaiter{}, cs, state.NewAdmitter(q, state.DefaultMaxContextBytes), hub, logger)
+}
+
+// setupTestServerWithRouter wires a Server with a caller-supplied router so
+// individual tests can stub GetPipelineByName / GetEntryDispatches / GetNode
+// behavior. Used by phase2_baggage_overlimit_test.go to feed a pipeline whose
+// entry baggage claims pull the request payload into the durable context.
+func setupTestServerWithRouter(_ *testing.T, db *sql.DB, reg PluginRegistry, r PipelineRouter) *Server {
+	logger := slog.Default()
+	cfg := Config{
+		Listen: "localhost:8080",
+		Tokens: []auth.TokenConfig{{Token: "test-key-123", Scopes: []string{"*"}}},
+	}
+	q := queue.New(db)
+	cs := state.NewContextStore(db)
+	hub := events.NewHub(10)
+	return New(cfg, q, reg, r, &mockWaiter{}, cs, state.NewAdmitter(q, state.DefaultMaxContextBytes), hub, logger)
 }
 
 func TestHandleRoot_NoAuth(t *testing.T) {
@@ -257,7 +273,7 @@ func TestHandleSchedulerJobs_Authorized(t *testing.T) {
 		Listen:        "localhost:8080",
 		Tokens:        []auth.TokenConfig{{Token: "test-key-123", Scopes: []string{"*"}}},
 		RuntimeConfig: runtimeCfg,
-	}, q, reg, &mockRouter{}, &mockWaiter{}, cs, events.NewHub(10), slog.Default())
+	}, q, reg, &mockRouter{}, &mockWaiter{}, cs, state.NewAdmitter(q, state.DefaultMaxContextBytes), events.NewHub(10), slog.Default())
 
 	req := httptest.NewRequest(http.MethodGet, "/scheduler/jobs", nil)
 	req.Header.Set("Authorization", "Bearer test-key-123")

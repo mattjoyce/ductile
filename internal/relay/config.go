@@ -55,11 +55,18 @@ func NewSender(cfg *config.Config) (*Sender, error) {
 }
 
 // NewReceiver builds an inbound relay receiver from runtime config.
+//
+// admitter is the shared admission boundary that decides whether to admit a
+// dispatch before durable event_context creation (P2-08). It is required:
+// pass state.NewAdmitter(queue, state.DefaultMaxContextBytes) at the call
+// site so the receiver mirrors production semantics. Tests that do not
+// exercise replay paths may pass a no-op admitter built with a nil probe.
 func NewReceiver(
 	cfg *config.Config,
 	queue JobQueuer,
 	router EventRouter,
 	contexts EventContextStore,
+	admitter AdmissionGate,
 	logger *slog.Logger,
 ) (*Receiver, error) {
 	if cfg == nil {
@@ -132,6 +139,7 @@ func NewReceiver(
 		queue:    queue,
 		router:   router,
 		contexts: contexts,
+		admitter: admitter,
 		logger:   defaultLogger(logger).With("component", "relay"),
 		now:      nowUTC,
 	}, nil

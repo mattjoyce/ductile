@@ -77,7 +77,7 @@ pipelines:
 		Tokens: []config.TokenEntry{{Name: "relay-lab-v1", Key: "shared-secret"}},
 	}
 
-	receiver, err := NewReceiver(cfg, q, engine, contexts, slog.Default())
+	receiver, err := NewReceiver(cfg, q, engine, contexts, state.NewAdmitter(q, state.DefaultMaxContextBytes), slog.Default())
 	if err != nil {
 		t.Fatalf("NewReceiver: %v", err)
 	}
@@ -146,7 +146,7 @@ pipelines:
 		Tokens: []config.TokenEntry{{Name: "relay-lab-v1", Key: "shared-secret"}},
 	}
 
-	receiver, err := NewReceiver(cfg, q, engine, contexts, slog.Default())
+	receiver, err := NewReceiver(cfg, q, engine, contexts, state.NewAdmitter(q, state.DefaultMaxContextBytes), slog.Default())
 	if err != nil {
 		t.Fatalf("NewReceiver: %v", err)
 	}
@@ -258,7 +258,7 @@ pipelines:
 		Tokens: []config.TokenEntry{{Name: "relay-lab-v1", Key: "shared-secret"}},
 	}
 
-	receiver, err := NewReceiver(receiverCfg, q, engine, contexts, slog.Default())
+	receiver, err := NewReceiver(receiverCfg, q, engine, contexts, state.NewAdmitter(q, state.DefaultMaxContextBytes), slog.Default())
 	if err != nil {
 		t.Fatalf("NewReceiver: %v", err)
 	}
@@ -358,7 +358,7 @@ pipelines:
 		},
 		Tokens: []config.TokenEntry{{Name: "relay-lab-v1", Key: "shared-secret"}},
 	}
-	receiver, err := NewReceiver(cfg, q, engine, contexts, slog.Default())
+	receiver, err := NewReceiver(cfg, q, engine, contexts, state.NewAdmitter(q, state.DefaultMaxContextBytes), slog.Default())
 	if err != nil {
 		t.Fatalf("NewReceiver: %v", err)
 	}
@@ -416,7 +416,7 @@ pipelines:
 		},
 		Tokens: []config.TokenEntry{{Name: "relay-lab-v1", Key: "shared-secret"}},
 	}
-	receiver, err := NewReceiver(cfg, q, engine, contexts, slog.Default())
+	receiver, err := NewReceiver(cfg, q, engine, contexts, state.NewAdmitter(q, state.DefaultMaxContextBytes), slog.Default())
 	if err != nil {
 		t.Fatalf("NewReceiver: %v", err)
 	}
@@ -474,7 +474,7 @@ pipelines:
 		},
 		Tokens: []config.TokenEntry{{Name: "relay-lab-v1", Key: "shared-secret"}},
 	}
-	receiver, err := NewReceiver(cfg, q, engine, contexts, slog.Default())
+	receiver, err := NewReceiver(cfg, q, engine, contexts, state.NewAdmitter(q, state.DefaultMaxContextBytes), slog.Default())
 	if err != nil {
 		t.Fatalf("NewReceiver: %v", err)
 	}
@@ -568,7 +568,7 @@ pipelines:
 		},
 		Tokens: []config.TokenEntry{{Name: "relay-lab-v1", Key: "shared-secret"}},
 	}
-	receiver, err := NewReceiver(cfg, q, engine, contexts, slog.Default())
+	receiver, err := NewReceiver(cfg, q, engine, contexts, state.NewAdmitter(q, state.DefaultMaxContextBytes), slog.Default())
 	if err != nil {
 		t.Fatalf("NewReceiver: %v", err)
 	}
@@ -661,7 +661,7 @@ pipelines:
 		},
 		Tokens: []config.TokenEntry{{Name: "relay-lab-v1", Key: "shared-secret"}},
 	}
-	receiver, err := NewReceiver(cfg, q, engine, contexts, slog.Default())
+	receiver, err := NewReceiver(cfg, q, engine, contexts, state.NewAdmitter(q, state.DefaultMaxContextBytes), slog.Default())
 	if err != nil {
 		t.Fatalf("NewReceiver: %v", err)
 	}

@@ -29,6 +29,7 @@ type Receiver struct {
 	queue    JobQueuer
 	router   EventRouter
 	contexts EventContextStore
+	admitter AdmissionGate
 	logger   *slog.Logger
 	now      func() time.Time
 }

@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/mattjoyce/ductile/internal/state"
 )
 
 const maxStderrBytes = 64 * 1024
@@ -565,6 +566,41 @@ LIMIT 1;
 		return "", false, err
 	}
 	return id, true, nil
+}
+
+// DedupeStatus mirrors what Enqueue would see for the (plugin, command,
+// dedupeKey) tuple, without writing any state. Returns the existing job ID
+// when a match exists. Outstanding (queued/running) takes precedence over
+// recent-success, matching the order Enqueue applies.
+//
+// Used by state.Admitter to decide admission before durable context creation,
+// avoiding orphan event_context rows when the queue would drop the eventual
+// Enqueue as a duplicate (P2-08, P2-09).
+func (q *Queue) DedupeStatus(ctx context.Context, plugin, command, dedupeKey string) (state.DedupeStatus, string, error) {
+	key := strings.TrimSpace(dedupeKey)
+	if key == "" || strings.TrimSpace(plugin) == "" || strings.TrimSpace(command) == "" {
+		return state.DedupeStatusNone, "", nil
+	}
+
+	existingID, found, err := q.findOutstandingByDedupeKey(ctx, plugin, command, key)
+	if err != nil {
+		return state.DedupeStatusNone, "", fmt.Errorf("dedupe lookup (outstanding): %w", err)
+	}
+	if found {
+		return state.DedupeStatusOutstanding, existingID, nil
+	}
+
+	if q.dedupeTTL > 0 {
+		existingID, found, err = q.findRecentSucceededByDedupeKey(ctx, plugin, command, key, q.dedupeTTL)
+		if err != nil {
+			return state.DedupeStatusNone, "", fmt.Errorf("dedupe lookup (recent_success): %w", err)
+		}
+		if found {
+			return state.DedupeStatusRecentSuccess, existingID, nil
+		}
+	}
+
+	return state.DedupeStatusNone, "", nil
 }
 
 // Dequeue claims the oldest queued job and marks it running. Returns (nil, nil)

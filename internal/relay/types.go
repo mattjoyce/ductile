@@ -109,6 +109,13 @@ type EventContextStore interface {
 	Get(ctx context.Context, id string) (*state.EventContext, error)
 }
 
+// AdmissionGate decides whether a relay dispatch should proceed to durable
+// context creation. Implemented by *state.Admitter. Defined here so the relay
+// package depends on the small interface, not the concrete admitter.
+type AdmissionGate interface {
+	Admit(ctx context.Context, in state.AdmissionInput) (state.AdmissionResult, error)
+}
+
 type rootAcceptance struct {
 	LocalEvent protocol.Event
 	Peer       trustedPeer

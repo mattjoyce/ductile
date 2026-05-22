@@ -541,10 +541,11 @@ func buildRuntime(cfg *config.Config, configPath string, configSource string, re
 		}),
 	)
 	rt.scheduler = sched
-	disp := dispatch.New(q, st, contextStore, routerEngine, registry, hub, cfg)
+	admitter := state.NewAdmitter(q, state.DefaultMaxContextBytes)
+	disp := dispatch.New(q, st, contextStore, routerEngine, registry, hub, cfg, dispatch.WithAdmitter(admitter))
 	rt.dispatcher = disp
 
-	relayReceiver, err := relay.NewReceiver(cfg, q, routerEngine, contextStore, log.WithComponent("relay"))
+	relayReceiver, err := relay.NewReceiver(cfg, q, routerEngine, contextStore, admitter, log.WithComponent("relay"))
 	if err != nil {
 		logger.Error("failed to configure relay receiver", "error", err)
 		return nil, err
@@ -593,7 +594,7 @@ func buildRuntime(cfg *config.Config, configPath string, configSource string, re
 			RelayReceiver:     relayReceiver,
 			AllowedOrigins:    cfg.API.AllowedOrigins,
 		}
-		apiServer := api.New(apiConfig, q, registry, routerEngine, disp, contextStore, hub, log.WithComponent("api"))
+		apiServer := api.New(apiConfig, q, registry, routerEngine, disp, contextStore, admitter, hub, log.WithComponent("api"))
 		rt.apiServer = apiServer
 		rt.wg.Add(1)
 		go func() {

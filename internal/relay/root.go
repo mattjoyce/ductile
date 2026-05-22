@@ -40,6 +40,28 @@ func (r *Receiver) enqueueRootDispatches(ctx context.Context, accepted rootAccep
 	admittedBaggage := r.admitBaggage(accepted.Peer, accepted.Envelope.Baggage)
 	firstJobID := ""
 	for _, dispatch := range dispatches {
+		// Admission boundary (P2-08): decide BEFORE writing durable event_context
+		// rows whether this dispatch is a replay the queue would dedupe. On
+		// AdmissionReplay we skip context creation entirely; the queue's dedupe
+		// path is still authoritative on the job side. admitBaggage above is a
+		// peer-ACL filter on baggage keys and is unrelated to this boundary.
+		if r.admitter != nil {
+			result, err := r.admitter.Admit(ctx, state.AdmissionInput{
+				DedupeKey: dispatch.Event.DedupeKey,
+				Plugin:    dispatch.Plugin,
+				Command:   dispatch.Command,
+			})
+			if err != nil {
+				return "", fmt.Errorf("admit relay dispatch (%s:%s): %w", dispatch.Plugin, dispatch.Command, err)
+			}
+			if result.Decision == state.AdmissionReplay {
+				if firstJobID == "" {
+					firstJobID = result.ExistingJobID
+				}
+				continue
+			}
+		}
+
 		contextID, err := r.createEntryContext(ctx, rootSeeds, dispatch, admittedBaggage)
 		if err != nil {
 			return "", err
@@ -213,6 +235,11 @@ func marshalDispatchPayload(event protocol.Event, command string) (json.RawMessa
 	return json.Marshal(event.Payload)
 }
 
+// admitBaggage is a per-peer ACL filter on baggage keys, NOT the general
+// admission boundary. It strips keys not in peer.AllowedBags from the
+// envelope baggage before the dispatch loop. The replay-vs-fresh admission
+// decision (P2-08) is handled by the Receiver.admitter field — see
+// state.Admitter.
 func (r *Receiver) admitBaggage(peer trustedPeer, baggageMap map[string]any) map[string]any {
 	if len(peer.AllowedBags) == 0 || len(baggageMap) == 0 {
 		return map[string]any{}

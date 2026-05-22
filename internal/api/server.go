@@ -54,6 +54,14 @@ type EventContextStore interface {
 	Get(ctx context.Context, id string) (*state.EventContext, error)
 }
 
+// AdmissionGate decides whether to admit a pipeline ingress dispatch before
+// durable context creation. Implemented by *state.Admitter. Used to surface
+// baggage-overlimit conditions as HTTP 413 (P2-04) rather than the previous
+// generic 500.
+type AdmissionGate interface {
+	Admit(ctx context.Context, in state.AdmissionInput) (state.AdmissionResult, error)
+}
+
 // PluginRegistry defines the interface for plugin operations
 type PluginRegistry interface {
 	Get(name string) (*plugin.Plugin, bool)
@@ -86,6 +94,7 @@ type Server struct {
 	router        PipelineRouter
 	waiter        TreeWaiter
 	contextStore  EventContextStore
+	admitter      AdmissionGate
 	logger        *slog.Logger
 	server        *http.Server
 	startedAt     time.Time
@@ -96,8 +105,12 @@ type Server struct {
 	relayReceiver *relay.Receiver
 }
 
-// New creates a new API server instance
-func New(config Config, queue JobQueuer, registry PluginRegistry, router PipelineRouter, waiter TreeWaiter, contextStore EventContextStore, hub *events.Hub, logger *slog.Logger) *Server {
+// New creates a new API server instance. admitter decides whether ingress
+// requests are admitted before durable event_context creation; production
+// runtime supplies state.NewAdmitter(queue, state.DefaultMaxContextBytes).
+// A nil admitter disables the admission check (size cap then surfaces via the
+// existing inner ContextStore.Create defensive check, as a 500).
+func New(config Config, queue JobQueuer, registry PluginRegistry, router PipelineRouter, waiter TreeWaiter, contextStore EventContextStore, admitter AdmissionGate, hub *events.Hub, logger *slog.Logger) *Server {
 	if config.MaxConcurrentSync <= 0 {
 		config.MaxConcurrentSync = 10
 	}
@@ -108,6 +121,7 @@ func New(config Config, queue JobQueuer, registry PluginRegistry, router Pipelin
 		router:        router,
 		waiter:        waiter,
 		contextStore:  contextStore,
+		admitter:      admitter,
 		logger:        logger,
 		startedAt:     time.Now(),
 		events:        hub,
