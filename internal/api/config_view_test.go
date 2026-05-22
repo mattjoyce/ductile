@@ -1,8 +1,15 @@
 package api
 
 import (
+	"io"
+	"log/slog"
+	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
 
+	"github.com/mattjoyce/ductile/internal/auth"
+	"github.com/mattjoyce/ductile/internal/config"
 	"github.com/mattjoyce/ductile/internal/protocol"
 	"github.com/mattjoyce/ductile/internal/router"
 	"github.com/mattjoyce/ductile/internal/router/conditions"
@@ -192,5 +199,169 @@ func TestSanitizePluginConfigRecursive(t *testing.T) {
 	origRF := in["redaction_fixture"].(map[string]any)
 	if origRF["nested_token"] != "LEAK_NESTED_TOKEN" {
 		t.Errorf("input nested map mutated: %v", origRF["nested_token"])
+	}
+}
+
+// TestPhase2ConfigViewDoesNotLeakPipelineOrScheduleSecrets reproduces P2-01:
+// /config/view leaked secret-shaped values from plugin schedules[].payload,
+// pipeline step.with, pipeline step.baggage, and relay step with/baggage.
+// Plugin .config was already redacted; this test guards the wider surface.
+func TestPhase2ConfigViewDoesNotLeakPipelineOrScheduleSecrets(t *testing.T) {
+	cfg := config.Defaults()
+	cfg.API.Enabled = true
+	cfg.API.Auth.Tokens = []config.APIToken{{Token: "system-read-token", Scopes: []string{"system:ro"}}}
+	cfg.Plugins["echo"] = config.PluginConf{
+		Enabled: true,
+		Schedules: []config.ScheduleConfig{{
+			ID:      "scheduled-secret",
+			Every:   "5m",
+			Payload: map[string]any{"api_key": "PHASE2_SCHEDULE_SECRET_LEAK"},
+		}},
+		Config: map[string]any{
+			"nested": map[string]any{"token": "PHASE2_PLUGIN_CONFIG_SECRET_LEAK"},
+		},
+	}
+	cfg.Pipelines = []config.PipelineEntry{{
+		Name: "pipeline-secret-view",
+		On:   "event.start",
+		Steps: []config.StepEntry{{
+			ID:      "step-secret",
+			Uses:    "echo",
+			With:    map[string]string{"token": "PHASE2_PIPELINE_WITH_SECRET_LEAK"},
+			Baggage: map[string]string{"auth_secret": "PHASE2_PIPELINE_BAGGAGE_SECRET_LEAK"},
+			Relay: &config.RelayStepEntry{
+				To:      "downstream",
+				Event:   "event.relay",
+				With:    map[string]string{"api_key": "PHASE2_RELAY_WITH_SECRET_LEAK"},
+				Baggage: map[string]string{"password": "PHASE2_RELAY_BAGGAGE_SECRET_LEAK"},
+			},
+			Steps: []config.StepEntry{{
+				ID:   "nested-step-secret",
+				Uses: "echo",
+				With: map[string]string{"token": "PHASE2_NESTED_STEPS_SECRET_LEAK"},
+			}},
+			Split: []config.StepEntry{{
+				ID:      "split-step-secret",
+				Uses:    "echo",
+				Baggage: map[string]string{"credential": "PHASE2_SPLIT_BAGGAGE_SECRET_LEAK"},
+			}},
+		}},
+	}}
+
+	server := New(Config{
+		RuntimeConfig: cfg,
+		Tokens:        []auth.TokenConfig{{Token: "system-read-token", Scopes: []string{"system:ro"}}},
+	}, nil, nil, nil, nil, nil, nil, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	req := httptest.NewRequest(http.MethodGet, "/config/view", nil)
+	req.Header.Set("Authorization", "Bearer system-read-token")
+	rec := httptest.NewRecorder()
+
+	server.setupRoutes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /config/view status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+
+	for _, leak := range []string{
+		"PHASE2_PLUGIN_CONFIG_SECRET_LEAK",
+		"PHASE2_SCHEDULE_SECRET_LEAK",
+		"PHASE2_PIPELINE_WITH_SECRET_LEAK",
+		"PHASE2_PIPELINE_BAGGAGE_SECRET_LEAK",
+		"PHASE2_RELAY_WITH_SECRET_LEAK",
+		"PHASE2_RELAY_BAGGAGE_SECRET_LEAK",
+		"PHASE2_NESTED_STEPS_SECRET_LEAK",
+		"PHASE2_SPLIT_BAGGAGE_SECRET_LEAK",
+	} {
+		if strings.Contains(body, leak) {
+			t.Fatalf("/config/view leaked %q in response body: %s", leak, body)
+		}
+	}
+
+	// Sentinel must be present so we know redaction actually fired rather than the
+	// fields being silently dropped.
+	if !strings.Contains(body, redactionSentinel) {
+		t.Fatalf("/config/view body missing %q sentinel — redaction may have dropped fields: %s", redactionSentinel, body)
+	}
+
+	// Runtime config must not be mutated by the handler.
+	if got := cfg.Plugins["echo"].Schedules[0].Payload["api_key"]; got != "PHASE2_SCHEDULE_SECRET_LEAK" {
+		t.Errorf("runtime schedule payload mutated: %v", got)
+	}
+	step := cfg.Pipelines[0].Steps[0]
+	if step.With["token"] != "PHASE2_PIPELINE_WITH_SECRET_LEAK" {
+		t.Errorf("runtime step.With mutated: %v", step.With["token"])
+	}
+	if step.Baggage["auth_secret"] != "PHASE2_PIPELINE_BAGGAGE_SECRET_LEAK" {
+		t.Errorf("runtime step.Baggage mutated: %v", step.Baggage["auth_secret"])
+	}
+	if step.Relay.With["api_key"] != "PHASE2_RELAY_WITH_SECRET_LEAK" {
+		t.Errorf("runtime relay.With mutated: %v", step.Relay.With["api_key"])
+	}
+	if step.Steps[0].With["token"] != "PHASE2_NESTED_STEPS_SECRET_LEAK" {
+		t.Errorf("runtime nested step.With mutated: %v", step.Steps[0].With["token"])
+	}
+	if step.Split[0].Baggage["credential"] != "PHASE2_SPLIT_BAGGAGE_SECRET_LEAK" {
+		t.Errorf("runtime split step.Baggage mutated: %v", step.Split[0].Baggage["credential"])
+	}
+}
+
+// TestSanitizeStepEntriesMixedCaseSensitiveKeys asserts the sensitive-key match
+// is case-insensitive — operators sometimes use SCREAMING_CASE or PascalCase.
+func TestSanitizeStepEntriesMixedCaseSensitiveKeys(t *testing.T) {
+	in := []config.StepEntry{{
+		ID:      "mixed-case",
+		With:    map[string]string{"API_KEY": "LEAK_SCREAMING", "Token": "LEAK_PASCAL", "PaSsWoRd": "LEAK_MIXED", "endpoint": "keep"},
+		Baggage: map[string]string{"AUTH": "LEAK_BAGGAGE_AUTH", "name": "keep-bag"},
+	}}
+	out := sanitizeStepEntries(in)
+
+	if out[0].With["API_KEY"] != redactionSentinel {
+		t.Errorf("API_KEY not redacted: %v", out[0].With["API_KEY"])
+	}
+	if out[0].With["Token"] != redactionSentinel {
+		t.Errorf("Token not redacted: %v", out[0].With["Token"])
+	}
+	if out[0].With["PaSsWoRd"] != redactionSentinel {
+		t.Errorf("PaSsWoRd not redacted: %v", out[0].With["PaSsWoRd"])
+	}
+	if out[0].With["endpoint"] != "keep" {
+		t.Errorf("endpoint altered: %v", out[0].With["endpoint"])
+	}
+	if out[0].Baggage["AUTH"] != redactionSentinel {
+		t.Errorf("AUTH not redacted: %v", out[0].Baggage["AUTH"])
+	}
+	if out[0].Baggage["name"] != "keep-bag" {
+		t.Errorf("name altered: %v", out[0].Baggage["name"])
+	}
+
+	// Input must not be mutated.
+	if in[0].With["API_KEY"] != "LEAK_SCREAMING" {
+		t.Errorf("input With mutated: %v", in[0].With["API_KEY"])
+	}
+}
+
+// TestSanitizeRelayStepNilGuard exercises the nil-pointer branch — relay is an
+// optional field on StepEntry and must not panic.
+func TestSanitizeRelayStepNilGuard(t *testing.T) {
+	if got := sanitizeRelayStep(nil); got != nil {
+		t.Fatalf("nil input must return nil, got %+v", got)
+	}
+}
+
+// TestSanitizeScheduleConfigsNilSlice exercises the nil-slice branches across
+// the sanitiser chain.
+func TestSanitizeScheduleConfigsNilSlice(t *testing.T) {
+	if got := sanitizeScheduleConfigs(nil); got != nil {
+		t.Fatalf("nil slice must return nil, got %+v", got)
+	}
+	if got := sanitizeStepEntries(nil); got != nil {
+		t.Fatalf("nil slice must return nil, got %+v", got)
+	}
+	if got := sanitizePipelines(nil); got != nil {
+		t.Fatalf("nil slice must return nil, got %+v", got)
+	}
+	if got := redactStringMap(nil); got != nil {
+		t.Fatalf("nil map must return nil, got %+v", got)
 	}
 }

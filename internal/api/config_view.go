@@ -75,6 +75,95 @@ func redactValue(v any) any {
 	}
 }
 
+// redactStringMap is the typed-shape sibling of redactValue for map[string]string
+// fields (pipeline step / relay step With and Baggage). The plain map[string]string
+// shape is preserved so the JSON output for these fields stays a string-to-string
+// object. Returns nil for nil input. Never mutates m.
+func redactStringMap(m map[string]string) map[string]string {
+	if m == nil {
+		return nil
+	}
+	out := make(map[string]string, len(m))
+	for k, v := range m {
+		if isSensitiveKey(k) {
+			out[k] = redactionSentinel
+		} else {
+			out[k] = v
+		}
+	}
+	return out
+}
+
+// sanitizeScheduleConfig returns a value-copy of s with secret-shaped Payload
+// entries redacted at every depth. The runtime config is never mutated because
+// sanitizePluginConfig allocates a fresh container.
+func sanitizeScheduleConfig(s config.ScheduleConfig) config.ScheduleConfig {
+	s.Payload = sanitizePluginConfig(s.Payload)
+	return s
+}
+
+// sanitizeScheduleConfigs returns a redacted slice copy; returns nil for nil input.
+func sanitizeScheduleConfigs(ss []config.ScheduleConfig) []config.ScheduleConfig {
+	if ss == nil {
+		return nil
+	}
+	out := make([]config.ScheduleConfig, len(ss))
+	for i, s := range ss {
+		out[i] = sanitizeScheduleConfig(s)
+	}
+	return out
+}
+
+// sanitizeRelayStep returns a value-copy pointer with secret-shaped With/Baggage
+// entries redacted. Returns nil for nil input.
+func sanitizeRelayStep(r *config.RelayStepEntry) *config.RelayStepEntry {
+	if r == nil {
+		return nil
+	}
+	cp := *r
+	cp.With = redactStringMap(cp.With)
+	cp.Baggage = redactStringMap(cp.Baggage)
+	return &cp
+}
+
+// sanitizeStepEntry returns a value-copy of s with secret-shaped With/Baggage
+// redacted and nested Steps/Split lists likewise sanitised.
+func sanitizeStepEntry(s config.StepEntry) config.StepEntry {
+	s.With = redactStringMap(s.With)
+	s.Baggage = redactStringMap(s.Baggage)
+	s.Relay = sanitizeRelayStep(s.Relay)
+	s.Steps = sanitizeStepEntries(s.Steps)
+	s.Split = sanitizeStepEntries(s.Split)
+	return s
+}
+
+// sanitizeStepEntries returns a redacted slice copy; returns nil for nil input.
+func sanitizeStepEntries(ss []config.StepEntry) []config.StepEntry {
+	if ss == nil {
+		return nil
+	}
+	out := make([]config.StepEntry, len(ss))
+	for i, s := range ss {
+		out[i] = sanitizeStepEntry(s)
+	}
+	return out
+}
+
+// sanitizePipelines returns a slice copy of ps with each pipeline's Steps tree
+// sanitised. The pipeline-level fields (Name, On, ExecutionMode, Timeout) carry
+// no secret-bearing maps so they pass through unchanged.
+func sanitizePipelines(ps []config.PipelineEntry) []config.PipelineEntry {
+	if ps == nil {
+		return nil
+	}
+	out := make([]config.PipelineEntry, len(ps))
+	for i, p := range ps {
+		p.Steps = sanitizeStepEntries(p.Steps)
+		out[i] = p
+	}
+	return out
+}
+
 // -- Sanitized view types ----------------------------------------------------
 
 type configViewPlugin struct {
@@ -234,7 +323,7 @@ func (s *Server) handleConfigView(w http.ResponseWriter, r *http.Request) {
 		plugins[name] = configViewPlugin{
 			Enabled:        p.Enabled,
 			Uses:           p.Uses,
-			Schedules:      schedules,
+			Schedules:      sanitizeScheduleConfigs(schedules),
 			Config:         sanitizePluginConfig(p.Config),
 			Retry:          p.Retry,
 			Timeouts:       p.Timeouts,
@@ -277,7 +366,7 @@ func (s *Server) handleConfigView(w http.ResponseWriter, r *http.Request) {
 		},
 		State:          cfg.State,
 		Plugins:        plugins,
-		Pipelines:      cfg.Pipelines,
+		Pipelines:      sanitizePipelines(cfg.Pipelines),
 		Webhooks:       webhooks,
 		Tokens:         tokens,
 		Routes:         cfg.Routes,
