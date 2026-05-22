@@ -62,11 +62,5 @@ func effectiveMaxAttempts(job *queue.Job, pluginCfg config.PluginConf) int {
 	if job != nil && job.MaxAttempts > 0 {
 		return job.MaxAttempts
 	}
-	if pluginCfg.Retry != nil && pluginCfg.Retry.MaxAttempts > 0 {
-		return pluginCfg.Retry.MaxAttempts
-	}
-	if defaults := config.DefaultPluginConf().Retry; defaults != nil {
-		return defaults.MaxAttempts
-	}
-	return 0
+	return config.MaxAttemptsForPlugin(pluginCfg)
 }

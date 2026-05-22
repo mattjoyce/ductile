@@ -7,8 +7,11 @@ import (
 )
 
 // FromGlobalConfig converts config.WebhooksConfig to webhook.Config.
-// Resolves secret references and parses max body sizes.
-func FromGlobalConfig(wc *config.WebhooksConfig, tokens map[string]string) (Config, error) {
+// Resolves secret references and parses max body sizes. plugins is a snapshot
+// of the parent runtime config's plugins map so the webhook ingress can
+// resolve per-plugin retry policy at enqueue time (P2-02). Pass nil to skip
+// per-plugin retry resolution — the queue's own default then applies.
+func FromGlobalConfig(wc *config.WebhooksConfig, tokens map[string]string, plugins map[string]config.PluginConf) (Config, error) {
 	if wc == nil {
 		return Config{}, fmt.Errorf("webhooks config is nil")
 	}
@@ -16,6 +19,7 @@ func FromGlobalConfig(wc *config.WebhooksConfig, tokens map[string]string) (Conf
 	cfg := Config{
 		Listen:    wc.Listen,
 		Endpoints: make([]EndpointConfig, len(wc.Endpoints)),
+		Plugins:   plugins,
 	}
 
 	for i, ep := range wc.Endpoints {

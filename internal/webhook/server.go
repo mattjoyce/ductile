@@ -11,6 +11,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
+	"github.com/mattjoyce/ductile/internal/config"
 	"github.com/mattjoyce/ductile/internal/queue"
 )
 
@@ -190,6 +191,7 @@ func (s *Server) handleWebhook(w http.ResponseWriter, r *http.Request) {
 		Command:     endpoint.Command,
 		Payload:     json.RawMessage(body),
 		SubmittedBy: "webhook:" + r.URL.Path,
+		MaxAttempts: config.MaxAttemptsForPlugin(s.config.Plugins[endpoint.Plugin]),
 	})
 	if err != nil {
 		s.logger.Error("failed to enqueue webhook job",

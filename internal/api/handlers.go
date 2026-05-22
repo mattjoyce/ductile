@@ -15,6 +15,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/mattjoyce/ductile/internal/auth"
 	"github.com/mattjoyce/ductile/internal/baggage"
+	"github.com/mattjoyce/ductile/internal/config"
 	"github.com/mattjoyce/ductile/internal/plugin"
 	"github.com/mattjoyce/ductile/internal/protocol"
 	"github.com/mattjoyce/ductile/internal/queue"
@@ -22,6 +23,16 @@ import (
 	"github.com/mattjoyce/ductile/internal/router/dsl"
 	"github.com/mattjoyce/ductile/internal/state"
 )
+
+// maxAttemptsForPlugin resolves the configured retry max-attempts for a plugin
+// at enqueue time. Returns 0 when no runtime config is available so the
+// queue's own default applies. P2-02.
+func (s *Server) maxAttemptsForPlugin(pluginName string) int {
+	if s.config.RuntimeConfig == nil {
+		return 0
+	}
+	return config.MaxAttemptsForPlugin(s.config.RuntimeConfig.Plugins[pluginName])
+}
 
 // handleRoot handles GET / — unauthenticated discovery index for humans and agents.
 func (s *Server) handleRoot(w http.ResponseWriter, r *http.Request) {
@@ -206,6 +217,7 @@ func (s *Server) handlePipelineTrigger(w http.ResponseWriter, r *http.Request) {
 			Payload:        enqueuePayload,
 			SubmittedBy:    "api",
 			EventContextID: eventContextID,
+			MaxAttempts:    s.maxAttemptsForPlugin(d.Plugin),
 		})
 		if err != nil {
 			s.logger.Error("failed to enqueue pipeline job", "pipeline", pipelineName, "plugin", d.Plugin, "error", err)
@@ -373,6 +385,7 @@ func (s *Server) handlePluginTrigger(w http.ResponseWriter, r *http.Request) {
 		Command:     commandName,
 		Payload:     enqueuePayload,
 		SubmittedBy: "api",
+		MaxAttempts: s.maxAttemptsForPlugin(pluginName),
 	})
 	if err != nil {
 		s.logger.Error("failed to enqueue job", "plugin", pluginName, "command", commandName, "error", err)

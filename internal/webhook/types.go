@@ -3,6 +3,7 @@ package webhook
 import (
 	"context"
 
+	"github.com/mattjoyce/ductile/internal/config"
 	"github.com/mattjoyce/ductile/internal/queue"
 )
 
@@ -11,10 +12,14 @@ type JobQueuer interface {
 	Enqueue(ctx context.Context, req queue.EnqueueRequest) (string, error)
 }
 
-// Config holds webhook server configuration.
+// Config holds webhook server configuration. Plugins is a snapshot of plugin
+// retry config (keyed by plugin name) populated by FromGlobalConfig so the
+// webhook ingress can stamp operator-configured MaxAttempts onto each enqueued
+// job. Rebuilt on config reload — never stale. P2-02.
 type Config struct {
-	Listen    string           `yaml:"listen"`
-	Endpoints []EndpointConfig `yaml:"endpoints"`
+	Listen    string                       `yaml:"listen"`
+	Endpoints []EndpointConfig             `yaml:"endpoints"`
+	Plugins   map[string]config.PluginConf `yaml:"-"`
 }
 
 // EndpointConfig defines a single webhook endpoint.

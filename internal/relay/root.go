@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/mattjoyce/ductile/internal/baggage"
+	"github.com/mattjoyce/ductile/internal/config"
 	"github.com/mattjoyce/ductile/internal/protocol"
 	"github.com/mattjoyce/ductile/internal/queue"
 	"github.com/mattjoyce/ductile/internal/router"
@@ -57,6 +58,7 @@ func (r *Receiver) enqueueRootDispatches(ctx context.Context, accepted rootAccep
 			SubmittedBy:    "relay:" + accepted.Peer.Name,
 			EventContextID: contextID,
 			SourceEventID:  &sourceEventID,
+			MaxAttempts:    config.MaxAttemptsForPlugin(r.cfg.Plugins[dispatch.Plugin]),
 		}
 		if dedupeKey := strings.TrimSpace(dispatch.Event.DedupeKey); dedupeKey != "" {
 			enqueueReq.DedupeKey = &dedupeKey

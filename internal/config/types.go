@@ -174,11 +174,39 @@ type RetryConfig struct {
 }
 
 // TimeoutsConfig defines command-specific timeouts.
+//
+// Poll/Handle/Health/Init are the four core lifecycle commands every plugin
+// implements; their fixed fields keep YAML keys discoverable and validation
+// strict. Overrides captures operator-defined per-command timeouts (e.g.
+// plugins.stress.timeouts.cpu: 15s) so plugin-specific command names declared
+// in the manifest are also enforced rather than silently demoted to a default.
+// The yaml:",inline" tag means keys not matched by the four core fields fall
+// into Overrides verbatim. P2-05.
 type TimeoutsConfig struct {
-	Poll   time.Duration `yaml:"poll"`
-	Handle time.Duration `yaml:"handle"`
-	Health time.Duration `yaml:"health,omitempty"`
-	Init   time.Duration `yaml:"init,omitempty"`
+	Poll      time.Duration            `yaml:"poll"`
+	Handle    time.Duration            `yaml:"handle"`
+	Health    time.Duration            `yaml:"health,omitempty"`
+	Init      time.Duration            `yaml:"init,omitempty"`
+	Overrides map[string]time.Duration `yaml:",inline,omitempty"`
+}
+
+// MaxAttemptsForPlugin returns the retry max-attempts value to stamp into an
+// EnqueueRequest for jobs targeting the given plugin. Resolution order:
+//  1. plugin-level Retry.MaxAttempts when configured (> 0)
+//  2. DefaultPluginConf().Retry.MaxAttempts (the global default)
+//  3. 0 when both are absent — the queue's own fallback then applies.
+//
+// All non-scheduler enqueue paths (API direct/pipeline, webhook ingress, relay
+// ingress, internal routed/hook dispatch) must call this so the operator's
+// configured retry policy is honored uniformly. P2-02.
+func MaxAttemptsForPlugin(pluginConf PluginConf) int {
+	if pluginConf.Retry != nil && pluginConf.Retry.MaxAttempts > 0 {
+		return pluginConf.Retry.MaxAttempts
+	}
+	if defaults := DefaultPluginConf().Retry; defaults != nil {
+		return defaults.MaxAttempts
+	}
+	return 0
 }
 
 // CircuitBreakerConfig defines circuit breaker settings.

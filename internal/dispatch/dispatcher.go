@@ -818,6 +818,7 @@ func (d *Dispatcher) routeEventsWithOptions(
 				ParentJobID:    strPtrOrNil(next.ParentJobID),
 				EventContextID: contextID,
 				SourceEventID:  strPtrOrNil(sourceEventID),
+				MaxAttempts:    config.MaxAttemptsForPlugin(d.cfg.Plugins[next.Plugin]),
 			}
 			if dedupeKey := strings.TrimSpace(next.Event.DedupeKey); dedupeKey != "" {
 				enqueueReq.DedupeKey = &dedupeKey
@@ -1489,9 +1490,16 @@ func buildPluginFact(job *queue.Job, updates json.RawMessage, factType string) (
 }
 
 // getTimeout returns the timeout for a given command, falling back to defaults.
+// Operator-defined per-command timeouts under plugins.<name>.timeouts.<command>
+// (anything other than the four core lifecycle commands) are honored via the
+// Overrides map. P2-05.
 func (d *Dispatcher) getTimeout(timeouts *config.TimeoutsConfig, command string) time.Duration {
 	if timeouts == nil {
 		timeouts = config.DefaultPluginConf().Timeouts
+	}
+
+	if override, ok := timeouts.Overrides[command]; ok && override > 0 {
+		return override
 	}
 
 	switch command {
@@ -1690,6 +1698,7 @@ func (d *Dispatcher) maybeFireHooks(ctx context.Context, job *queue.Job, signal 
 			Command:     disp.Command,
 			Payload:     payloadJSON,
 			SubmittedBy: "hook",
+			MaxAttempts: config.MaxAttemptsForPlugin(d.cfg.Plugins[disp.Plugin]),
 		}
 		childID, err := d.queue.Enqueue(ctx, enqReq)
 		if err != nil {

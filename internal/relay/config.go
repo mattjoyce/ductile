@@ -115,6 +115,11 @@ func NewReceiver(
 		maxBodySize = parsed
 	}
 
+	plugins := make(map[string]config.PluginConf, len(cfg.Plugins))
+	for name, pc := range cfg.Plugins {
+		plugins[name] = pc
+	}
+
 	return &Receiver{
 		cfg: receiverConfig{
 			ListenPath:       normalizeListenPath(cfg.RemoteIngress.ListenPath),
@@ -122,6 +127,7 @@ func NewReceiver(
 			AllowedClockSkew: normalizeAllowedClockSkew(cfg.RemoteIngress.AllowedClockSkew),
 			RequireKeyID:     cfg.RemoteIngress.RequireKeyID,
 			Peers:            peers,
+			Plugins:          plugins,
 		},
 		queue:    queue,
 		router:   router,

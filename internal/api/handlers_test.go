@@ -997,3 +997,148 @@ func TestServerWaitServeStoppedAfterCancel(t *testing.T) {
 		t.Fatal("server Start did not return")
 	}
 }
+
+// TestPhase2DirectPluginEnqueueHonorsMaxAttempts reproduces P2-02: a direct
+// API trigger (/plugin/<name>/<command>) must stamp the plugin-configured
+// retry.max_attempts onto the enqueued job, rather than letting the queue
+// fall back to its global default. Live pentest evidence:
+// fetch.retry.max_attempts: 1 was silently demoted to max_attempts=4.
+func TestPhase2DirectPluginEnqueueHonorsMaxAttempts(t *testing.T) {
+	t.Parallel()
+	db := setupTestDB(t)
+	reg := &mockRegistry{
+		plugins: map[string]*plugin.Plugin{
+			"echo": {
+				Name: "echo",
+				Commands: plugin.Commands{
+					{Name: "health", Type: plugin.CommandTypeRead},
+				},
+			},
+		},
+	}
+	server := setupTestServer(t, db, reg)
+	server.config.RuntimeConfig = &config.Config{
+		Plugins: map[string]config.PluginConf{
+			"echo": {
+				Enabled: true,
+				Retry:   &config.RetryConfig{MaxAttempts: 1},
+			},
+		},
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/plugin/echo/health", nil)
+	req.Header.Set("Authorization", "Bearer test-key-123")
+	rr := httptest.NewRecorder()
+	server.setupRoutes().ServeHTTP(rr, req)
+	if rr.Code != http.StatusAccepted {
+		t.Fatalf("expected status 202, got %d body=%s", rr.Code, rr.Body.String())
+	}
+
+	var resp TriggerResponse
+	if err := json.NewDecoder(rr.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+
+	var maxAttempts int
+	if err := db.QueryRow("SELECT max_attempts FROM job_queue WHERE id = ?", resp.JobID).Scan(&maxAttempts); err != nil {
+		t.Fatalf("query max_attempts: %v", err)
+	}
+	if maxAttempts != 1 {
+		t.Fatalf("direct-plugin enqueue stamped MaxAttempts=%d, want 1 (from plugin config) — P2-02 regression", maxAttempts)
+	}
+}
+
+// TestPhase2PipelineAPIEnqueueHonorsMaxAttempts reproduces P2-02 on the
+// pipeline-API entry path (POST /pipeline/<name>) — every dispatched plugin
+// must receive its plugin-configured retry.max_attempts at enqueue time.
+func TestPhase2PipelineAPIEnqueueHonorsMaxAttempts(t *testing.T) {
+	t.Parallel()
+	db := setupTestDB(t)
+	rt := &mockRouter{
+		getPipelineByNameFunc: func(name string) *router.PipelineInfo {
+			if name == "p2-pipe" {
+				return &router.PipelineInfo{Name: "p2-pipe", Trigger: "file.read"}
+			}
+			return nil
+		},
+		getEntryDispatchesFunc: func(_ string, event protocol.Event) ([]router.Dispatch, error) {
+			return []router.Dispatch{
+				{Plugin: "echo", Command: "handle", Event: event, StepID: "step-a"},
+			}, nil
+		},
+	}
+	server := setupTestServer(t, db, &mockRegistry{})
+	server.router = rt
+	server.config.RuntimeConfig = &config.Config{
+		Plugins: map[string]config.PluginConf{
+			"echo": {
+				Enabled: true,
+				Retry:   &config.RetryConfig{MaxAttempts: 2},
+			},
+		},
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/pipeline/p2-pipe", bytes.NewBufferString(`{"payload":{"x":1}}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer test-key-123")
+	rr := httptest.NewRecorder()
+	server.setupRoutes().ServeHTTP(rr, req)
+	if rr.Code != http.StatusAccepted {
+		t.Fatalf("expected status 202, got %d body=%s", rr.Code, rr.Body.String())
+	}
+
+	var resp TriggerResponse
+	if err := json.NewDecoder(rr.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+
+	var maxAttempts int
+	if err := db.QueryRow("SELECT max_attempts FROM job_queue WHERE id = ?", resp.JobID).Scan(&maxAttempts); err != nil {
+		t.Fatalf("query max_attempts: %v", err)
+	}
+	if maxAttempts != 2 {
+		t.Fatalf("pipeline-API enqueue stamped MaxAttempts=%d, want 2 (from plugin config) — P2-02 regression", maxAttempts)
+	}
+}
+
+// TestPhase2DirectPluginEnqueueFallsBackToDefaultsWithoutPluginConfig asserts
+// the no-plugin-config path falls back to the global default rather than
+// stamping zero (which would let the queue's own default of 4 apply).
+func TestPhase2DirectPluginEnqueueFallsBackToDefaultsWithoutPluginConfig(t *testing.T) {
+	t.Parallel()
+	db := setupTestDB(t)
+	reg := &mockRegistry{
+		plugins: map[string]*plugin.Plugin{
+			"echo": {
+				Name:     "echo",
+				Commands: plugin.Commands{{Name: "health", Type: plugin.CommandTypeRead}},
+			},
+		},
+	}
+	server := setupTestServer(t, db, reg)
+	server.config.RuntimeConfig = &config.Config{
+		Plugins: map[string]config.PluginConf{}, // empty — no per-plugin retry config
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/plugin/echo/health", nil)
+	req.Header.Set("Authorization", "Bearer test-key-123")
+	rr := httptest.NewRecorder()
+	server.setupRoutes().ServeHTTP(rr, req)
+	if rr.Code != http.StatusAccepted {
+		t.Fatalf("expected status 202, got %d body=%s", rr.Code, rr.Body.String())
+	}
+
+	var resp TriggerResponse
+	if err := json.NewDecoder(rr.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+
+	want := config.DefaultPluginConf().Retry.MaxAttempts
+	var maxAttempts int
+	if err := db.QueryRow("SELECT max_attempts FROM job_queue WHERE id = ?", resp.JobID).Scan(&maxAttempts); err != nil {
+		t.Fatalf("query max_attempts: %v", err)
+	}
+	if maxAttempts != want {
+		t.Fatalf("default-config enqueue stamped MaxAttempts=%d, want default %d", maxAttempts, want)
+	}
+}

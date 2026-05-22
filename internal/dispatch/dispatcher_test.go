@@ -1339,6 +1339,40 @@ func TestDispatcher_GetTimeout(t *testing.T) {
 			command:  "unknown",
 			want:     60 * time.Second,
 		},
+		{
+			name: "override honors operator-defined custom command timeout (P2-05)",
+			timeouts: &config.TimeoutsConfig{
+				Overrides: map[string]time.Duration{"cpu": 15 * time.Second},
+			},
+			command: "cpu",
+			want:    15 * time.Second,
+		},
+		{
+			name: "override of poll wins over fixed Poll field (P2-05)",
+			timeouts: &config.TimeoutsConfig{
+				Poll:      60 * time.Second,
+				Overrides: map[string]time.Duration{"poll": 5 * time.Second},
+			},
+			command: "poll",
+			want:    5 * time.Second,
+		},
+		{
+			name: "zero override falls through to fixed-field resolution (P2-05)",
+			timeouts: &config.TimeoutsConfig{
+				Poll:      45 * time.Second,
+				Overrides: map[string]time.Duration{"poll": 0},
+			},
+			command: "poll",
+			want:    45 * time.Second,
+		},
+		{
+			name: "custom command with no override still defaults to 60s",
+			timeouts: &config.TimeoutsConfig{
+				Overrides: map[string]time.Duration{"cpu": 15 * time.Second},
+			},
+			command: "io",
+			want:    60 * time.Second,
+		},
 	}
 
 	for _, tt := range tests {
