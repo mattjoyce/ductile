@@ -289,3 +289,77 @@ func TestInsertAndGetRoundTrip(t *testing.T) {
 		t.Fatalf("round trip mismatch: got %+v want %+v", got, snapshot)
 	}
 }
+
+// TestRenderTimeoutsIncludesOverrides asserts the snapshot renders
+// operator-defined per-command timeouts (TimeoutsConfig.Overrides) alongside
+// the four core lifecycle fields, so the audit view matches what
+// Dispatcher.getTimeout actually enforces (P2-05 follow-up).
+func TestRenderTimeoutsIncludesOverrides(t *testing.T) {
+	t.Parallel()
+
+	got := renderTimeouts(&config.TimeoutsConfig{
+		Poll:   10 * time.Second,
+		Handle: 30 * time.Second,
+		Overrides: map[string]time.Duration{
+			"cpu": 15 * time.Second,
+			"io":  5 * time.Second,
+		},
+	})
+	m, ok := got.(map[string]any)
+	if !ok {
+		t.Fatalf("renderTimeouts returned %T, want map[string]any", got)
+	}
+
+	if m["poll"] != "10s" {
+		t.Errorf("poll = %v, want 10s", m["poll"])
+	}
+	if m["handle"] != "30s" {
+		t.Errorf("handle = %v, want 30s", m["handle"])
+	}
+	if m["cpu"] != "15s" {
+		t.Errorf("cpu override missing from snapshot: %v", m["cpu"])
+	}
+	if m["io"] != "5s" {
+		t.Errorf("io override missing from snapshot: %v", m["io"])
+	}
+}
+
+// TestRenderTimeoutsOmitsZeroOverrides asserts a zero-valued override is not
+// surfaced in the snapshot, matching dispatcher behavior (the > 0 guard at
+// Dispatcher.getTimeout means a zero override falls through to the named
+// field or the 60s default — it is effectively unused).
+func TestRenderTimeoutsOmitsZeroOverrides(t *testing.T) {
+	t.Parallel()
+
+	got := renderTimeouts(&config.TimeoutsConfig{
+		Poll:      10 * time.Second,
+		Overrides: map[string]time.Duration{"cpu": 0},
+	})
+	m, ok := got.(map[string]any)
+	if !ok {
+		t.Fatalf("renderTimeouts returned %T, want map[string]any", got)
+	}
+	if _, present := m["cpu"]; present {
+		t.Errorf("zero override surfaced in snapshot: %v", m["cpu"])
+	}
+}
+
+// TestRenderTimeoutsOverrideOfNamedFieldWinsMatchesDispatcher asserts that
+// when an operator (or a programmatic caller) sets Overrides[poll]=5s while
+// Poll=60s, the snapshot shows 5s for poll — matching Dispatcher.getTimeout
+// which checks Overrides[command] before the named field.
+func TestRenderTimeoutsOverrideOfNamedFieldWinsMatchesDispatcher(t *testing.T) {
+	t.Parallel()
+
+	got := renderTimeouts(&config.TimeoutsConfig{
+		Poll:      60 * time.Second,
+		Overrides: map[string]time.Duration{"poll": 5 * time.Second},
+	})
+	m, ok := got.(map[string]any)
+	if !ok {
+		t.Fatalf("renderTimeouts returned %T, want map[string]any", got)
+	}
+	if m["poll"] != "5s" {
+		t.Errorf("poll = %v, want 5s (Overrides should win in snapshot, matching dispatcher)", m["poll"])
+	}
+}

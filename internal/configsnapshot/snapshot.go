@@ -564,12 +564,23 @@ func renderTimeouts(timeouts *config.TimeoutsConfig) any {
 	if timeouts == nil {
 		return nil
 	}
-	return map[string]any{
+	out := map[string]any{
 		"poll":   durationString(timeouts.Poll),
 		"handle": durationString(timeouts.Handle),
 		"health": durationString(timeouts.Health),
 		"init":   durationString(timeouts.Init),
 	}
+	// Surface operator-defined per-command timeout overrides (P2-05) so the
+	// audit view matches what Dispatcher.getTimeout actually enforces. A
+	// zero-valued override is unused at dispatch time (the > 0 guard falls
+	// through to the fixed-field or 60s default) and is omitted here for the
+	// same reason.
+	for k, v := range timeouts.Overrides {
+		if v > 0 {
+			out[k] = durationString(v)
+		}
+	}
+	return out
 }
 
 func renderCircuitBreaker(breaker *config.CircuitBreakerConfig) any {

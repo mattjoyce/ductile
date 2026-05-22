@@ -394,7 +394,7 @@
     },
     "TimeoutsConfig": {
       "type": "object",
-      "description": "Per-command execution timeouts.",
+      "description": "Per-command execution timeouts. The four named fields are the core lifecycle commands; any additional key is treated as an operator-defined per-command timeout (e.g. plugins.stress.timeouts.cpu: 15s) and is bound into TimeoutsConfig.Overrides at YAML load (P2-05).",
       "properties": {
         "poll": {
           "type": "string",
@@ -421,7 +421,11 @@
           "default": "30s"
         }
       },
-      "additionalProperties": false
+      "additionalProperties": {
+        "type": "string",
+        "description": "Operator-defined per-command timeout (Go duration). Matched against a plugin manifest command name (e.g. cpu, io).",
+        "pattern": "^[0-9]+(ns|us|µs|ms|s|m|h)+$"
+      }
     },
     "CircuitBreakerConfig": {
       "type": "object",
