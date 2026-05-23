@@ -1,23 +1,22 @@
 // Package stopwatch captures per-invocation timing as immutable values.
 //
-// The dispatcher (the supervisor of plugin invocations) is the only writer.
+// The dispatcher (the supervisor of plugin invocations) is the only producer.
+// Records persist to the ductile DB (job_stopwatch table) via the state
+// package; this package owns only the value types and the capture mechanism.
 // Plugins never time themselves; they may optionally emit sub-spans on the
-// response, which the supervisor merges into the current Record.
+// response, which the supervisor merges into the current Record before
+// persisting.
 //
 // A Record is a value: no identity, no mutation, comparable by structural
-// equality, JSON-serializable as a stable shape. It travels with the job by
-// being appended to the request context under key "ductile_stopwatch".
+// equality, JSON-serializable as a stable shape. Telemetry is system data,
+// distinct from plugin domain payload — it lives in the supervisor's
+// ledger, not in baggage.
 package stopwatch
 
 import (
 	"log/slog"
 	"time"
 )
-
-// ContextKey is the reserved system-owned context key holding the list of
-// Records accumulated for a pipeline run. Plugins must not write here; the
-// dispatcher overwrites any value the plugin attempts to set.
-const ContextKey = "ductile_stopwatch"
 
 // SubsResponseKey is the optional response-payload key plugins use to emit
 // sub-spans. The supervisor reads it, caps at MaxSubsPerRecord, and merges
@@ -119,18 +118,6 @@ func (s *Stopwatch) Finish(exitTime time.Time, status string, postWork time.Dura
 		Status:        status,
 		Subs:          capSubs(subs, nil),
 	}
-}
-
-// Attach appends rec to the ductile_stopwatch list inside ctx. If ctx already
-// holds a non-list value at that key (e.g. a plugin tried to set it), the
-// value is overwritten with a fresh list — the supervisor owns this key.
-//
-// Returns the updated list for caller convenience; ctx is mutated in place.
-func Attach(ctx map[string]any, rec Record) []Record {
-	existing, _ := ctx[ContextKey].([]Record)
-	updated := append(existing, rec)
-	ctx[ContextKey] = updated
-	return updated
 }
 
 // capSubs returns at most MaxSubsPerRecord entries. If logger is non-nil and

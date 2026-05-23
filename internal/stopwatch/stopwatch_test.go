@@ -102,42 +102,6 @@ func TestFinish_NilSubsBecomesEmptySlice(t *testing.T) {
 	}
 }
 
-func TestAttach_AppendsToList(t *testing.T) {
-	ctx := map[string]any{}
-	r1 := Record{PluginID: "a", Status: StatusOK, Subs: []map[string]any{}}
-	r2 := Record{PluginID: "b", Status: StatusOK, Subs: []map[string]any{}}
-	Attach(ctx, r1)
-	out := Attach(ctx, r2)
-	if len(out) != 2 {
-		t.Fatalf("expected 2 records, got %d", len(out))
-	}
-	list, ok := ctx[ContextKey].([]Record)
-	if !ok {
-		t.Fatalf("ctx[%s] not []Record: %T", ContextKey, ctx[ContextKey])
-	}
-	if list[0].PluginID != "a" || list[1].PluginID != "b" {
-		t.Errorf("order broken: %v", list)
-	}
-}
-
-func TestAttach_OverwritesPluginProvidedValue(t *testing.T) {
-	// Simulate a plugin that tried to set ductile_stopwatch to something bogus.
-	ctx := map[string]any{ContextKey: "i-am-a-plugin"}
-	rec := Record{PluginID: "real", Status: StatusOK, Subs: []map[string]any{}}
-	out := Attach(ctx, rec)
-
-	if len(out) != 1 {
-		t.Fatalf("expected 1 record, got %d", len(out))
-	}
-	list, ok := ctx[ContextKey].([]Record)
-	if !ok {
-		t.Fatalf("plugin's bogus value not overwritten by supervisor; got %T", ctx[ContextKey])
-	}
-	if list[0].PluginID != "real" {
-		t.Errorf("supervisor's record missing")
-	}
-}
-
 func TestSubsFromResponse_HandlesNil(t *testing.T) {
 	out := SubsFromResponse(nil, nil)
 	if out == nil || len(out) != 0 {

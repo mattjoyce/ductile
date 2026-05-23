@@ -412,8 +412,12 @@ func (d *Dispatcher) executeJob(ctx context.Context, job *queue.Job) {
 	}
 
 	// Stopwatch: supervisor-side timing wraps the spawn. The dispatcher is
-	// the only writer of ductile_stopwatch; plugins receive but never own it.
+	// the sole producer of these records; they persist to the ductile DB
+	// (job_stopwatch table) — not via baggage, because telemetry is system
+	// data, not domain data (Hickey decomplecting).
 	stepName, _ := requestContext["ductile_step_id"].(string)
+	pipelineName, _ := requestContext["ductile_pipeline"].(string)
+	pipelineInstanceID, _ := requestContext["ductile_pipeline_instance_id"].(string)
 	sw := stopwatch.New(job.Plugin, stepName, job.Attempt)
 	sw.MarkSpawn()
 
@@ -422,9 +426,10 @@ func (d *Dispatcher) executeJob(ctx context.Context, job *queue.Job) {
 	swExitTime := time.Now()
 
 	// Classify the spawn outcome into a closed-set status token, then
-	// attach an immutable Record to the supervisor's view of the context.
-	// All subsequent early-return paths inherit this attachment via the
-	// shared map reference.
+	// persist the Record to the supervisor's ledger. Writer failures are
+	// logged but never propagate — losing a telemetry row must not crash
+	// the job (Armstrong: keep the supervisor alive even when its ledger
+	// stumbles).
 	var swStatus string
 	switch {
 	case errors.Is(err, context.DeadlineExceeded):
@@ -442,7 +447,10 @@ func (d *Dispatcher) executeJob(ctx context.Context, job *queue.Job) {
 	if resp != nil {
 		swSubs = stopwatch.SubsFromResponse(resp.StopwatchSubs, jobLogger)
 	}
-	stopwatch.Attach(requestContext, sw.Finish(swExitTime, swStatus, 0, swSubs))
+	swRec := sw.Finish(swExitTime, swStatus, 0, swSubs)
+	if writeErr := d.state.RecordStopwatch(ctx, job.ID, swRec, pipelineName, pipelineInstanceID); writeErr != nil {
+		jobLogger.Warn("stopwatch record write failed", "error", writeErr, "job_id", job.ID)
+	}
 
 	// Handle timeout (check if error is context.DeadlineExceeded)
 	if err != nil {

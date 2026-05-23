@@ -308,8 +308,19 @@ journalctl --user -u ductile-local --no-pager -n 50 | grep ERROR
 
 The dispatcher captures per-invocation timing automatically. Plugins do not
 instrument themselves; the supervisor measures them. Each plugin invocation
-emits one immutable `stopwatch.Record` into the request context under the
-reserved key `ductile_stopwatch`.
+writes one immutable `stopwatch.Record` to the `job_stopwatch` table — the
+supervisor's ledger. Telemetry is system data, distinct from plugin domain
+payload (Hickey decomplecting), so it lives in the database and never rides
+along in baggage.
+
+**Query directly when you need it:**
+
+```sh
+sqlite3 /path/to/ductile.db "SELECT job_id, plugin, attempt, dur_ns, status
+  FROM job_stopwatch ORDER BY id DESC LIMIT 20;"
+```
+
+Soon: surfaced via `ductile inspect <job_id>` (claude-9mf).
 
 A Record carries everything needed to attribute time:
 

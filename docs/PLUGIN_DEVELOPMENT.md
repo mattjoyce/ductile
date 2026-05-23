@@ -918,15 +918,11 @@ should not need a future migration sprint to fix.
 
 The dispatcher times every plugin invocation automatically. You do not need
 to wrap your handler in `time.now()` calls; the supervisor records a
-`stopwatch.Record` (plugin id, step, monotonic duration, status, etc.) into
-the request context under the reserved key `ductile_stopwatch`. This is the
-single right place to read or aggregate per-step timing — see
-[PLUGIN_DIAGNOSTICS.md](./PLUGIN_DIAGNOSTICS.md) for the data shape and the
-`gateway_time` formula.
-
-`ductile_stopwatch` is **system-owned**. Any value a plugin places under
-that key in its response or state is overwritten by the dispatcher; do not
-rely on it as a free-form storage slot.
+`stopwatch.Record` (plugin id, step, monotonic duration, status, etc.) to
+the `job_stopwatch` table in the ductile DB. Telemetry is system data; it
+lives in the supervisor's ledger, not in your request context or response.
+See [PLUGIN_DIAGNOSTICS.md](./PLUGIN_DIAGNOSTICS.md) for the data shape and
+the `gateway_time` formula.
 
 ### Optional sub-spans for plugin-internal phases
 
