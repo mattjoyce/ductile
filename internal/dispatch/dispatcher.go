@@ -1725,11 +1725,19 @@ func (d *Dispatcher) completeJob(ctx context.Context, logger *slog.Logger, jobID
 // so the caller refuses the enqueue rather than silently treating the chain as
 // fresh and resetting the cap.
 func (d *Dispatcher) hookChainDepth(ctx context.Context, job *queue.Job) (int, error) {
+	// hookWalkSafetyCap bounds the parent walk against pathologically corrupted
+	// lineage (e.g. a cycle introduced by a future schema change or external
+	// mutation). Legitimate chains are bounded by HookMaxDepth which is far
+	// smaller than this cap; tripping it always indicates a bug or tampering.
+	const hookWalkSafetyCap = 1024
 	depth := 0
 	currentSubmittedBy := job.SubmittedBy
 	currentParent := job.ParentJobID
 	for currentSubmittedBy == "hook" {
 		depth++
+		if depth > hookWalkSafetyCap {
+			return 0, fmt.Errorf("hook depth walk exceeded safety cap %d starting at job %s; possible lineage cycle", hookWalkSafetyCap, job.ID)
+		}
 		if currentParent == nil {
 			return 0, fmt.Errorf("hook job %s has no parent_job_id; lineage corrupted", job.ID)
 		}
