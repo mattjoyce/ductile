@@ -608,6 +608,9 @@ func applyConfigDefaults(cfg *Config) *Config {
 	if cfg.Service.MaxWorkers == 0 {
 		cfg.Service.MaxWorkers = defaults.Service.MaxWorkers
 	}
+	if cfg.Service.HookMaxDepth == 0 {
+		cfg.Service.HookMaxDepth = defaults.Service.HookMaxDepth
+	}
 
 	// Handle database alias
 	if cfg.State.Path == "" && cfg.Database.Path != "" {
@@ -666,11 +669,28 @@ func interpolateEnv(input string) string {
 	})
 }
 
+// MinTickInterval is the hard floor for service.tick_interval. Anything below this
+// is rejected at config validation as a sanity guard against hostile or accidental
+// tight ticks (P2-10): low tick rates can flood the dispatcher work loop with no
+// visible cause. Operators who legitimately need finer granularity should redesign
+// the workload rather than reduce this floor.
+const MinTickInterval = 100 * time.Millisecond
+
+// RecommendedTickInterval is the soft floor (warning, not error). Doctor warns when
+// tick_interval is below this value to nudge operators away from chatty service polls.
+const RecommendedTickInterval = 1 * time.Second
+
 // validate performs basic validation on the configuration.
 func validate(cfg *Config) error {
 	// Service validation
 	if cfg.Service.TickInterval <= 0 {
 		return fmt.Errorf("service.tick_interval must be positive")
+	}
+	if cfg.Service.TickInterval < MinTickInterval {
+		return fmt.Errorf("service.tick_interval %s is below the minimum allowed (%s); see P2-10", cfg.Service.TickInterval, MinTickInterval)
+	}
+	if cfg.Service.HookMaxDepth < 0 {
+		return fmt.Errorf("service.hook_max_depth %d must be >= 0 (0 means use default %d); see P2-11", cfg.Service.HookMaxDepth, DefaultHookMaxDepth)
 	}
 	if cfg.Service.MaxWorkers <= 0 {
 		return fmt.Errorf("service.max_workers must be positive")

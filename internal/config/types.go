@@ -50,6 +50,13 @@ type ServiceConfig struct {
 	MaxWorkers                  int           `yaml:"max_workers,omitempty"`
 	StrictMode                  bool          `yaml:"strict_mode"`
 	AllowSymlinks               bool          `yaml:"allow_symlinks"`
+	// HookMaxDepth caps the on-hook lifecycle chain depth. A root job that fires
+	// a hook produces a depth-1 hook job; if that hook job itself fires a hook
+	// (because its plugin has notify_on_complete: true), the next would-be hook
+	// would be depth 2, and so on. Enqueue refuses any hook beyond this cap.
+	// Set to 0 to use the default (DefaultHookMaxDepth). Negative is rejected
+	// by config validation. P2-11.
+	HookMaxDepth int `yaml:"hook_max_depth,omitempty"`
 }
 
 // StateConfig defines state storage settings.
@@ -510,6 +517,10 @@ func (cf *ConfigFiles) HighSecurityFiles() []string {
 	return files
 }
 
+// DefaultHookMaxDepth bounds the on-hook lifecycle chain. Four hops is enough
+// for legitimate chained notifications while bounding loop blast radius. P2-11.
+const DefaultHookMaxDepth = 4
+
 // Defaults returns a Config with sensible defaults for MVP.
 func Defaults() *Config {
 	return &Config{
@@ -526,6 +537,7 @@ func Defaults() *Config {
 			BreakerTransitionsRetention: 90 * 24 * time.Hour,
 			MaxWorkers:                  max(1, runtime.NumCPU()-1),
 			AllowSymlinks:               false,
+			HookMaxDepth:                DefaultHookMaxDepth,
 		},
 		State: StateConfig{
 			Path: "./data/state.db",

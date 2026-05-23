@@ -149,7 +149,10 @@ func (rm *reloadManager) Reload(ctx context.Context) (api.ReloadResponse, error)
 	if err != nil {
 		return api.ReloadResponse{Status: "error", Message: err.Error()}, err
 	}
-	if err := verifyReloadIntegrity(rm.configPath); err != nil {
+	// P2-10: source strict_mode policy from the RUNNING config (oldCfg), not the
+	// proposed newCfg — otherwise an attacker could relax admission by setting
+	// strict_mode: false in the very reload they are trying to push.
+	if err := verifyReloadIntegrity(rm.configPath, oldCfg.Service.StrictMode); err != nil {
 		return api.ReloadResponse{Status: "error", Message: err.Error()}, err
 	}
 	if err := validateReloadableFields(oldCfg, newCfg); err != nil {
@@ -226,15 +229,28 @@ func resolveConfigDir(configPath string) string {
 	return configDir
 }
 
-func verifyReloadIntegrity(configPath string) error {
+// verifyReloadIntegrity validates the on-disk config against the .checksums manifest
+// and plugin fingerprint locks. P2-10: when strict is true, operational tier warnings
+// (e.g. config.yaml or routes.yaml drift) are promoted to admission failures so the
+// reload is rejected. When strict is false, operational warnings stay warnings —
+// only high-security file mismatches and plugin fingerprint mismatches reject. The
+// strict flag should come from the running config's service.strict_mode so that an
+// attacker cannot relax policy via the very reload they are trying to push.
+func verifyReloadIntegrity(configPath string, strict bool) error {
 	configDir := resolveConfigDir(configPath)
 	files, err := config.DiscoverConfigFiles(configDir)
 	if err != nil {
 		return fmt.Errorf("config reload rejected: unlocked changes detected")
 	}
 	result, err := config.VerifyIntegrity(configDir, files)
-	if err != nil || !result.Passed {
+	if err != nil {
 		return fmt.Errorf("config reload rejected: unlocked changes detected")
+	}
+	if !result.Passed {
+		return fmt.Errorf("config reload rejected: %s", strings.Join(result.Errors, "; "))
+	}
+	if strict && len(result.Warnings) > 0 {
+		return fmt.Errorf("config reload rejected (strict_mode): operational drift: %s", strings.Join(result.Warnings, "; "))
 	}
 	if err := verifyPluginFingerprintsForConfig(configPath); err != nil {
 		return fmt.Errorf("config reload rejected: %v", err)
@@ -401,23 +417,15 @@ func buildRuntime(cfg *config.Config, configPath string, configSource string, re
 		)
 	}
 
-	// Strict mode enforcement
+	// Strict mode enforcement. P2-10: route through verifyReloadIntegrity with
+	// strict=true so startup and reload share one admission gate — operational
+	// drift fails both, not just one.
 	if cfg.Service.StrictMode {
 		logger.Info("strict mode enabled, performing pre-flight checks")
 
-		configDir := resolveConfigDir(configPath)
-		files, err := config.DiscoverConfigFiles(configDir)
-		if err == nil {
-			result, err := config.VerifyIntegrity(configDir, files)
-			if err != nil || !result.Passed {
-				logger.Error("integrity check failed (strict mode)", "errors", result.Errors)
-				return nil, fmt.Errorf("integrity check failed")
-			}
-		}
-
-		if err := verifyPluginFingerprintsForConfig(configPath); err != nil {
-			logger.Error("plugin fingerprint check failed (strict mode)", "error", err)
-			return nil, fmt.Errorf("plugin fingerprint check failed: %w", err)
+		if err := verifyReloadIntegrity(configPath, true); err != nil {
+			logger.Error("integrity check failed (strict mode)", "error", err)
+			return nil, fmt.Errorf("integrity check failed: %w", err)
 		}
 
 		doc := doctor.New(cfg, registry)

@@ -20,6 +20,7 @@ import (
 	"github.com/mattjoyce/ductile/internal/config"
 	"github.com/mattjoyce/ductile/internal/doctor"
 	"github.com/mattjoyce/ductile/internal/plugin"
+	"github.com/mattjoyce/ductile/internal/router/dsl"
 	"gopkg.in/yaml.v3"
 )
 
@@ -875,7 +876,8 @@ func validateConfigAtPath(configPath string) (*doctor.Result, int, error) {
 	if err != nil {
 		return nil, 1, err
 	}
-	result := doctor.New(cfg, registry).Validate()
+	hooks := collectHookProjection(cfg)
+	result := doctor.New(cfg, registry).AddHookPipelines(hooks).Validate()
 	if !result.Valid {
 		return result, 1, nil
 	}
@@ -883,6 +885,46 @@ func validateConfigAtPath(configPath string) (*doctor.Result, int, error) {
 		return result, 2, nil
 	}
 	return result, 0, nil
+}
+
+// collectHookProjection loads the configured pipeline files and projects them
+// into the slim shape doctor.validateHookCycles needs. Pipeline parse errors
+// silently yield an empty projection — that's a separate failure surface
+// (validateRoutes / loader) and not the doctor cycle-check's concern.
+// P2-11.
+func collectHookProjection(cfg *config.Config) []doctor.HookPipeline {
+	if cfg == nil || len(cfg.SourceFiles) == 0 {
+		return nil
+	}
+	paths := make([]string, 0, len(cfg.SourceFiles))
+	for f := range cfg.SourceFiles {
+		paths = append(paths, f)
+	}
+	sort.Strings(paths)
+	set, err := dsl.LoadAndCompileFiles(paths)
+	if err != nil || set == nil {
+		return nil
+	}
+	hooks := make([]doctor.HookPipeline, 0, len(set.Pipelines))
+	for _, pipe := range set.Pipelines {
+		if !pipe.IsHook || pipe.Trigger == "" {
+			continue
+		}
+		targets := make([]string, 0, len(pipe.Nodes))
+		for _, node := range pipe.Nodes {
+			if node.Uses != "" {
+				targets = append(targets, node.Uses)
+			}
+		}
+		sort.Strings(targets)
+		hooks = append(hooks, doctor.HookPipeline{
+			Name:       pipe.Name,
+			OnHook:     pipe.Trigger,
+			FromPlugin: pipe.FromPlugin,
+			Targets:    targets,
+		})
+	}
+	return hooks
 }
 
 func discoverRegistry(cfg *config.Config, configPath string) (*plugin.Registry, error) {
