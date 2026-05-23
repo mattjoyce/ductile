@@ -20,6 +20,8 @@ import time
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Tuple
 
+from _stopwatch import Spans
+
 SAFE_ENV_KEYS = {
     "PATH",
     "HOME",
@@ -133,6 +135,14 @@ def plugin_ok(*, result: str, events: List[Dict[str, Any]] | None = None, logs: 
         response["events"] = events
     if state_updates:
         response["state_updates"] = state_updates
+    return response
+
+
+def attach_subs(response: Dict[str, Any], spans: Spans) -> Dict[str, Any]:
+    """Attach sub-spans to a response if any were captured."""
+    subs = spans.to_response_key()
+    if subs:
+        response["ductile_stopwatch_subs"] = subs
     return response
 
 
@@ -273,7 +283,7 @@ def upstream_label(req: Dict[str, Any]) -> str:
     return "unknown"
 
 
-def handle_exec(req: Dict[str, Any]) -> Dict[str, Any]:
+def handle_exec(req: Dict[str, Any], spans: Spans) -> Dict[str, Any]:
     config = req.get("config", {})
     if not isinstance(config, dict):
         return plugin_error("request.config must be an object", retry=False)
@@ -316,6 +326,7 @@ def handle_exec(req: Dict[str, Any]) -> Dict[str, Any]:
     env = build_exec_env(config, payload, req)
     expanded_args = expand_env_vars(command_args, env)
     start = time.time()
+    run_t0 = time.perf_counter_ns()
     try:
         completed = subprocess.run(
             expanded_args,
@@ -327,9 +338,20 @@ def handle_exec(req: Dict[str, Any]) -> Dict[str, Any]:
             timeout=timeout_seconds,
         )
     except subprocess.TimeoutExpired as exc:
+        run_dur_ns = time.perf_counter_ns() - run_t0
         duration_ms = int((time.time() - start) * 1000)
+        # exit_code is -1 on timeout to mirror the event payload below;
+        # the dedicated status="timeout" tag is the canonical signal.
+        spans.add("sys_exec.subprocess_run", dur_ns=run_dur_ns, status="timeout", exit_code=-1)
         stderr_raw = exc.stderr or ""
+        cap_t0 = time.perf_counter_ns()
         stderr_text, stderr_truncated = truncate_text(stderr_raw, stderr_max)
+        spans.add(
+            "sys_exec.output_capture",
+            dur_ns=time.perf_counter_ns() - cap_t0,
+            bytes=len(stderr_raw),
+            status="ok",
+        )
         message = f"command timed out after {timeout_seconds:.3f}s"
         logs = [
             {"level": "error", "message": message},
@@ -352,12 +374,30 @@ def handle_exec(req: Dict[str, Any]) -> Dict[str, Any]:
             result["events"] = [{"type": event_type, "payload": payload_out}]
         return result
     except Exception as exc:
+        spans.add("sys_exec.subprocess_run", dur_ns=time.perf_counter_ns() - run_t0, status="err")
         return plugin_error(f"command execution failed: {exc}", retry=False)
 
+    run_dur_ns = time.perf_counter_ns() - run_t0
     duration_ms = int((time.time() - start) * 1000)
-    stdout_text, stdout_truncated = truncate_text(completed.stdout or "", stdout_max)
-    stderr_text, stderr_truncated = truncate_text(completed.stderr or "", stderr_max)
     exit_code = int(completed.returncode)
+    spans.add(
+        "sys_exec.subprocess_run",
+        dur_ns=run_dur_ns,
+        status="ok" if exit_code == 0 else "err",
+        exit_code=exit_code,
+    )
+
+    cap_t0 = time.perf_counter_ns()
+    raw_stdout = completed.stdout or ""
+    raw_stderr = completed.stderr or ""
+    stdout_text, stdout_truncated = truncate_text(raw_stdout, stdout_max)
+    stderr_text, stderr_truncated = truncate_text(raw_stderr, stderr_max)
+    spans.add(
+        "sys_exec.output_capture",
+        dur_ns=time.perf_counter_ns() - cap_t0,
+        bytes=len(raw_stdout) + len(raw_stderr),
+        status="ok",
+    )
     success = exit_code == 0 if success_exit_codes is None else exit_code in success_exit_codes
     upstream = upstream_label(req)
 
@@ -426,13 +466,15 @@ def main() -> int:
     if not isinstance(config, dict):
         config = {}
 
+    spans = Spans()
     if command in ("handle", "poll"):
-        resp = handle_exec(req)
+        resp = handle_exec(req, spans)
     elif command == "health":
         resp = handle_health(config)
     else:
         resp = plugin_error(f"unsupported command: {command}", retry=False)
 
+    attach_subs(resp, spans)
     json.dump(resp, sys.stdout)
     sys.stdout.write("\n")
     return 0
