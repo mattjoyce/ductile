@@ -41,5 +41,8 @@ config_keys:
   optional:
     - user_agent
     - timeout_seconds
-    - follow_redirects
-    - output_format  # html | text | markdown (markdown uses Accept: text/markdown with HTML fallback)
+    - follow_redirects   # default false; redirect targets are re-validated against egress policy (P2-06)
+    - output_format      # html | text | markdown (markdown uses Accept: text/markdown with HTML fallback)
+    - max_response_bytes # hard cap on response body in bytes; default 1048576 (1 MiB)
+    - allow_hosts        # list of hostnames; when non-empty only matching hosts are reachable AND they bypass the IP blocklist (operator opt-in for internal/loopback)
+    - deny_hosts         # list of hostnames; matching hosts are rejected before any DNS/network I/O
