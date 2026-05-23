@@ -68,14 +68,16 @@ func TestAuthenticate(t *testing.T) {
 			wantBool:      false,
 		},
 		{
-			name:      "plugin rw scope expands to ro",
+			name:      "plugin rw scope expands to ro plus narrower P2-07 splits",
 			presented: "plugin-token",
 			tokens:    tokens,
 			wantPrincipal: Principal{
 				Token: "plugin-token",
 				Scopes: map[string]struct{}{
-					"plugin:rw": {},
-					"plugin:ro": {},
+					"plugin:rw":         {},
+					"plugin:ro":         {},
+					"plugin:catalog:ro": {},
+					"plugin:invoke:ro":  {},
 				},
 			},
 			wantBool: true,
@@ -199,11 +201,28 @@ func TestNormalizeScopes(t *testing.T) {
 			},
 		},
 		{
-			name:   "plugin rw expansion",
+			name:   "plugin rw expansion (full plugin tree)",
 			scopes: []string{"plugin:rw"},
 			want: map[string]struct{}{
-				"plugin:rw": {},
-				"plugin:ro": {},
+				"plugin:rw":         {},
+				"plugin:ro":         {},
+				"plugin:catalog:ro": {},
+				"plugin:invoke:ro":  {},
+			},
+		},
+		{
+			name:   "plugin ro is catalog-only (P2-07 split)",
+			scopes: []string{"plugin:ro"},
+			want: map[string]struct{}{
+				"plugin:ro":         {},
+				"plugin:catalog:ro": {},
+			},
+		},
+		{
+			name:   "plugin invoke ro is invoke-only",
+			scopes: []string{"plugin:invoke:ro"},
+			want: map[string]struct{}{
+				"plugin:invoke:ro": {},
 			},
 		},
 		{

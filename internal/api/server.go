@@ -211,8 +211,12 @@ func (s *Server) setupRoutes() *chi.Mux {
 		r.Get("/.well-known/ai-plugin.json", s.handleWellKnownPlugin)
 		r.Get("/plugin/{plugin}/openapi.json", s.handleOpenAPIPlugin)
 
-		r.With(s.requireScopes("plugin:ro", "plugin:rw", "*")).Post("/plugin/{plugin}/{command}", s.handlePluginTrigger)
-		r.With(s.requireScopes("plugin:ro", "plugin:rw", "*")).Get("/plugin/{plugin}", s.handleGetPlugin)
+		// P2-07: plugin:ro is now catalog-only. Invocation of read-class
+		// commands requires plugin:invoke:ro (or plugin:rw / *). Catalog
+		// reads accept plugin:catalog:ro (implied by both plugin:ro and
+		// plugin:rw) so existing tokens continue to discover plugins.
+		r.With(s.requireScopes("plugin:invoke:ro", "plugin:rw", "*")).Post("/plugin/{plugin}/{command}", s.handlePluginTrigger)
+		r.With(s.requireScopes("plugin:catalog:ro", "plugin:rw", "*")).Get("/plugin/{plugin}", s.handleGetPlugin)
 		r.With(s.requireScopes("plugin:rw", "*")).Post("/pipeline/{pipeline}", s.handlePipelineTrigger)
 		r.With(s.requireScopes("jobs:ro", "jobs:rw", "*")).Get("/job/{jobID}", s.handleGetJob)
 		r.With(s.requireScopes("jobs:ro", "jobs:rw", "*")).Get("/job/{jobID}/tree", s.handleGetJobTree)

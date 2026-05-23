@@ -382,6 +382,10 @@ func (s *Server) handlePluginTrigger(w http.ResponseWriter, r *http.Request) {
 
 	principal, _ := auth.PrincipalFromContext(r.Context())
 	cmdType, _ := plug.CommandTypeFor(commandName)
+	// P2-07: the route middleware already required plugin:invoke:ro / rw / *
+	// so a plain plugin:ro token cannot reach this handler. Write commands
+	// additionally require plugin:rw or wildcard — narrower read-only
+	// invocation tokens cannot trigger mutating commands.
 	if cmdType != plugin.CommandTypeRead {
 		if !auth.HasAnyScope(principal, "plugin:rw", "*") {
 			s.writeError(w, http.StatusForbidden, "insufficient scope")

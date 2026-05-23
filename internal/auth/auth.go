@@ -93,6 +93,18 @@ func normalizeScopes(scopes []string) map[string]struct{} {
 	// Write implies read for well-known resources.
 	if _, ok := out["plugin:rw"]; ok {
 		out["plugin:ro"] = struct{}{}
+		// plugin:rw is a strict superset of both narrower plugin:*:ro scopes
+		// introduced for P2-07 — catalog reads AND read-class invocation.
+		out["plugin:catalog:ro"] = struct{}{}
+		out["plugin:invoke:ro"] = struct{}{}
+	}
+	// Legacy plugin:ro is split into catalog (read manifests / list commands)
+	// vs invoke (actually call read-class commands). P2-07: a plain plugin:ro
+	// token grants catalog access only — operators who relied on plugin:ro
+	// for read-class invocation must add plugin:invoke:ro explicitly. This is
+	// a deliberate breaking change so least-privilege is the default.
+	if _, ok := out["plugin:ro"]; ok {
+		out["plugin:catalog:ro"] = struct{}{}
 	}
 	if _, ok := out["jobs:rw"]; ok {
 		out["jobs:ro"] = struct{}{}
