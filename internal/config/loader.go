@@ -695,6 +695,18 @@ func validate(cfg *Config) error {
 	if cfg.Service.MaxWorkers <= 0 {
 		return fmt.Errorf("service.max_workers must be positive")
 	}
+	if cfg.Telemetry.Stopwatch.RetentionDays < 0 {
+		return fmt.Errorf("telemetry.stopwatch.retention_days %d must be >= 0 (0 means use default)", cfg.Telemetry.Stopwatch.RetentionDays)
+	}
+	if cfg.Telemetry.Stopwatch.Rollup.RetentionDays < 0 {
+		return fmt.Errorf("telemetry.stopwatch.rollup.retention_days %d must be >= 0 (0 means use default)", cfg.Telemetry.Stopwatch.Rollup.RetentionDays)
+	}
+	if cfg.Telemetry.Stopwatch.Janitor.Interval < 0 {
+		return fmt.Errorf("telemetry.stopwatch.janitor.interval %s must be >= 0 (0 means use default)", cfg.Telemetry.Stopwatch.Janitor.Interval)
+	}
+	if cfg.Telemetry.Stopwatch.Janitor.BatchSize < 0 {
+		return fmt.Errorf("telemetry.stopwatch.janitor.batch_size %d must be >= 0 (0 means use default)", cfg.Telemetry.Stopwatch.Janitor.BatchSize)
+	}
 	if cfg.Service.DedupeTTL > 0 && cfg.Service.JobQueueRetention > 0 && cfg.Service.JobQueueRetention < cfg.Service.DedupeTTL {
 		return fmt.Errorf("service.job_queue_retention (%s) must be >= service.dedupe_ttl (%s) because dedupe checks use terminal rows in job_queue", cfg.Service.JobQueueRetention, cfg.Service.DedupeTTL)
 	}

@@ -24,10 +24,57 @@ type Config struct {
 	RemoteIngress   *RemoteIngressConfig  `yaml:"remote_ingress,omitempty"`
 	Routes          []RouteConfig         `yaml:"routes,omitempty"`   // Not in MVP
 	Webhooks        *WebhooksConfig       `yaml:"webhooks,omitempty"` // Not in MVP
+	Telemetry       TelemetryConfig       `yaml:"telemetry,omitempty"`
 	SourceFiles     map[string]*yaml.Node `yaml:"-"`                  // Physical files tracked for updates
 	Tokens          []TokenEntry          `yaml:"-"`                  // Directory mode: token entries from tokens.yaml
 	Pipelines       []PipelineEntry       `yaml:"-"`                  // Directory mode: pipeline entries
 	ConfigDir       string                `yaml:"-"`                  // Directory mode: root config directory
+}
+
+// TelemetryConfig defines retention and rollup behavior for system-data
+// tables (currently just job_stopwatch). Operator-tunable retention is
+// kept here, separate from domain-data retention in ServiceConfig (which
+// covers job_queue/job_log lifecycle).
+type TelemetryConfig struct {
+	Stopwatch StopwatchTelemetryConfig `yaml:"stopwatch,omitempty"`
+}
+
+// StopwatchTelemetryConfig defines retention, rollup, and janitor settings
+// for the stopwatch ledger. All fields are optional; zero values mean
+// "use the default" defined in internal/janitor.
+type StopwatchTelemetryConfig struct {
+	// RetentionDays bounds how long raw job_stopwatch rows are kept.
+	// 0 means "use default" (DefaultRetentionDays). Set to a very large
+	// number to effectively disable raw-row pruning (rollups still apply).
+	RetentionDays int `yaml:"retention_days,omitempty"`
+
+	Rollup  StopwatchRollupConfig  `yaml:"rollup,omitempty"`
+	Janitor StopwatchJanitorConfig `yaml:"janitor,omitempty"`
+}
+
+// StopwatchRollupConfig controls daily quartile aggregation of raw
+// stopwatch rows before they are pruned.
+type StopwatchRollupConfig struct {
+	// Enabled toggles rollup computation. When false the janitor still
+	// prunes raw rows past RetentionDays — historical detail is lost
+	// entirely rather than aggregated.
+	Enabled bool `yaml:"enabled,omitempty"`
+
+	// RetentionDays bounds how long rollup rows are kept after computation.
+	// 0 means "use default" (DefaultRollupRetentionDays).
+	RetentionDays int `yaml:"retention_days,omitempty"`
+}
+
+// StopwatchJanitorConfig controls how the janitor goroutine ticks.
+type StopwatchJanitorConfig struct {
+	// Interval between janitor ticks. 0 means "use default"
+	// (DefaultJanitorInterval). The janitor is idempotent — running more
+	// often than needed is cheap.
+	Interval time.Duration `yaml:"interval,omitempty"`
+
+	// BatchSize bounds rows deleted per tick to avoid long lock holds
+	// on the writer. 0 means "use default" (DefaultJanitorBatchSize).
+	BatchSize int `yaml:"batch_size,omitempty"`
 }
 
 // EnvironmentVarsConfig defines env file includes for interpolation.
