@@ -235,6 +235,56 @@ CREATE INDEX IF NOT EXISTS job_stopwatch_job_attempt_idx
 CREATE INDEX IF NOT EXISTS job_stopwatch_pipeline_idx
   ON job_stopwatch(pipeline, pipeline_instance_id);
 
+-- Job Stopwatch Daily Rollups: pre-aggregated quartile rows per
+-- (plugin, pipeline, step_id, status, day_utc). The janitor computes
+-- these from raw job_stopwatch rows before deleting them, so historical
+-- p50/p90/p99 trends survive the raw-row retention TTL. UNIQUE prevents
+-- double-aggregation on re-run.
+--
+-- pipeline and step_id may be empty strings when the dispatched job had
+-- no pipeline context (one-off triggers). Empty string rather than NULL
+-- so the UNIQUE constraint behaves predictably (SQLite treats each NULL
+-- as distinct).
+--
+-- Soft introduction: NOT in the validator requiredTables list, so
+-- existing databases continue to start without it. Operators upgrade
+-- via scripts/migrate-add-job-stopwatch-rollup-table.py. Fresh
+-- databases get this from BootstrapSQLite on first start.
+CREATE TABLE IF NOT EXISTS job_stopwatch_rollup_daily (
+  id              INTEGER PRIMARY KEY AUTOINCREMENT,
+  plugin          TEXT    NOT NULL,
+  pipeline        TEXT    NOT NULL DEFAULT '',
+  step_id         TEXT    NOT NULL DEFAULT '',
+  status          TEXT    NOT NULL,
+  day_utc         TEXT    NOT NULL,       -- YYYY-MM-DD
+  sample_count    INTEGER NOT NULL,
+  sum_dur_ns      INTEGER NOT NULL,       -- enables mean / re-aggregation
+  min_dur_ns      INTEGER NOT NULL,
+  max_dur_ns      INTEGER NOT NULL,
+  p50_dur_ns      INTEGER NOT NULL,
+  p90_dur_ns      INTEGER NOT NULL,
+  p99_dur_ns      INTEGER NOT NULL,
+  created_at      TEXT    NOT NULL,       -- RFC3339Nano UTC of rollup write
+  UNIQUE(plugin, pipeline, step_id, status, day_utc)
+);
+CREATE INDEX IF NOT EXISTS job_stopwatch_rollup_pipeline_day_idx
+  ON job_stopwatch_rollup_daily(pipeline, step_id, day_utc);
+CREATE INDEX IF NOT EXISTS job_stopwatch_rollup_plugin_day_idx
+  ON job_stopwatch_rollup_daily(plugin, day_utc);
+
+-- Janitor heartbeat: one row per janitor name recording its last
+-- successful tick. Used by the doctor check to warn when retention is
+-- silently failing. Keyed by name so future janitors (rollup vs. raw
+-- prune, or per-table janitors) each have their own heartbeat.
+CREATE TABLE IF NOT EXISTS janitor_heartbeat (
+  name              TEXT PRIMARY KEY,
+  last_run_at       TEXT NOT NULL,        -- RFC3339Nano UTC of last successful tick
+  last_status       TEXT NOT NULL,        -- ok | err
+  last_error        TEXT NOT NULL DEFAULT '',
+  rows_rolled_up    INTEGER NOT NULL DEFAULT 0,
+  rows_deleted      INTEGER NOT NULL DEFAULT 0
+);
+
 -- Schedule Entries: Last fire times and next scheduled runs.
 CREATE TABLE IF NOT EXISTS schedule_entries (
   plugin          TEXT NOT NULL,
