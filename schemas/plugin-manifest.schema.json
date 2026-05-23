@@ -60,6 +60,9 @@
     },
     "config_keys": {
       "$ref": "#/$defs/ConfigKeys"
+    },
+    "stopwatch": {
+      "$ref": "#/$defs/Stopwatch"
     }
   },
   "required": [
@@ -193,6 +196,19 @@
         "optional": {
           "type": "array",
           "items": { "type": "string" }
+        }
+      },
+      "additionalProperties": false
+    },
+    "Stopwatch": {
+      "type": "object",
+      "description": "Per-plugin stopwatch overrides. Currently only max_subs is supported.",
+      "properties": {
+        "max_subs": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 256,
+          "description": "Override the default sub-span cap (32) for this plugin. Hard upper of 256 keeps consumer budgets (DB rows, API responses, log lines) bounded across all plugins. Omit to use the default."
         }
       },
       "additionalProperties": false

@@ -149,23 +149,34 @@ func (c *Commands) UnmarshalYAML(n *yaml.Node) error {
 
 // Manifest defines the structure of a plugin's manifest.yaml file.
 type Manifest struct {
-	ManifestSpec    string           `yaml:"manifest_spec"`
-	ManifestVersion int              `yaml:"manifest_version"`
-	Name            string           `yaml:"name"`
-	Version         string           `yaml:"version"`
-	Protocol        int              `yaml:"protocol"`
-	Entrypoint      string           `yaml:"entrypoint"`
-	Description     string           `yaml:"description,omitempty"`
-	ConcurrencySafe *bool            `yaml:"concurrency_safe,omitempty"`
-	Commands        Commands         `yaml:"commands"`
-	FactOutputs     []FactOutputRule `yaml:"fact_outputs,omitempty"`
-	ConfigKeys      *ConfigKeys      `yaml:"config_keys,omitempty"`
+	ManifestSpec    string             `yaml:"manifest_spec"`
+	ManifestVersion int                `yaml:"manifest_version"`
+	Name            string             `yaml:"name"`
+	Version         string             `yaml:"version"`
+	Protocol        int                `yaml:"protocol"`
+	Entrypoint      string             `yaml:"entrypoint"`
+	Description     string             `yaml:"description,omitempty"`
+	ConcurrencySafe *bool              `yaml:"concurrency_safe,omitempty"`
+	Commands        Commands           `yaml:"commands"`
+	FactOutputs     []FactOutputRule   `yaml:"fact_outputs,omitempty"`
+	ConfigKeys      *ConfigKeys        `yaml:"config_keys,omitempty"`
+	Stopwatch       *StopwatchManifest `yaml:"stopwatch,omitempty"`
 }
 
 // ConfigKeys defines required and optional configuration keys for a plugin.
 type ConfigKeys struct {
 	Required []string `yaml:"required,omitempty"`
 	Optional []string `yaml:"optional,omitempty"`
+}
+
+// StopwatchManifest declares per-plugin overrides for stopwatch behavior.
+// Currently only MaxSubs is supported. A nil pointer means "use defaults"
+// (see internal/stopwatch.MaxSubsPerRecord).
+type StopwatchManifest struct {
+	// MaxSubs overrides stopwatch.MaxSubsPerRecord for this plugin. Must
+	// be in [1, stopwatch.MaxSubsHardUpper]; values outside that range
+	// are rejected at manifest load. Zero / absent means "use default".
+	MaxSubs int `yaml:"max_subs,omitempty"`
 }
 
 // Plugin represents a discovered and validated plugin.
@@ -182,6 +193,7 @@ type Plugin struct {
 	Commands        Commands // Supported commands (poll, handle, health, init).
 	FactOutputs     []FactOutputRule
 	ConfigKeys      *ConfigKeys
+	Stopwatch       *StopwatchManifest // Optional per-plugin stopwatch overrides.
 }
 
 // SupportsCommand checks if the plugin supports a given command.

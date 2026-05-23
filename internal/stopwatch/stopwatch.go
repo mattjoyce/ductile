@@ -23,9 +23,18 @@ import (
 // into the current Record.
 const SubsResponseKey = "ductile_stopwatch_subs"
 
-// MaxSubsPerRecord caps sub-spans accepted from a plugin. Excess are dropped
-// with a single warn-log; the cap is a defensive bound, not a quota.
+// MaxSubsPerRecord caps sub-spans accepted from a plugin by default. Plugin
+// manifests may override this via stopwatch.max_subs up to MaxSubsHardUpper.
+// Excess are dropped with a single warn-log; the cap is a defensive bound,
+// not a quota.
 const MaxSubsPerRecord = 32
+
+// MaxSubsHardUpper is the absolute ceiling on a per-plugin manifest cap. A
+// manifest declaring stopwatch.max_subs above this value is rejected at
+// load. The ceiling exists because every consumer of subs_json (DB row,
+// API response, log line, future dashboards) needs a stable upper bound
+// to budget against.
+const MaxSubsHardUpper = 256
 
 // Status values for a Record. A closed set; treat as opaque tokens.
 const (
@@ -116,14 +125,31 @@ func (s *Stopwatch) Finish(exitTime time.Time, status string, postWork time.Dura
 		RuntimePreNs:  preNs,
 		RuntimePostNs: postWork.Nanoseconds(),
 		Status:        status,
-		Subs:          capSubs(subs, nil),
+		// Finish receives subs that were already capped by SubsFromResponse
+		// at the dispatcher boundary. Re-cap defensively with the default
+		// (Finish doesn't know the plugin's per-manifest cap), which is a
+		// no-op when subs were properly capped upstream.
+		Subs: capSubs(subs, MaxSubsPerRecord, nil),
 	}
 }
 
-// capSubs returns at most MaxSubsPerRecord entries. If logger is non-nil and
-// the cap is exceeded, a single warning is emitted (not per dropped entry).
-func capSubs(subs []map[string]any, logger *slog.Logger) []map[string]any {
-	if len(subs) <= MaxSubsPerRecord {
+// resolveMaxSubs returns the effective cap to apply. Values outside
+// [1, MaxSubsHardUpper] (including 0, which signals "use default") fall
+// back to MaxSubsPerRecord. Manifest validation rejects out-of-range
+// values at load time; this is defense in depth.
+func resolveMaxSubs(maxSubs int) int {
+	if maxSubs <= 0 || maxSubs > MaxSubsHardUpper {
+		return MaxSubsPerRecord
+	}
+	return maxSubs
+}
+
+// capSubs returns at most maxSubs entries. If logger is non-nil and the
+// cap is exceeded, a single warning is emitted (not per dropped entry).
+// maxSubs <= 0 means "use the default cap" (MaxSubsPerRecord).
+func capSubs(subs []map[string]any, maxSubs int, logger *slog.Logger) []map[string]any {
+	limit := resolveMaxSubs(maxSubs)
+	if len(subs) <= limit {
 		if subs == nil {
 			return []map[string]any{}
 		}
@@ -132,18 +158,19 @@ func capSubs(subs []map[string]any, logger *slog.Logger) []map[string]any {
 	if logger != nil {
 		logger.Warn("stopwatch sub-spans exceeded cap",
 			"received", len(subs),
-			"cap", MaxSubsPerRecord,
-			"dropped", len(subs)-MaxSubsPerRecord,
+			"cap", limit,
+			"dropped", len(subs)-limit,
 		)
 	}
-	return subs[:MaxSubsPerRecord]
+	return subs[:limit]
 }
 
 // SubsFromResponse extracts plugin-emitted sub-spans defensively from an
 // arbitrary value (typically pulled from the plugin response). Returns an
-// empty slice for any malformed input; never panics. Logs once if the cap
-// was exceeded (when logger is non-nil).
-func SubsFromResponse(v any, logger *slog.Logger) []map[string]any {
+// empty slice for any malformed input; never panics. Caps to maxSubs (or
+// the default MaxSubsPerRecord when maxSubs <= 0), logging once if the
+// cap was exceeded (when logger is non-nil).
+func SubsFromResponse(v any, maxSubs int, logger *slog.Logger) []map[string]any {
 	if v == nil {
 		return []map[string]any{}
 	}
@@ -151,7 +178,7 @@ func SubsFromResponse(v any, logger *slog.Logger) []map[string]any {
 	if !ok {
 		// Some JSON decoders may give []map[string]any directly.
 		if direct, okDirect := v.([]map[string]any); okDirect {
-			return capSubs(direct, logger)
+			return capSubs(direct, maxSubs, logger)
 		}
 		return []map[string]any{}
 	}
@@ -161,5 +188,5 @@ func SubsFromResponse(v any, logger *slog.Logger) []map[string]any {
 			out = append(out, m)
 		}
 	}
-	return capSubs(out, logger)
+	return capSubs(out, maxSubs, logger)
 }

@@ -965,15 +965,38 @@ this shape from a context-manager API. The four exemplar plugins (`fetch`,
 - **Sub-spans are advisory.** The dispatcher's own Record is always emitted
   regardless of whether you include sub-spans. A buggy or lying plugin
   poisons its own breakdowns only; the supervisor's timing is independent.
-- **The dispatcher caps the list at 32 entries per invocation.** If you
-  emit more, the excess is dropped (head-keep — first 32 survive) and one
-  warning is logged for the call. **Order matters:** put high-signal spans
-  first.
+- **The dispatcher caps the list at 32 entries per invocation by default.**
+  If you emit more, the excess is dropped (head-keep — first 32 survive)
+  and one warning is logged for the call. **Order matters:** put
+  high-signal spans first. The default is appropriate for almost all
+  plugins; see "Raising the cap" below before considering an override.
 - **Malformed entries are dropped silently.** Non-object items and
   non-list values do not raise. Defensive parsing is part of the contract.
 - **The dispatcher does not interpret sub-span fields beyond storing them.**
   Field semantics are the plugin's responsibility. Follow the convention
   above so quartile dashboards work across plugins.
+
+#### Raising the cap (rare)
+
+A plugin that legitimately produces more than 32 spans — typically a
+multi-stage pipeline coordinator with structurally distinct sub-phases —
+may declare a higher cap in its `manifest.yaml`:
+
+```yaml
+stopwatch:
+  max_subs: 64
+```
+
+Range: `[1, 256]`. The hard upper of 256 is a system-wide invariant —
+every consumer of `subs_json` (DB row, API response, log line, future
+dashboards) needs a stable budget. A manifest declaring `max_subs > 256`
+is rejected at plugin load with a warn-level log; the plugin is not
+registered. Manifests omitting the field, or setting it to 0, use the
+default 32 — no behaviour change for existing plugins.
+
+Before adding a `stopwatch` block, ask: can the spans be aggregated? The
+default cap is a design forcing function. Aggregation patterns (above)
+will handle 95% of cases that initially look like "I need more spans."
 
 #### Aggregation patterns
 

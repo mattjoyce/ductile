@@ -445,7 +445,14 @@ func (d *Dispatcher) executeJob(ctx context.Context, job *queue.Job) {
 	}
 	var swSubs []map[string]any
 	if resp != nil {
-		swSubs = stopwatch.SubsFromResponse(resp.StopwatchSubs, jobLogger)
+		// Plugin manifest may override the default sub-span cap up to
+		// stopwatch.MaxSubsHardUpper. Look up the plugin's declared cap
+		// (zero / nil means "use default") and pass it through.
+		manifestMaxSubs := 0
+		if pluginDef, ok := d.registry.Get(job.Plugin); ok && pluginDef.Stopwatch != nil {
+			manifestMaxSubs = pluginDef.Stopwatch.MaxSubs
+		}
+		swSubs = stopwatch.SubsFromResponse(resp.StopwatchSubs, manifestMaxSubs, jobLogger)
 	}
 	swRec := sw.Finish(swExitTime, swStatus, 0, swSubs)
 	// Detach the write from the dispatch context: the rows we most want

@@ -40,6 +40,6 @@ func BenchmarkSubsFromResponse_Capped(b *testing.B) {
 	}
 	b.ResetTimer()
 	for b.Loop() {
-		_ = SubsFromResponse(big, nil)
+		_ = SubsFromResponse(big, 0, nil)
 	}
 }
