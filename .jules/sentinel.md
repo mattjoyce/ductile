@@ -1,0 +1,4 @@
+## 2024-05-24 - Unhandled json.Marshal Errors Lead to Silent Failures
+**Vulnerability:** Calls to `json.Marshal` in API handlers (e.g., `internal/api/handlers.go`) ignored returned errors using the blank identifier `_`. If marshaling fails, this results in an invalid, empty, or incorrectly processed payload without triggering an immediate, visible error to the user or system logs.
+**Learning:** This existed because `json.Marshal` is often assumed to never fail, especially on simple maps or structs. However, if the payload contains unserializable data types (e.g., channels, functions, unsupported nested maps), it will fail silently, leading to subtle data corruption or job execution issues down the line.
+**Prevention:** Always check and explicitly handle errors returned by `json.Marshal`. Log the error and return an appropriate HTTP status code (e.g., `http.StatusInternalServerError`) to fail securely and notify the caller.
