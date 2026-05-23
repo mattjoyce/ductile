@@ -117,13 +117,19 @@
         },
         "strict_mode": {
           "type": "boolean",
-          "description": "Enable strict validation (reject unknown fields, etc.).",
+          "description": "Strict admission mode. When true, operational config-hash drift (config.yaml, routes.yaml, pipeline files) is treated as a failure at both startup pre-flight and /system/reload — not just a warning. High-security files (tokens.yaml, webhooks.yaml) and plugin entrypoint fingerprints reject regardless of this setting. P2-10.",
           "default": false
         },
         "allow_symlinks": {
           "type": "boolean",
           "description": "Allow symlinks in plugin_roots discovery.",
           "default": false
+        },
+        "hook_max_depth": {
+          "type": "integer",
+          "description": "Maximum on-hook lifecycle chain depth. A root job that fires a hook produces a depth-1 hook job; if that hook job's plugin also has notify_on_complete: true, its hook is depth 2, and so on. The dispatcher refuses any hook enqueue beyond this cap. 0 means use the built-in default (4). Negative values are rejected. P2-11.",
+          "minimum": 0,
+          "default": 4
         }
       },
       "required": ["tick_interval"],
