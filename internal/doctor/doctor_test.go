@@ -273,6 +273,111 @@ func TestValidate_RouteCycle(t *testing.T) {
 	assertHasError(t, r, "routes", "circular")
 }
 
+// TestValidate_WarnsReciprocalHookCycle — P2-11: when two plugins each have
+// notify_on_complete: true AND on-hook pipelines that target each other,
+// completing either triggers an unbounded ping-pong. Doctor must surface this
+// as a cycle warning at config time, not leave it to runtime to discover.
+func TestValidate_WarnsReciprocalHookCycle(t *testing.T) {
+	t.Parallel()
+	cfg := validConfig()
+	trueVal := true
+	cfg.Plugins["echo"] = config.PluginConf{
+		Enabled:          true,
+		NotifyOnComplete: &trueVal,
+	}
+	cfg.Plugins["notifier"] = config.PluginConf{
+		Enabled:          true,
+		NotifyOnComplete: &trueVal,
+	}
+	hooks := []HookPipeline{
+		{Name: "echo-to-notifier", OnHook: "job.completed", FromPlugin: "echo", Targets: []string{"notifier"}},
+		{Name: "notifier-to-echo", OnHook: "job.completed", FromPlugin: "notifier", Targets: []string{"echo"}},
+	}
+	d := New(cfg, registryWith(echoPlugin(), &plugin.Plugin{Name: "notifier", Commands: plugin.Commands{{Name: "handle", Type: plugin.CommandTypeWrite}}}))
+	d.AddHookPipelines(hooks)
+	r := d.Validate()
+	assertHasWarning(t, r, "hook_cycles", "")
+}
+
+// TestValidate_WarnsSelfHookCycle — P2-11: a single plugin whose hook fires
+// itself (echo→echo) is the simplest loop. Doctor warns even when the cycle
+// is length 1.
+func TestValidate_WarnsSelfHookCycle(t *testing.T) {
+	t.Parallel()
+	cfg := validConfig()
+	trueVal := true
+	cfg.Plugins["echo"] = config.PluginConf{
+		Enabled:          true,
+		NotifyOnComplete: &trueVal,
+	}
+	hooks := []HookPipeline{
+		{Name: "echo-loop", OnHook: "job.completed", FromPlugin: "echo", Targets: []string{"echo"}},
+	}
+	d := New(cfg, registryWith(echoPlugin())).AddHookPipelines(hooks)
+	r := d.Validate()
+	assertHasWarning(t, r, "hook_cycles", "")
+}
+
+// TestValidate_NoWarnForAcyclicHooks — baseline: a one-way hook from A→B (no
+// reciprocal, no notify_on_complete on B) must NOT trigger a cycle warning.
+func TestValidate_NoWarnForAcyclicHooks(t *testing.T) {
+	t.Parallel()
+	cfg := validConfig()
+	trueVal := true
+	cfg.Plugins["echo"] = config.PluginConf{
+		Enabled:          true,
+		NotifyOnComplete: &trueVal,
+	}
+	cfg.Plugins["notifier"] = config.PluginConf{
+		Enabled: true,
+	}
+	hooks := []HookPipeline{
+		{Name: "echo-to-notifier", OnHook: "job.completed", FromPlugin: "echo", Targets: []string{"notifier"}},
+	}
+	d := New(cfg, registryWith(echoPlugin(), &plugin.Plugin{Name: "notifier", Commands: plugin.Commands{{Name: "handle", Type: plugin.CommandTypeWrite}}}))
+	d.AddHookPipelines(hooks)
+	r := d.Validate()
+	for _, w := range r.Warnings {
+		if w.Category == "hook_cycles" {
+			t.Fatalf("did not expect hook_cycles warning, got: %v", w)
+		}
+	}
+}
+
+// TestValidate_NoWarnWhenFromPluginScopeBreaksCycle — P2-11 false-positive
+// guard: if pipeline A's hook is scoped from_plugin: X, completing plugin Y
+// must NOT count as an edge into A. Without this guard a naive graph
+// over-reports cycles.
+func TestValidate_NoWarnWhenFromPluginScopeBreaksCycle(t *testing.T) {
+	t.Parallel()
+	cfg := validConfig()
+	trueVal := true
+	cfg.Plugins["echo"] = config.PluginConf{
+		Enabled:          true,
+		NotifyOnComplete: &trueVal,
+	}
+	cfg.Plugins["notifier"] = config.PluginConf{
+		Enabled:          true,
+		NotifyOnComplete: &trueVal,
+	}
+	// echo→notifier when echo completes, and notifier→echo, BUT both pipelines
+	// are scoped from_plugin to a third plugin "other" that has no
+	// notify_on_complete and is not actually wired — so the cycle is
+	// unreachable in practice.
+	hooks := []HookPipeline{
+		{Name: "echo-to-notifier", OnHook: "job.completed", FromPlugin: "other", Targets: []string{"notifier"}},
+		{Name: "notifier-to-echo", OnHook: "job.completed", FromPlugin: "other", Targets: []string{"echo"}},
+	}
+	d := New(cfg, registryWith(echoPlugin(), &plugin.Plugin{Name: "notifier", Commands: plugin.Commands{{Name: "handle", Type: plugin.CommandTypeWrite}}}))
+	d.AddHookPipelines(hooks)
+	r := d.Validate()
+	for _, w := range r.Warnings {
+		if w.Category == "hook_cycles" {
+			t.Fatalf("did not expect hook_cycles warning for from_plugin-scoped graph, got: %v", w)
+		}
+	}
+}
+
 // TestValidate_WarnsLowTickInterval — P2-10: doctor flags tick rates below the
 // recommended bound (1s) but above the hard floor (100ms) so operators see the
 // chatty-poll warning before runtime symptoms appear.

@@ -1715,8 +1715,41 @@ func (d *Dispatcher) completeJob(ctx context.Context, logger *slog.Logger, jobID
 	d.notifyCompletion(jobID)
 }
 
+// hookChainDepth walks the ParentJobID chain from `job` upward, counting how many
+// "hook"-submitted jobs are in the lineage (including `job` itself if applicable).
+// A pristine root job (any SubmittedBy != "hook") has depth 0; a hook job whose
+// parent is a root has depth 1; a hook-of-a-hook has depth 2; and so on.
+//
+// P2-11: fail closed. If a parent lookup fails (e.g. the parent row was pruned
+// by retention while a long-running chain was still active), we return an error
+// so the caller refuses the enqueue rather than silently treating the chain as
+// fresh and resetting the cap.
+func (d *Dispatcher) hookChainDepth(ctx context.Context, job *queue.Job) (int, error) {
+	depth := 0
+	currentSubmittedBy := job.SubmittedBy
+	currentParent := job.ParentJobID
+	for currentSubmittedBy == "hook" {
+		depth++
+		if currentParent == nil {
+			return 0, fmt.Errorf("hook job %s has no parent_job_id; lineage corrupted", job.ID)
+		}
+		parent, err := d.queue.GetJobByID(ctx, *currentParent)
+		if err != nil {
+			return 0, fmt.Errorf("hook depth walk: lookup parent %s: %w", *currentParent, err)
+		}
+		currentSubmittedBy = parent.SubmittedBy
+		currentParent = parent.ParentJobID
+	}
+	return depth, nil
+}
+
 // maybeFireHooks fires on-hook lifecycle pipelines for a completed root job if the plugin
 // has notify_on_complete: true in its config. Pipeline steps and retried jobs are skipped.
+//
+// P2-11: enqueue is refused when the existing hook chain depth plus one would
+// exceed cfg.Service.HookMaxDepth. The depth is computed by walking the
+// ParentJobID chain at firing time (no schema change). Depth cap defaults to
+// config.DefaultHookMaxDepth.
 func (d *Dispatcher) maybeFireHooks(ctx context.Context, job *queue.Job, signal string, payload map[string]any) {
 	if strings.TrimSpace(signal) == "" {
 		return
@@ -1731,6 +1764,24 @@ func (d *Dispatcher) maybeFireHooks(ctx context.Context, job *queue.Job, signal 
 	if d.router == nil {
 		return
 	}
+
+	maxDepth := d.cfg.Service.HookMaxDepth
+	if maxDepth <= 0 {
+		maxDepth = config.DefaultHookMaxDepth
+	}
+	currentDepth, err := d.hookChainDepth(ctx, job)
+	if err != nil {
+		d.logger.Warn("hook enqueue refused: parent lineage unavailable",
+			"source_job_id", job.ID, "source_plugin", job.Plugin, "signal", signal, "error", err)
+		return
+	}
+	if currentDepth+1 > maxDepth {
+		d.logger.Warn("hook enqueue refused: max depth reached",
+			"source_job_id", job.ID, "source_plugin", job.Plugin, "signal", signal,
+			"current_depth", currentDepth, "max_depth", maxDepth)
+		return
+	}
+
 	// maybeFireHooks short-circuits when job.EventContextID != nil, so by the
 	// time we're here the upstream job has no accumulated durable context.
 	// Hook entry-route predicates therefore see Scope.Context as nil today.
@@ -1747,19 +1798,25 @@ func (d *Dispatcher) maybeFireHooks(ctx context.Context, job *queue.Job, signal 
 			d.logger.Error("failed to marshal hook event", "plugin", disp.Plugin, "signal", signal, "error", err)
 			continue
 		}
+		// P2-11: link the hook job to its source so the chain is walkable.
+		// Without this the queue has a flat list of hook jobs and operators
+		// cannot tell which job spawned which — and the depth cap below
+		// has nothing to walk.
+		sourceID := job.ID
 		enqReq := queue.EnqueueRequest{
 			Plugin:      disp.Plugin,
 			Command:     disp.Command,
 			Payload:     payloadJSON,
 			SubmittedBy: "hook",
 			MaxAttempts: config.MaxAttemptsForPlugin(d.cfg.Plugins[disp.Plugin]),
+			ParentJobID: &sourceID,
 		}
 		childID, err := d.queue.Enqueue(ctx, enqReq)
 		if err != nil {
 			d.logger.Error("failed to enqueue hook job", "plugin", disp.Plugin, "error", err)
 			continue
 		}
-		d.logger.Info("enqueued hook job", "signal", signal, "source_plugin", job.Plugin, "hook_plugin", disp.Plugin, "child_job_id", childID)
+		d.logger.Info("enqueued hook job", "signal", signal, "source_plugin", job.Plugin, "hook_plugin", disp.Plugin, "child_job_id", childID, "parent_job_id", sourceID)
 	}
 }
 

@@ -1897,7 +1897,7 @@ func (q *Queue) GetJobByID(ctx context.Context, jobID string) (*JobResult, error
 
 	row := q.db.QueryRowContext(ctx, `
 SELECT
-  q.id, q.parent_job_id, q.status, q.plugin, q.command, q.last_error, q.started_at, q.completed_at,
+  q.id, q.parent_job_id, q.status, q.plugin, q.command, q.submitted_by, q.last_error, q.started_at, q.completed_at,
   l.result,
   COALESCE(ec.step_id, '') AS step_id
 FROM job_queue q
@@ -1912,13 +1912,14 @@ WHERE q.id = ?;
 		statusS     string
 		plugin      string
 		command     string
+		submittedBy string
 		lastErrS    sql.NullString
 		startedAtS  sql.NullString
 		completedAt sql.NullString
 		resultS     sql.NullString
 		stepID      string
 	)
-	if err := row.Scan(&id, &parentID, &statusS, &plugin, &command, &lastErrS, &startedAtS, &completedAt, &resultS, &stepID); err != nil {
+	if err := row.Scan(&id, &parentID, &statusS, &plugin, &command, &submittedBy, &lastErrS, &startedAtS, &completedAt, &resultS, &stepID); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ErrJobNotFound
 		}
@@ -1965,6 +1966,7 @@ WHERE q.id = ?;
 		LastError:   lastErr,
 		StartedAt:   startedAt,
 		CompletedAt: completedAtT,
+		SubmittedBy: submittedBy,
 	}, nil
 }
 

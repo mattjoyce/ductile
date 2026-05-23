@@ -984,6 +984,21 @@ func TestValidate(t *testing.T) {
 			wantErr: false,
 		},
 		{
+			// P2-11: negative hook_max_depth is rejected (0 is reserved for "use default").
+			name: "negative hook_max_depth",
+			cfg: &Config{
+				Service: ServiceConfig{
+					TickInterval: 60 * time.Second,
+					LogLevel:     "info",
+					MaxWorkers:   1,
+					HookMaxDepth: -1,
+				},
+				State:       StateConfig{Path: "./test.db"},
+				PluginRoots: []string{"./plugins"},
+			},
+			wantErr: true,
+		},
+		{
 			name: "invalid max workers",
 			cfg: &Config{
 				Service: ServiceConfig{

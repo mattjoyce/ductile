@@ -608,6 +608,9 @@ func applyConfigDefaults(cfg *Config) *Config {
 	if cfg.Service.MaxWorkers == 0 {
 		cfg.Service.MaxWorkers = defaults.Service.MaxWorkers
 	}
+	if cfg.Service.HookMaxDepth == 0 {
+		cfg.Service.HookMaxDepth = defaults.Service.HookMaxDepth
+	}
 
 	// Handle database alias
 	if cfg.State.Path == "" && cfg.Database.Path != "" {
@@ -685,6 +688,9 @@ func validate(cfg *Config) error {
 	}
 	if cfg.Service.TickInterval < MinTickInterval {
 		return fmt.Errorf("service.tick_interval %s is below the minimum allowed (%s); see P2-10", cfg.Service.TickInterval, MinTickInterval)
+	}
+	if cfg.Service.HookMaxDepth < 0 {
+		return fmt.Errorf("service.hook_max_depth %d must be >= 0 (0 means use default %d); see P2-11", cfg.Service.HookMaxDepth, DefaultHookMaxDepth)
 	}
 	if cfg.Service.MaxWorkers <= 0 {
 		return fmt.Errorf("service.max_workers must be positive")
