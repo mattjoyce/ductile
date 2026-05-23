@@ -301,3 +301,59 @@ ductile system reset <plugin-name>
 # Logs (systemd)
 journalctl --user -u ductile-local --no-pager -n 50 | grep ERROR
 ```
+
+---
+
+## Stopwatch — answering "is ductile slow, or is my plugin slow?"
+
+The dispatcher captures per-invocation timing automatically. Plugins do not
+instrument themselves; the supervisor measures them. Each plugin invocation
+emits one immutable `stopwatch.Record` into the request context under the
+reserved key `ductile_stopwatch`.
+
+A Record carries everything needed to attribute time:
+
+| Field             | Meaning                                                       |
+|-------------------|---------------------------------------------------------------|
+| `plugin_id`       | Plugin name                                                   |
+| `step_name`       | Pipeline step ID, when known                                  |
+| `attempt`         | 1-based retry counter                                         |
+| `enter_wall_ns`   | Wall-clock entry timestamp (correlation only)                 |
+| `exit_wall_ns`    | Wall-clock exit timestamp (correlation only)                  |
+| `dur_ns`          | Monotonic spawn duration — the number to compare              |
+| `runtime_pre_ns`  | Dispatcher work between request build and spawn               |
+| `runtime_post_ns` | Dispatcher work between spawn return and record write         |
+| `status`          | `ok`, `err`, `timeout`, or `capture_error`                    |
+| `subs`            | Optional plugin-emitted sub-spans (capped at 32 per Record)   |
+
+### Attributing the bottleneck
+
+For one job, durations are local. For a pipeline of `N` steps:
+
+```
+plugin_time  = Σ dur_ns          (across all step records)
+wall_time    = max(exit_wall) − min(enter_wall)
+gateway_time = wall_time − plugin_time
+```
+
+- If `gateway_time` is large compared to `plugin_time`, the bottleneck is
+  **inside ductile** — dispatch, routing, or the queue.
+- If a single `plugin_id` dominates `plugin_time`, that plugin is the
+  bottleneck.
+- If `runtime_pre_ns` or `runtime_post_ns` grows without `dur_ns` growing,
+  the cost is in the dispatcher's pre/post work, not the plugin spawn.
+
+### Optional sub-spans
+
+Plugins may emit internal phases (`db_query`, `http_call`) in their response
+under `ductile_stopwatch_subs` (see PLUGIN_DEVELOPMENT.md). The dispatcher
+caps at 32 entries per Record and drops the rest with a single warn-log;
+malformed shapes are dropped silently. Sub-spans are advisory; the Record
+itself is always present regardless.
+
+### Status semantics
+
+`status` is a closed set. `capture_error` indicates a defect in the
+supervisor itself and should never appear in production — it exists so
+that timing data is still emitted in the worst case rather than silently
+disappearing.

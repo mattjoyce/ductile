@@ -911,3 +911,47 @@ When you finish a new plugin, walk this list before merging:
 
 If every box ticks, the plugin is aligned with the durability model and
 should not need a future migration sprint to fix.
+
+---
+
+## Stopwatch — timing is captured for you
+
+The dispatcher times every plugin invocation automatically. You do not need
+to wrap your handler in `time.now()` calls; the supervisor records a
+`stopwatch.Record` (plugin id, step, monotonic duration, status, etc.) into
+the request context under the reserved key `ductile_stopwatch`. This is the
+single right place to read or aggregate per-step timing — see
+[PLUGIN_DIAGNOSTICS.md](./PLUGIN_DIAGNOSTICS.md) for the data shape and the
+`gateway_time` formula.
+
+`ductile_stopwatch` is **system-owned**. Any value a plugin places under
+that key in its response or state is overwritten by the dispatcher; do not
+rely on it as a free-form storage slot.
+
+### Optional sub-spans for plugin-internal phases
+
+If you want to break down what your handler did internally (`db_query`,
+`http_call`, parsing, etc.), emit a list under `ductile_stopwatch_subs` at
+the top level of your response. Shape:
+
+```json
+{
+  "status": "ok",
+  "result": "...",
+  "ductile_stopwatch_subs": [
+    {"name": "db_query", "dur_ns": 11000000},
+    {"name": "http_call", "dur_ns": 31000000}
+  ]
+}
+```
+
+Rules:
+
+- Sub-spans are advisory. The dispatcher's own Record is always emitted
+  regardless of whether you include sub-spans.
+- The dispatcher caps the list at 32 entries per invocation. If you emit
+  more, the excess is dropped and one warning is logged for the call.
+- Malformed entries (non-object items, non-list values) are dropped
+  silently. Defensive parsing is part of the contract.
+- The dispatcher does not interpret sub-span fields beyond storing them.
+  You choose the key names; `name` and `dur_ns` are conventional.
