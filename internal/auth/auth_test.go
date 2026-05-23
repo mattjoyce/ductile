@@ -68,14 +68,16 @@ func TestAuthenticate(t *testing.T) {
 			wantBool:      false,
 		},
 		{
-			name:      "plugin rw scope expands to ro",
+			name:      "plugin rw scope expands to ro plus narrower P2-07 splits",
 			presented: "plugin-token",
 			tokens:    tokens,
 			wantPrincipal: Principal{
 				Token: "plugin-token",
 				Scopes: map[string]struct{}{
-					"plugin:rw": {},
-					"plugin:ro": {},
+					"plugin:rw":         {},
+					"plugin:ro":         {},
+					"plugin:catalog:ro": {},
+					"plugin:invoke:ro":  {},
 				},
 			},
 			wantBool: true,
@@ -199,27 +201,77 @@ func TestNormalizeScopes(t *testing.T) {
 			},
 		},
 		{
-			name:   "plugin rw expansion",
+			name:   "plugin rw expansion (full plugin tree)",
 			scopes: []string{"plugin:rw"},
 			want: map[string]struct{}{
-				"plugin:rw": {},
-				"plugin:ro": {},
+				"plugin:rw":         {},
+				"plugin:ro":         {},
+				"plugin:catalog:ro": {},
+				"plugin:invoke:ro":  {},
 			},
 		},
 		{
-			name:   "jobs rw expansion",
+			name:   "plugin ro is catalog-only (P2-07 split)",
+			scopes: []string{"plugin:ro"},
+			want: map[string]struct{}{
+				"plugin:ro":         {},
+				"plugin:catalog:ro": {},
+			},
+		},
+		{
+			name:   "plugin invoke ro is invoke-only",
+			scopes: []string{"plugin:invoke:ro"},
+			want: map[string]struct{}{
+				"plugin:invoke:ro": {},
+			},
+		},
+		{
+			name:   "jobs rw expansion (full jobs tree)",
 			scopes: []string{"jobs:rw"},
 			want: map[string]struct{}{
-				"jobs:rw": {},
-				"jobs:ro": {},
+				"jobs:rw":        {},
+				"jobs:ro":        {},
+				"jobs:status:ro": {},
+				"jobs:result:ro": {},
+				"jobs:logs:ro":   {},
+				"jobs:tree:ro":   {},
 			},
 		},
 		{
-			name:   "events rw expansion",
+			name:   "jobs ro is super-scope (D1 back-compat)",
+			scopes: []string{"jobs:ro"},
+			want: map[string]struct{}{
+				"jobs:ro":        {},
+				"jobs:status:ro": {},
+				"jobs:result:ro": {},
+				"jobs:logs:ro":   {},
+				"jobs:tree:ro":   {},
+			},
+		},
+		{
+			name:   "jobs status ro alone does not imply others (D1 narrowing)",
+			scopes: []string{"jobs:status:ro"},
+			want: map[string]struct{}{
+				"jobs:status:ro": {},
+			},
+		},
+		{
+			name:   "events rw expansion (full events tree)",
 			scopes: []string{"events:rw"},
 			want: map[string]struct{}{
-				"events:rw": {},
-				"events:ro": {},
+				"events:rw":         {},
+				"events:ro":         {},
+				"events:meta:ro":    {},
+				"events:payload:ro": {},
+			},
+		},
+		{
+			name:   "events ro is super-scope (D1)",
+			scopes: []string{"events:ro"},
+			want: map[string]struct{}{
+				"events:ro":         {},
+				"events:meta:ro":    {},
+				"events:payload:ro": {},
 			},
 		},
 		{

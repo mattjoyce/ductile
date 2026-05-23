@@ -211,16 +211,27 @@ func (s *Server) setupRoutes() *chi.Mux {
 		r.Get("/.well-known/ai-plugin.json", s.handleWellKnownPlugin)
 		r.Get("/plugin/{plugin}/openapi.json", s.handleOpenAPIPlugin)
 
-		r.With(s.requireScopes("plugin:ro", "plugin:rw", "*")).Post("/plugin/{plugin}/{command}", s.handlePluginTrigger)
-		r.With(s.requireScopes("plugin:ro", "plugin:rw", "*")).Get("/plugin/{plugin}", s.handleGetPlugin)
+		// P2-07: plugin:ro is now catalog-only. Invocation of read-class
+		// commands requires plugin:invoke:ro (or plugin:rw / *). Catalog
+		// reads accept plugin:catalog:ro (implied by both plugin:ro and
+		// plugin:rw) so existing tokens continue to discover plugins.
+		r.With(s.requireScopes("plugin:invoke:ro", "plugin:rw", "*")).Post("/plugin/{plugin}/{command}", s.handlePluginTrigger)
+		r.With(s.requireScopes("plugin:catalog:ro", "plugin:rw", "*")).Get("/plugin/{plugin}", s.handleGetPlugin)
 		r.With(s.requireScopes("plugin:rw", "*")).Post("/pipeline/{pipeline}", s.handlePipelineTrigger)
-		r.With(s.requireScopes("jobs:ro", "jobs:rw", "*")).Get("/job/{jobID}", s.handleGetJob)
-		r.With(s.requireScopes("jobs:ro", "jobs:rw", "*")).Get("/job/{jobID}/tree", s.handleGetJobTree)
-		r.With(s.requireScopes("jobs:ro", "jobs:rw", "*")).Get("/jobs", s.handleListJobs)
-		r.With(s.requireScopes("jobs:ro", "jobs:rw", "*")).Get("/job-logs", s.handleListJobLogs)
-		r.With(s.requireScopes("jobs:ro", "jobs:rw", "*")).Get("/scheduler/jobs", s.handleSchedulerJobs)
-		r.With(s.requireScopes("jobs:ro", "*")).Get("/analytics/summary", s.handleAnalyticsSummary)
-		r.With(s.requireScopes("jobs:ro", "*")).Get("/analytics/queue", s.handleQueueMetrics)
+		// D1: each endpoint accepts its narrower scope as well as the back-compat
+		// super-scopes (jobs:ro / jobs:rw / wildcard). jobs:ro implies all
+		// four narrower scopes via the normalize map so existing tokens pass
+		// through unchanged. Operators who grant only a narrower scope (e.g.
+		// jobs:status:ro alone) reach the relevant endpoint and receive a
+		// shaped response — Result payloads are omitted unless they ALSO
+		// hold jobs:result:ro.
+		r.With(s.requireScopes("jobs:status:ro", "jobs:rw", "*")).Get("/job/{jobID}", s.handleGetJob)
+		r.With(s.requireScopes("jobs:tree:ro", "jobs:rw", "*")).Get("/job/{jobID}/tree", s.handleGetJobTree)
+		r.With(s.requireScopes("jobs:status:ro", "jobs:rw", "*")).Get("/jobs", s.handleListJobs)
+		r.With(s.requireScopes("jobs:logs:ro", "jobs:rw", "*")).Get("/job-logs", s.handleListJobLogs)
+		r.With(s.requireScopes("jobs:status:ro", "jobs:rw", "*")).Get("/scheduler/jobs", s.handleSchedulerJobs)
+		r.With(s.requireScopes("jobs:status:ro", "*")).Get("/analytics/summary", s.handleAnalyticsSummary)
+		r.With(s.requireScopes("jobs:status:ro", "*")).Get("/analytics/queue", s.handleQueueMetrics)
 		r.With(s.requireScopes("system:rw", "*")).Post("/system/reload", s.handleSystemReload)
 		r.With(s.requireScopes("system:ro", "system:rw", "*")).Get("/config/view", s.handleConfigView)
 	})

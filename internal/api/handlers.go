@@ -382,6 +382,10 @@ func (s *Server) handlePluginTrigger(w http.ResponseWriter, r *http.Request) {
 
 	principal, _ := auth.PrincipalFromContext(r.Context())
 	cmdType, _ := plug.CommandTypeFor(commandName)
+	// P2-07: the route middleware already required plugin:invoke:ro / rw / *
+	// so a plain plugin:ro token cannot reach this handler. Write commands
+	// additionally require plugin:rw or wildcard — narrower read-only
+	// invocation tokens cannot trigger mutating commands.
 	if cmdType != plugin.CommandTypeRead {
 		if !auth.HasAnyScope(principal, "plugin:rw", "*") {
 			s.writeError(w, http.StatusForbidden, "insufficient scope")
@@ -471,11 +475,42 @@ func (s *Server) handleGetJob(w http.ResponseWriter, r *http.Request) {
 		CompletedAt: job.CompletedAt,
 	}
 
+	// D1: hide result-class fields from principals lacking jobs:result:ro.
+	if !s.canSeeJobResultsFromCtx(r.Context()) {
+		resp.Result = nil
+	}
+
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	if err := json.NewEncoder(w).Encode(resp); err != nil {
 		s.logger.Error("failed to write job response", "error", err)
 	}
+}
+
+// canSeeJobResults reports whether the principal may receive result-class
+// payloads in job-related responses. "Result-class" covers:
+//   - Result (json.RawMessage, the plugin's structured return value)
+//   - LastError (plugin error message, often contains failing payload echo)
+//   - Stderr (plugin diagnostic output)
+//
+// All three are gated under jobs:result:ro because they all carry data the
+// plugin produced — distinct from status/metadata fields (job_id, status,
+// timestamps, attempt count) which ride on jobs:status:ro / jobs:logs:ro.
+//
+// jobs:ro and jobs:rw imply jobs:result:ro via the auth normalize map;
+// wildcard always passes. Used by handleGetJob, handleGetJobTree, and
+// handleListJobLogs.
+func (s *Server) canSeeJobResults(p auth.Principal) bool {
+	return auth.HasAnyScope(p, "jobs:result:ro", "jobs:rw", "*")
+}
+
+// canSeeJobResultsFromCtx is a context-aware wrapper that consolidates the
+// "extract principal then ask" pattern used by three handlers. HasAnyScope
+// returns false on a zero-value Principal (empty scope map), so a missing
+// principal naturally maps to "cannot see results" — the strict default.
+func (s *Server) canSeeJobResultsFromCtx(ctx context.Context) bool {
+	p, _ := auth.PrincipalFromContext(ctx)
+	return s.canSeeJobResults(p)
 }
 
 var errRootBaggageClaims = errors.New("root baggage claims failed")
@@ -702,12 +737,17 @@ func (s *Server) handleListJobLogs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// D1: hide result-class fields (Result, LastError, Stderr) when the
+	// caller lacks jobs:result:ro. include_result=true is still accepted
+	// for back-compat but produces a shaped response for narrower scopes.
+	canSeeResults := s.canSeeJobResultsFromCtx(r.Context())
+
 	resp := JobLogListResponse{
 		Logs:  make([]JobLogItem, 0, len(logs)),
 		Total: total,
 	}
 	for _, logEntry := range logs {
-		resp.Logs = append(resp.Logs, JobLogItem{
+		item := JobLogItem{
 			JobID:       logEntry.JobID,
 			LogID:       logEntry.LogID,
 			Plugin:      logEntry.Plugin,
@@ -720,7 +760,13 @@ func (s *Server) handleListJobLogs(w http.ResponseWriter, r *http.Request) {
 			LastError:   logEntry.LastError,
 			Stderr:      logEntry.Stderr,
 			Result:      logEntry.Result,
-		})
+		}
+		if !canSeeResults {
+			item.Result = nil
+			item.LastError = nil
+			item.Stderr = nil
+		}
+		resp.Logs = append(resp.Logs, item)
 	}
 
 	respondJSON(w, http.StatusOK, resp)
@@ -922,9 +968,12 @@ func (s *Server) handleGetJobTree(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// D1: shape per-job result-class fields by principal scope.
+	canSeeResults := s.canSeeJobResultsFromCtx(r.Context())
+
 	resp := make([]JobResultData, 0, len(results))
 	for _, res := range results {
-		resp = append(resp, JobResultData{
+		item := JobResultData{
 			JobID:       res.JobID,
 			ParentJobID: res.ParentJobID,
 			Plugin:      res.Plugin,
@@ -934,7 +983,12 @@ func (s *Server) handleGetJobTree(w http.ResponseWriter, r *http.Request) {
 			LastError:   res.LastError,
 			StartedAt:   res.StartedAt,
 			CompletedAt: res.CompletedAt,
-		})
+		}
+		if !canSeeResults {
+			item.Result = nil
+			item.LastError = nil
+		}
+		resp = append(resp, item)
 	}
 
 	respondJSON(w, http.StatusOK, resp)

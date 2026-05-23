@@ -257,6 +257,10 @@ type JobResult struct {
 	LastError   *string
 	StartedAt   *time.Time
 	CompletedAt *time.Time
+	// SubmittedBy records how this job entered the queue ("route", "hook", "test",
+	// "api"). P2-11 hook-depth walk needs this to distinguish hook-chain ancestors
+	// from non-hook root jobs while traversing ParentJobID.
+	SubmittedBy string
 }
 
 // JobSummary is a lightweight projection for jobs list APIs.

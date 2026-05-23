@@ -26,15 +26,34 @@ type Issue struct {
 	Field    string `json:"field,omitempty"`
 }
 
+// HookPipeline is a minimal projection of a compiled hook pipeline, used by
+// validateHookCycles. Callers extract these from their loaded router pipelines
+// (only on-hook entries with at least one target need be included). P2-11.
+type HookPipeline struct {
+	Name       string   // pipeline name, used in cycle warning messages
+	OnHook     string   // hook trigger signal (e.g. "job.completed")
+	FromPlugin string   // optional source plugin filter; "" means any source
+	Targets    []string // target plugin names invoked by this pipeline's steps
+}
+
 // Doctor validates configuration against discovered plugins.
 type Doctor struct {
-	cfg      *config.Config
-	registry *plugin.Registry
+	cfg           *config.Config
+	registry      *plugin.Registry
+	hookPipelines []HookPipeline
 }
 
 // New creates a Doctor from a loaded config and plugin registry.
 func New(cfg *config.Config, registry *plugin.Registry) *Doctor {
 	return &Doctor{cfg: cfg, registry: registry}
+}
+
+// AddHookPipelines registers compiled hook pipelines for cycle analysis.
+// Without this, validateHookCycles has no graph to walk and stays silent.
+// P2-11.
+func (d *Doctor) AddHookPipelines(hooks []HookPipeline) *Doctor {
+	d.hookPipelines = hooks
+	return d
 }
 
 // Validate runs all checks and returns a result.
@@ -48,6 +67,7 @@ func (d *Doctor) Validate() *Result {
 	d.validateTokenScopes(r)
 	d.validateWebhooks(r)
 	d.validateRoutes(r)
+	d.validateHookCycles(r)
 	d.warnUnusedPlugins(r)
 	d.warnMissingEnvVars(r)
 	d.warnSuspiciousSchedule(r)
@@ -74,6 +94,13 @@ func (d *Doctor) validateServiceConfig(r *Result) {
 	}
 	if d.cfg.Service.TickInterval <= 0 {
 		d.addError(r, "service", "service.tick_interval", "tick_interval must be positive")
+	}
+	// P2-10: warn when tick_interval is below the recommended threshold even if it
+	// passes the hard floor. Loader rejects sub-MinTickInterval values; doctor warns
+	// for everything between MinTickInterval and RecommendedTickInterval.
+	if d.cfg.Service.TickInterval >= config.MinTickInterval && d.cfg.Service.TickInterval < config.RecommendedTickInterval {
+		d.addWarning(r, "service", "service.tick_interval",
+			fmt.Sprintf("tick_interval %s is below recommended (%s); chatty service polls can flood dispatch", d.cfg.Service.TickInterval, config.RecommendedTickInterval))
 	}
 }
 
@@ -296,6 +323,65 @@ func detectGraphCycle(graph map[string][]string) (string, bool) {
 		}
 	}
 	return "", false
+}
+
+// validateHookCycles walks the on-hook lifecycle graph and warns when a cycle
+// exists. P2-11: a reciprocal notifying-hook configuration (A's completion
+// fires a hook targeting B, B's completion fires a hook targeting A — and both
+// plugins have notify_on_complete: true) creates an unbounded work loop at
+// runtime. This check surfaces the cycle at config time.
+//
+// Graph edges: for each plugin P with notify_on_complete: true AND each hook
+// pipeline H where H.FromPlugin is "" or P, add an edge P → T for every target
+// T in H.Targets that itself has notify_on_complete: true. Targets without
+// notify_on_complete cannot re-fire so they are terminal and excluded from the
+// cycle graph (avoids false positives).
+func (d *Doctor) validateHookCycles(r *Result) {
+	if len(d.hookPipelines) == 0 {
+		return
+	}
+
+	// Identify plugins that re-fire on completion. Only these can extend a hook
+	// chain — a target plugin without notify_on_complete is a terminal node.
+	notifying := make(map[string]bool, len(d.cfg.Plugins))
+	for name, pc := range d.cfg.Plugins {
+		if !pc.Enabled {
+			continue
+		}
+		if pc.NotifyOnComplete != nil && *pc.NotifyOnComplete {
+			notifying[name] = true
+		}
+	}
+	if len(notifying) == 0 {
+		return
+	}
+
+	graph := make(map[string][]string)
+	for source := range notifying {
+		for _, hook := range d.hookPipelines {
+			if hook.OnHook == "" {
+				continue
+			}
+			if hook.FromPlugin != "" && hook.FromPlugin != source {
+				continue
+			}
+			for _, target := range hook.Targets {
+				if !notifying[target] {
+					continue // target cannot re-fire — no extending the chain
+				}
+				graph[source] = append(graph[source], target)
+			}
+		}
+	}
+
+	if len(graph) == 0 {
+		return
+	}
+
+	if node, cyclic := detectGraphCycle(graph); cyclic {
+		d.addWarning(r, "hook_cycles", "",
+			fmt.Sprintf("reciprocal notify_on_complete hook cycle detected involving plugin %q; review pipelines with on-hook triggers", node))
+	}
 }
 
 // validateUsesCycles detects indirect cycles in the plugin `uses` graph
