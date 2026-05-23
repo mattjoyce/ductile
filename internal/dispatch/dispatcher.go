@@ -25,6 +25,7 @@ import (
 	"github.com/mattjoyce/ductile/internal/router/conditions"
 	"github.com/mattjoyce/ductile/internal/router/dsl"
 	"github.com/mattjoyce/ductile/internal/state"
+	"github.com/mattjoyce/ductile/internal/stopwatch"
 )
 
 const (
@@ -410,8 +411,53 @@ func (d *Dispatcher) executeJob(ctx context.Context, job *queue.Job) {
 		req.Event = &event
 	}
 
+	// Stopwatch: supervisor-side timing wraps the spawn. The dispatcher is
+	// the sole producer of these records; they persist to the ductile DB
+	// (job_stopwatch table) — not via baggage, because telemetry is system
+	// data, not domain data (Hickey decomplecting).
+	stepName, _ := requestContext["ductile_step_id"].(string)
+	pipelineName, _ := requestContext["ductile_pipeline"].(string)
+	pipelineInstanceID, _ := requestContext["ductile_pipeline_instance_id"].(string)
+	sw := stopwatch.New(job.Plugin, stepName, job.Attempt)
+	sw.MarkSpawn()
+
 	// Spawn plugin and execute
 	resp, respCompat, rawResp, _, stderr, exitCode, err := d.spawnPlugin(ctx, job.Plugin, plug.Entrypoint, req, timeout, jobLogger)
+	swExitTime := time.Now()
+
+	// Classify the spawn outcome into a closed-set status token, then
+	// persist the Record to the supervisor's ledger. Writer failures are
+	// logged but never propagate — losing a telemetry row must not crash
+	// the job (Armstrong: keep the supervisor alive even when its ledger
+	// stumbles).
+	var swStatus string
+	switch {
+	case errors.Is(err, context.DeadlineExceeded):
+		swStatus = stopwatch.StatusTimeout
+	case err != nil:
+		swStatus = stopwatch.StatusError
+	case resp == nil:
+		swStatus = stopwatch.StatusError
+	case resp.Status == "error":
+		swStatus = stopwatch.StatusError
+	default:
+		swStatus = stopwatch.StatusOK
+	}
+	var swSubs []map[string]any
+	if resp != nil {
+		swSubs = stopwatch.SubsFromResponse(resp.StopwatchSubs, jobLogger)
+	}
+	swRec := sw.Finish(swExitTime, swStatus, 0, swSubs)
+	// Detach the write from the dispatch context: the rows we most want
+	// (timeout, error, shutdown-canceled) are exactly the ones whose
+	// parent ctx may already be dead by the time we get here. Persisting
+	// telemetry must not depend on the supervised work's ctx still being
+	// live. context.WithoutCancel preserves any context values while
+	// ignoring cancellation/deadline.
+	writeCtx := context.WithoutCancel(ctx)
+	if writeErr := d.state.RecordStopwatch(writeCtx, job.ID, swRec, pipelineName, pipelineInstanceID); writeErr != nil {
+		jobLogger.Warn("stopwatch record write failed", "error", writeErr, "job_id", job.ID)
+	}
 
 	// Handle timeout (check if error is context.DeadlineExceeded)
 	if err != nil {

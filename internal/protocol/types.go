@@ -23,6 +23,12 @@ type Response struct {
 	Events       []Event        `json:"events,omitempty"`
 	StateUpdates map[string]any `json:"state_updates,omitempty"`
 	Logs         []LogEntry     `json:"logs,omitempty"`
+
+	// StopwatchSubs carries optional sub-span timing entries the plugin
+	// chose to emit. The dispatcher parses defensively and caps at 32 per
+	// step; malformed shapes are dropped silently. Plugins that do not
+	// instrument internal phases leave this empty.
+	StopwatchSubs []map[string]any `json:"ductile_stopwatch_subs,omitempty"`
 }
 
 // ResponseCompat carries protocol-v2 compatibility fields that remain on the

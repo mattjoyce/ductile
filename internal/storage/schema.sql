@@ -195,6 +195,46 @@ ON circuit_breaker_transitions(plugin, command, created_at);
 CREATE INDEX IF NOT EXISTS circuit_breaker_transitions_created_at_idx
 ON circuit_breaker_transitions(created_at);
 
+-- Job Stopwatch: Supervisor-side timing facts, one row per spawnPlugin
+-- invocation. Append-only -- retries produce additional rows distinguished
+-- by `attempt`. Written only by the dispatcher (plugins never write here).
+-- Telemetry is system data, separate from domain payload (Hickey
+-- decomplecting).
+--
+-- No FK on job_id. job_queue is the mutable hot table whose terminal rows
+-- get pruned by PruneJobQueue. An FK from this fact log back to job_queue
+-- would invert the dependency direction (fact-log binds to hot table) and
+-- block prune under foreign_keys=ON. Same lesson as job_transitions and
+-- job_attempts -- see scripts/migrate-drop-job-fact-fks.py and the
+-- PruneJobTransitions comment in queue.go for the canonical rationale.
+-- job_id remains the join column, just not DB-enforced.
+--
+-- Soft introduction: this table is NOT in the validator requiredTables
+-- list, so existing databases continue to start without it. Operators
+-- upgrade via scripts/migrate-add-job-stopwatch-table.py. Fresh databases
+-- get this from BootstrapSQLite on first start.
+CREATE TABLE IF NOT EXISTS job_stopwatch (
+  id                    INTEGER PRIMARY KEY AUTOINCREMENT,
+  job_id                TEXT    NOT NULL,
+  plugin                TEXT    NOT NULL,
+  pipeline              TEXT,
+  step_id               TEXT,
+  pipeline_instance_id  TEXT,
+  attempt               INTEGER NOT NULL,
+  enter_wall_ns         INTEGER NOT NULL,
+  exit_wall_ns          INTEGER NOT NULL,
+  dur_ns                INTEGER NOT NULL,
+  runtime_pre_ns        INTEGER NOT NULL,
+  runtime_post_ns       INTEGER NOT NULL,
+  status                TEXT    NOT NULL,
+  subs_json             TEXT    NOT NULL DEFAULT '[]',
+  recorded_at           TEXT    NOT NULL
+);
+CREATE INDEX IF NOT EXISTS job_stopwatch_job_attempt_idx
+  ON job_stopwatch(job_id, attempt);
+CREATE INDEX IF NOT EXISTS job_stopwatch_pipeline_idx
+  ON job_stopwatch(pipeline, pipeline_instance_id);
+
 -- Schedule Entries: Last fire times and next scheduled runs.
 CREATE TABLE IF NOT EXISTS schedule_entries (
   plugin          TEXT NOT NULL,
