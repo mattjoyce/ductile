@@ -17,6 +17,8 @@ from datetime import datetime, timezone
 from pathlib import PurePosixPath
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
+from _stopwatch import Spans
+
 _DURATION_RE = re.compile(r"^\s*(\d+(?:\.\d+)?)(ns|us|µs|ms|s|m|h)\s*$")
 _VALID_STRATEGIES = {"sha256", "mtime_size"}
 _VALID_EMIT_MODES = {"aggregate", "per_file"}
@@ -118,6 +120,14 @@ def compact_ok(
     if state_updates:
         out["state_updates"] = state_updates
     return out
+
+
+def attach_subs(response: Dict[str, Any], spans: Spans) -> Dict[str, Any]:
+    """Attach sub-spans to a response if any were captured."""
+    subs = spans.to_response_key()
+    if subs:
+        response["ductile_stopwatch_subs"] = subs
+    return response
 
 
 def snapshot_state(watches: Dict[str, Any]) -> Dict[str, Any]:
@@ -292,7 +302,19 @@ def slice_capped(items: List[str], limit: int) -> Tuple[List[str], bool]:
     return items[:limit], True
 
 
-def scan_watch(watch: Dict[str, Any], now: float) -> Tuple[Dict[str, str], Dict[str, Dict[str, int]], int, int, bool, List[Dict[str, str]]]:
+def scan_watch(
+    watch: Dict[str, Any], now: float
+) -> Tuple[
+    Dict[str, str],
+    Dict[str, Dict[str, int]],
+    int,
+    int,
+    bool,
+    List[Dict[str, str]],
+    int,
+    int,
+    int,
+]:
     root = watch["root"]
     include_globs = watch["include_globs"]
     exclude_globs = watch["exclude_globs"]
@@ -305,6 +327,9 @@ def scan_watch(watch: Dict[str, Any], now: float) -> Tuple[Dict[str, str], Dict[
     scanned_files = 0
     truncated = False
     logs: List[Dict[str, str]] = []
+    fp_count = 0
+    fp_bytes = 0
+    fp_dur_ns = 0
 
     for rel_path, abs_path in iter_candidate_files(root, bool(watch["recursive"]), bool(watch["ignore_hidden"])):
         scanned_files += 1
@@ -325,11 +350,15 @@ def scan_watch(watch: Dict[str, Any], now: float) -> Tuple[Dict[str, str], Dict[
             skipped_unstable += 1
             continue
 
+        fp_t0 = time.perf_counter_ns()
         try:
             fingerprint, size, mtime_ns = fingerprint_file(abs_path, str(watch["strategy"]))
         except OSError as exc:
             logs.append({"level": "warn", "message": f"{watch['id']}: fingerprint failed for {abs_path}: {exc}"})
             continue
+        fp_dur_ns += time.perf_counter_ns() - fp_t0
+        fp_count += 1
+        fp_bytes += size
 
         files_map[rel_path] = fingerprint
         meta_map[rel_path] = {"size": size, "mtime_ns": mtime_ns}
@@ -338,10 +367,10 @@ def scan_watch(watch: Dict[str, Any], now: float) -> Tuple[Dict[str, str], Dict[
             truncated = True
             break
 
-    return files_map, meta_map, scanned_files, skipped_unstable, truncated, logs
+    return files_map, meta_map, scanned_files, skipped_unstable, truncated, logs, fp_count, fp_bytes, fp_dur_ns
 
 
-def handle_poll(config: Dict[str, Any], state: Dict[str, Any]) -> Dict[str, Any]:
+def handle_poll(config: Dict[str, Any], state: Dict[str, Any], spans: Spans) -> Dict[str, Any]:
     watches, errors = normalize_watches(config)
     if errors:
         return compact_error("invalid folder_watch config", retry=False, logs=[{"level": "error", "message": e} for e in errors])
@@ -353,6 +382,17 @@ def handle_poll(config: Dict[str, Any], state: Dict[str, Any]) -> Dict[str, Any]
     events: List[Dict[str, Any]] = []
     logs: List[Dict[str, str]] = []
     now = time.time()
+
+    # Aggregate timing across all watches in this poll, emitted as a small
+    # bounded number of spans rather than one-per-file (which would blow
+    # the 32 cap on any reasonably-sized scan).
+    scan_dur_total_ns = 0
+    scanned_watches = 0
+    fp_count_total = 0
+    fp_bytes_total = 0
+    fp_dur_total_ns = 0
+    diff_emit_dur_total_ns = 0
+    events_emitted_total = 0
 
     for watch in watches:
         watch_id = watch["id"]
@@ -373,9 +413,26 @@ def handle_poll(config: Dict[str, Any], state: Dict[str, Any]) -> Dict[str, Any]
             }
             continue
 
-        current_files, meta_map, scanned_files, skipped_unstable, truncated, scan_logs = scan_watch(watch, now)
+        scan_t0 = time.perf_counter_ns()
+        (
+            current_files,
+            meta_map,
+            scanned_files,
+            skipped_unstable,
+            truncated,
+            scan_logs,
+            fp_count,
+            fp_bytes,
+            fp_dur_ns,
+        ) = scan_watch(watch, now)
+        scan_dur_total_ns += time.perf_counter_ns() - scan_t0
+        scanned_watches += 1
+        fp_count_total += fp_count
+        fp_bytes_total += fp_bytes
+        fp_dur_total_ns += fp_dur_ns
         logs.extend(scan_logs)
 
+        diff_t0 = time.perf_counter_ns()
         current_hash = snapshot_hash(current_files)
 
         prev_keys = set(prev_files.keys())
@@ -513,8 +570,34 @@ def handle_poll(config: Dict[str, Any], state: Dict[str, Any]) -> Dict[str, Any]
             "strategy": watch["strategy"],
             "updated_at": iso_now(),
         }
+        # Close the diff+emit window for this watch — diff_t0 was set
+        # immediately after scan_watch returned.
+        diff_emit_dur_total_ns += time.perf_counter_ns() - diff_t0
 
     logs.append({"level": "info", "message": f"folder_watch poll complete: watches={len(watches)} events={len(events)}"})
+
+    if scanned_watches > 0:
+        spans.add(
+            "folder_watch.scan",
+            dur_ns=scan_dur_total_ns,
+            count=scanned_watches,
+            status="ok",
+        )
+    if fp_count_total > 0:
+        spans.add(
+            "folder_watch.fingerprint_total",
+            dur_ns=fp_dur_total_ns,
+            count=fp_count_total,
+            bytes=fp_bytes_total,
+            status="ok",
+        )
+    if scanned_watches > 0:
+        spans.add(
+            "folder_watch.diff_and_emit",
+            dur_ns=diff_emit_dur_total_ns,
+            count=len(events),
+            status="ok",
+        )
 
     return compact_ok(
         result=f"folder_watch poll complete: watches={len(watches)} events={len(events)}",
@@ -568,8 +651,9 @@ def main() -> None:
     if not isinstance(state, dict):
         state = {}
 
+    spans = Spans()
     if command == "poll":
-        response = handle_poll(config, state)
+        response = handle_poll(config, state, spans)
     elif command == "health":
         response = handle_health(config)
     else:
@@ -578,6 +662,7 @@ def main() -> None:
             retry=False,
         )
 
+    attach_subs(response, spans)
     json.dump(response, sys.stdout, separators=(",", ":"))
     sys.stdout.write("\n")
     sys.stdout.flush()
