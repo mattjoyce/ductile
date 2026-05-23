@@ -112,13 +112,17 @@ func TestPhase2D1_JobsStatusRoOmitsResult(t *testing.T) {
 	if rr.Code != http.StatusOK {
 		t.Fatalf("expected 200 (jobs:status:ro reaches endpoint), got %d: %s", rr.Code, rr.Body.String())
 	}
-	// Result should be ABSENT (omitempty + nil-out) when no result scope.
-	body := rr.Body.String()
-	if strings.Contains(body, "result") {
-		t.Fatalf("jobs:status:ro must NOT see result field; got body=%s", body)
+	// Decode into the typed response and assert the Result field is empty
+	// (precise — not a substring search that could trip on field names).
+	var resp JobStatusResponse
+	if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode: %v; body=%s", err, rr.Body.String())
 	}
-	if !strings.Contains(body, `"status":"succeeded"`) {
-		t.Fatalf("jobs:status:ro should still see status; body=%s", body)
+	if len(resp.Result) != 0 {
+		t.Fatalf("jobs:status:ro must NOT see Result; got %d bytes: %s", len(resp.Result), string(resp.Result))
+	}
+	if resp.Status != "succeeded" {
+		t.Fatalf("jobs:status:ro should still see status; got status=%q body=%s", resp.Status, rr.Body.String())
 	}
 }
 
@@ -171,10 +175,13 @@ func TestPhase2D1_TokenWithoutAnyJobsScopeIsBlocked(t *testing.T) {
 	}
 }
 
-// TestPhase2D1_JobsLogsRoSeesLogsWithoutResult: a principal with
-// jobs:logs:ro reaches /job-logs and sees log entries, but Result is
-// omitted from each item when include_result=true is requested.
-func TestPhase2D1_JobsLogsRoSeesLogsWithoutResult(t *testing.T) {
+// TestPhase2D1_JobsLogsRoOmitsResultAndStderrAndLastError: a principal with
+// jobs:logs:ro reaches /job-logs and sees log lifecycle metadata but
+// NONE of the result-class fields (Result, Stderr, LastError) — D1 shapes
+// all three under jobs:result:ro, not just Result. Without this, stderr
+// or error-message leakage could carry plugin diagnostics or payload echo
+// to operators who were granted "logs only".
+func TestPhase2D1_JobsLogsRoOmitsResultAndStderrAndLastError(t *testing.T) {
 	jobID, srv := setupTestServerForJobScopes(t, []auth.TokenConfig{
 		{Token: "logs-only", Scopes: []string{"jobs:logs:ro"}},
 	})
@@ -187,9 +194,48 @@ func TestPhase2D1_JobsLogsRoSeesLogsWithoutResult(t *testing.T) {
 	if rr.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d: %s", rr.Code, rr.Body.String())
 	}
-	body := rr.Body.String()
-	if strings.Contains(body, "DUCTILE_D1_RESULT_MARKER") {
-		t.Fatalf("jobs:logs:ro alone must NOT see result marker; body=%s", body)
+	var resp JobLogListResponse
+	if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode: %v; body=%s", err, rr.Body.String())
+	}
+	if len(resp.Logs) == 0 {
+		t.Fatalf("expected at least one log item; body=%s", rr.Body.String())
+	}
+	for i, item := range resp.Logs {
+		if len(item.Result) != 0 {
+			t.Errorf("log[%d] Result should be empty for jobs:logs:ro alone; got %d bytes", i, len(item.Result))
+		}
+		if item.Stderr != nil {
+			t.Errorf("log[%d] Stderr should be nil for jobs:logs:ro alone; got %q", i, *item.Stderr)
+		}
+		if item.LastError != nil {
+			t.Errorf("log[%d] LastError should be nil for jobs:logs:ro alone; got %q", i, *item.LastError)
+		}
+		// Lifecycle metadata must still be present.
+		if item.JobID == "" || item.Status == "" {
+			t.Errorf("log[%d] should still carry status/lifecycle fields", i)
+		}
+	}
+}
+
+// TestPhase2D1_JobsLogsPlusResultRoSeesEverything is the positive control:
+// granting BOTH jobs:logs:ro AND jobs:result:ro restores full visibility
+// on /job-logs items.
+func TestPhase2D1_JobsLogsPlusResultRoSeesEverything(t *testing.T) {
+	jobID, srv := setupTestServerForJobScopes(t, []auth.TokenConfig{
+		{Token: "logs-and-result", Scopes: []string{"jobs:logs:ro", "jobs:result:ro"}},
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/job-logs?job_id="+jobID+"&include_result=true", nil)
+	req.Header.Set("Authorization", "Bearer logs-and-result")
+	rr := httptest.NewRecorder()
+	srv.setupRoutes().ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rr.Code, rr.Body.String())
+	}
+	if !strings.Contains(rr.Body.String(), "DUCTILE_D1_RESULT_MARKER") {
+		t.Fatalf("jobs:logs:ro + jobs:result:ro must see result marker; body=%s", rr.Body.String())
 	}
 }
 

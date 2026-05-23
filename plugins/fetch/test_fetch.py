@@ -110,9 +110,9 @@ class FetchHostileMarkdownTokensTests(unittest.TestCase):
                 "config": {
                     "output_format": "html",
                     # P2-06: loopback is now blocked by default; explicitly
-                    # opt-in via allow_hosts so this test still exercises
+                                    # opt-in via allowed_hosts so this test still exercises
                     # the actual fetch path.
-                    "allow_hosts": ["127.0.0.1"],
+                    "allowed_hosts": ["127.0.0.1"],
                 },
                 "event": {"payload": {"url": f"http://127.0.0.1:{self.port}/"}},
             }
@@ -124,7 +124,7 @@ class FetchHostileMarkdownTokensTests(unittest.TestCase):
 class FetchEgressPolicyTests(unittest.TestCase):
     """P2-06: bundled fetch plugin must reject loopback, link-local, private,
     and metadata-host targets by default. Redirects to such targets are
-    re-validated. Response bodies are size-capped. allow_hosts is an
+    re-validated. Response bodies are size-capped. allowed_hosts is an
     explicit operator opt-in."""
 
     def test_scheme_other_than_http_https_is_rejected(self):
@@ -201,32 +201,32 @@ class FetchEgressPolicyTests(unittest.TestCase):
                 self.assertEqual(resp["status"], "error", msg=f"{url}: {resp}")
                 self.assertIn("private", resp["error"])
 
-    def test_deny_hosts_blocks_explicit_hostname(self):
-        # allow_hosts grants the IP-blocklist bypass, but deny_hosts is
+    def test_denied_hosts_blocks_explicit_hostname(self):
+        # allowed_hosts grants the IP-blocklist bypass, but denied_hosts is
         # checked first and wins.
         resp = run_plugin(
             {
                 "command": "handle",
                 "config": {
-                    "allow_hosts": ["127.0.0.1"],
-                    "deny_hosts": ["127.0.0.1"],
+                    "allowed_hosts": ["127.0.0.1"],
+                    "denied_hosts": ["127.0.0.1"],
                 },
                 "event": {"payload": {"url": "http://127.0.0.1/"}},
             }
         )
         self.assertEqual(resp["status"], "error")
-        self.assertIn("deny_hosts", resp["error"])
+        self.assertIn("denied_hosts", resp["error"])
 
-    def test_allow_hosts_required_when_non_empty(self):
+    def test_allowed_hosts_required_when_non_empty(self):
         resp = run_plugin(
             {
                 "command": "handle",
-                "config": {"allow_hosts": ["example.com"]},
+                "config": {"allowed_hosts": ["example.com"]},
                 "event": {"payload": {"url": "http://other.example.org/"}},
             }
         )
         self.assertEqual(resp["status"], "error")
-        self.assertIn("allow_hosts", resp["error"])
+        self.assertIn("allowed_hosts", resp["error"])
 
 
 class FetchAllowHostsLoopbackOptInTest(unittest.TestCase):
@@ -239,11 +239,11 @@ class FetchAllowHostsLoopbackOptInTest(unittest.TestCase):
     def tearDown(self):
         _stop_server(self.server, self.thread)
 
-    def test_allow_hosts_grants_loopback(self):
+    def test_allowed_hosts_grants_loopback(self):
         resp = run_plugin(
             {
                 "command": "handle",
-                "config": {"allow_hosts": ["127.0.0.1"]},
+                "config": {"allowed_hosts": ["127.0.0.1"]},
                 "event": {"payload": {"url": f"http://127.0.0.1:{self.port}/"}},
             }
         )
@@ -273,7 +273,7 @@ class FetchResponseSizeCapTests(unittest.TestCase):
             {
                 "command": "handle",
                 "config": {
-                    "allow_hosts": ["127.0.0.1"],
+                    "allowed_hosts": ["127.0.0.1"],
                     "max_response_bytes": 1024,
                 },
                 "event": {"payload": {"url": f"http://127.0.0.1:{self.port}/"}},
@@ -287,7 +287,7 @@ class FetchResponseSizeCapTests(unittest.TestCase):
             {
                 "command": "handle",
                 "config": {
-                    "allow_hosts": ["127.0.0.1"],
+                    "allowed_hosts": ["127.0.0.1"],
                     "max_response_bytes": 1024 * 1024,
                 },
                 "event": {"payload": {"url": f"http://127.0.0.1:{self.port}/"}},
@@ -303,8 +303,8 @@ class FetchRedirectRevalidationTests(unittest.TestCase):
 
     def setUp(self):
         # Redirect every request from the source to a host the operator
-        # has explicitly deny-listed. deny_hosts is checked before
-        # allow_hosts, so even though 127.0.0.1 is in both lists, the
+        # has explicitly deny-listed. denied_hosts is checked before
+        # allowed_hosts, so even though 127.0.0.1 is in both lists, the
         # deny check fires for the redirect target's revalidation.
         _RedirectToHandler.redirect_target = "http://blocked.example.invalid/"
         self.server, self.port, self.thread = _serve(_RedirectToHandler)
@@ -317,15 +317,15 @@ class FetchRedirectRevalidationTests(unittest.TestCase):
             {
                 "command": "handle",
                 "config": {
-                    "allow_hosts": ["127.0.0.1", "blocked.example.invalid"],
-                    "deny_hosts": ["blocked.example.invalid"],
+                    "allowed_hosts": ["127.0.0.1", "blocked.example.invalid"],
+                    "denied_hosts": ["blocked.example.invalid"],
                     "follow_redirects": "true",
                 },
                 "event": {"payload": {"url": f"http://127.0.0.1:{self.port}/source"}},
             }
         )
         self.assertEqual(resp["status"], "error", msg=resp)
-        self.assertIn("deny_hosts", resp["error"])
+        self.assertIn("denied_hosts", resp["error"])
 
 
 class FetchHealthCommandTest(unittest.TestCase):

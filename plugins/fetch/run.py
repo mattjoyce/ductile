@@ -7,30 +7,22 @@ the content as HTML, stripped plain text, or markdown.
 Config keys:
   user_agent          - Custom UA string (default: ductile-fetch/1.0)
   timeout_seconds     - Request timeout in seconds (default: 30)
-  follow_redirects    - Follow HTTP redirects, true|false (default: false; P2-06)
+  follow_redirects    - Follow HTTP redirects (default: false; see manifest)
   output_format       - html | text | markdown (default: html)
-                        markdown: sends Accept: text/markdown — sites that
-                        support content negotiation (e.g. Cloudflare Markdown
-                        for Agents) return pre-converted markdown; others
-                        fall back to HTML.
+                        markdown: sends Accept: text/markdown for content
+                        negotiation; falls back to HTML if the server does
+                        not honour it.
   max_response_bytes  - Hard cap on response body, in bytes (default: 1048576)
-  allow_hosts         - Optional list. When non-empty, only requests whose
+  allowed_hosts       - Optional list. When non-empty, only requests whose
                         hostname matches an entry pass (exact match). Hosts
-                        in this list also bypass the IP blocklist (use for
-                        operator-trusted internal or loopback targets).
-  deny_hosts          - Optional list. Requests whose hostname matches an
-                        entry are rejected (exact match), regardless of IP.
+                        in this list bypass the IP blocklist (operator opt-in
+                        for trusted internal / loopback targets).
+  denied_hosts        - Optional list. Requests whose hostname matches an
+                        entry are rejected, regardless of IP. Deny is
+                        checked before allow.
 
-Egress safety (P2-06):
-  Requests are rejected before any network I/O when:
-    * URL scheme is not http/https
-    * Hostname is in deny_hosts
-    * allow_hosts is non-empty and hostname is not in it
-    * Hostname resolves to any loopback, link-local, private (RFC1918, ULA),
-      or cloud metadata (169.254.169.254) address — unless the hostname is
-      in allow_hosts.
-  Each redirect hop is re-validated under the same rules. Response bodies
-  are read with a hard byte cap; oversized responses are rejected.
+See `_validate_target` for the full egress policy and `_pinned_getaddrinfo`
+for the DNS-rebinding-resistant connect path.
 """
 
 import html.parser
@@ -56,12 +48,54 @@ TIMEOUT = int(config.get("timeout_seconds", 30))
 FOLLOW_REDIRECTS = str(config.get("follow_redirects", "false")).lower() == "true"
 OUTPUT_FORMAT = config.get("output_format", "html").lower()
 MAX_RESPONSE_BYTES = int(config.get("max_response_bytes", 1024 * 1024))
-ALLOW_HOSTS = {h.strip().lower() for h in config.get("allow_hosts", []) if h and h.strip()}
-DENY_HOSTS = {h.strip().lower() for h in config.get("deny_hosts", []) if h and h.strip()}
+ALLOWED_HOSTS = {h.strip().lower() for h in config.get("allowed_hosts", []) if h and h.strip()}
+DENIED_HOSTS = {h.strip().lower() for h in config.get("denied_hosts", []) if h and h.strip()}
 
 # AWS / GCP / Azure-style metadata host. Belongs to the link-local block but
 # called out for clarity in error messages.
 _METADATA_HOSTS = {"169.254.169.254", "fd00:ec2::254"}
+
+# ---------------------------------------------------------------------------
+# DNS-rebinding-resistant resolution (P2-06)
+# ---------------------------------------------------------------------------
+#
+# _validate_target() resolves a hostname and rejects internal IPs. Without
+# pinning, urllib would re-resolve at connect time — a short-TTL DNS server
+# can return a public IP for the validation lookup and a private IP for the
+# connect lookup, defeating the blocklist (DNS rebinding TOCTOU).
+#
+# We install a socket.getaddrinfo wrapper at module import. _validate_target
+# populates _DNS_PIN with the validated IPs, and the wrapper returns those
+# same IPs at connect time so urllib's TCP socket lands on the address we
+# audited — not whatever DNS returns on the second lookup. The plugin is
+# fork-per-invocation so global state is request-scoped in practice.
+
+_DNS_PIN: dict[str, list[str]] = {}
+_ORIGINAL_GETADDRINFO = socket.getaddrinfo
+
+
+def _pinned_getaddrinfo(host, port, *args, **kwargs):
+    key = (host or "").lower()
+    pinned = _DNS_PIN.get(key)
+    if not pinned:
+        return _ORIGINAL_GETADDRINFO(host, port, *args, **kwargs)
+
+    results = []
+    for raw in pinned:
+        try:
+            addr = ipaddress.ip_address(raw)
+        except ValueError:
+            continue
+        if isinstance(addr, ipaddress.IPv4Address):
+            results.append((socket.AF_INET, socket.SOCK_STREAM, 0, "", (str(addr), port)))
+        else:
+            results.append((socket.AF_INET6, socket.SOCK_STREAM, 0, "", (str(addr), port, 0, 0)))
+    if not results:
+        return _ORIGINAL_GETADDRINFO(host, port, *args, **kwargs)
+    return results
+
+
+socket.getaddrinfo = _pinned_getaddrinfo
 
 
 # ---------------------------------------------------------------------------
@@ -117,48 +151,69 @@ def html_to_text(raw_html):
     return parser.text()
 
 
-class EgressRejected(Exception):
+class EgressRejectedError(Exception):
     """Raised when a URL is rejected by the egress policy (P2-06)."""
 
 
 def _validate_target(url):
     """Validate one URL against the egress policy.
 
-    Returns the parsed hostname (lowercased) on success. Raises EgressRejected
-    on policy violation. Resolves DNS to check every returned address — a
-    hostile or compromised DNS that returns a private IP for a public name
-    is rejected at this layer, not at connect time.
+    Returns the parsed hostname (lowercased) on success. Raises
+    EgressRejectedError on policy violation. Resolves DNS to check every
+    returned address — a hostile or compromised DNS that returns a private
+    IP for a public name is rejected at this layer.
+
+    The validated IPs are pinned into the module-level _DNS_PIN map so the
+    subsequent connect-time getaddrinfo (via _pinned_getaddrinfo) sees the
+    SAME addresses — no second DNS round-trip the attacker can poison
+    (DNS rebinding TOCTOU defense).
     """
     parsed = urlparse(url)
     scheme = (parsed.scheme or "").lower()
     if scheme not in {"http", "https"}:
-        raise EgressRejected(f"scheme {scheme!r} not in {{http, https}}: {url}")
+        raise EgressRejectedError(f"scheme {scheme!r} not in {{http, https}}: {url}")
     if not parsed.hostname:
-        raise EgressRejected(f"missing hostname: {url}")
+        raise EgressRejectedError(f"missing hostname: {url}")
 
     host = parsed.hostname.lower()
 
-    if host in DENY_HOSTS:
-        raise EgressRejected(f"host {host!r} is in deny_hosts")
+    if host in DENIED_HOSTS:
+        raise EgressRejectedError(f"host {host!r} is in denied_hosts")
 
-    if ALLOW_HOSTS:
-        if host not in ALLOW_HOSTS:
-            raise EgressRejected(f"host {host!r} not in allow_hosts")
-        # Explicitly allowed host bypasses IP blocklist — operator opt-in.
+    if ALLOWED_HOSTS:
+        if host not in ALLOWED_HOSTS:
+            raise EgressRejectedError(f"host {host!r} not in allowed_hosts")
+        # Explicitly allowed host bypasses IP blocklist. Resolve and pin
+        # anyway so the connect-time lookup uses the same addresses we
+        # observed at admission — rebinding defense applies even when the
+        # blocklist is bypassed.
+        _pin_resolution(host)
         return host
 
+    addresses = _resolve_and_validate_ips(host)
+    _DNS_PIN[host] = list(addresses)
+    return host
+
+
+def _resolve_and_validate_ips(host):
+    """Resolve `host` and reject every returned IP that fails the policy.
+
+    Returns the resolved IP strings on success; raises EgressRejectedError on
+    any policy failure. Separated from _validate_target so allow-list opt-in
+    can pin without re-running the blocklist.
+    """
     try:
         _, _, addresses = socket.gethostbyname_ex(host)
     except socket.gaierror as exc:
-        raise EgressRejected(f"DNS resolution failed for {host!r}: {exc}") from exc
+        raise EgressRejectedError(f"DNS resolution failed for {host!r}: {exc}") from exc
     if not addresses:
-        raise EgressRejected(f"DNS returned no addresses for {host!r}")
+        raise EgressRejectedError(f"DNS returned no addresses for {host!r}")
 
     for raw_addr in addresses:
         try:
             addr = ipaddress.ip_address(raw_addr)
         except ValueError:
-            raise EgressRejected(f"unparseable address {raw_addr!r} for {host!r}")
+            raise EgressRejectedError(f"unparseable address {raw_addr!r} for {host!r}")
 
         # Normalize IPv4-mapped IPv6 (::ffff:127.0.0.1 etc.) to its IPv4 form
         # so the policy decisions below apply uniformly.
@@ -166,21 +221,38 @@ def _validate_target(url):
             addr = addr.ipv4_mapped
 
         if str(addr) in _METADATA_HOSTS:
-            raise EgressRejected(f"address {addr} is a cloud metadata endpoint")
+            raise EgressRejectedError(f"address {addr} is a cloud metadata endpoint")
         if addr.is_loopback:
-            raise EgressRejected(f"address {addr} is loopback")
+            raise EgressRejectedError(f"address {addr} is loopback")
         if addr.is_link_local:
-            raise EgressRejected(f"address {addr} is link-local")
+            raise EgressRejectedError(f"address {addr} is link-local")
         if addr.is_private:
-            raise EgressRejected(f"address {addr} is private (RFC1918 / ULA)")
+            raise EgressRejectedError(f"address {addr} is private (RFC1918 / ULA)")
         if addr.is_multicast:
-            raise EgressRejected(f"address {addr} is multicast")
+            raise EgressRejectedError(f"address {addr} is multicast")
         if addr.is_unspecified:
-            raise EgressRejected(f"address {addr} is unspecified (0.0.0.0 / ::)")
+            raise EgressRejectedError(f"address {addr} is unspecified (0.0.0.0 / ::)")
         if addr.is_reserved:
-            raise EgressRejected(f"address {addr} is reserved")
+            raise EgressRejectedError(f"address {addr} is reserved")
 
-    return host
+    return addresses
+
+
+def _pin_resolution(host):
+    """Resolve `host` with the ORIGINAL getaddrinfo and pin the result.
+
+    Used on the allow-list bypass path: the operator has opted into the host
+    but we still want the connect to land on the addresses we observed at
+    admission, not on whatever a rebinding-capable DNS server returns later.
+    """
+    try:
+        _, _, addresses = socket.gethostbyname_ex(host)
+    except socket.gaierror:
+        # If even resolution fails, leave _DNS_PIN unset and let urllib's
+        # own resolver surface the error at connect time.
+        return
+    if addresses:
+        _DNS_PIN[host] = list(addresses)
 
 
 class _ValidatingRedirectHandler(urllib.request.HTTPRedirectHandler):
@@ -223,7 +295,7 @@ def fetch_url(url):
         # buffering an unbounded body.
         raw = resp.read(MAX_RESPONSE_BYTES + 1)
         if len(raw) > MAX_RESPONSE_BYTES:
-            raise EgressRejected(
+            raise EgressRejectedError(
                 f"response body exceeds max_response_bytes ({MAX_RESPONSE_BYTES})"
             )
         status_code = resp.status
@@ -257,7 +329,7 @@ elif command == "handle":
 
     try:
         body, status_code, final_url, markdown_tokens, server_sent_markdown = fetch_url(url)
-    except EgressRejected as exc:
+    except EgressRejectedError as exc:
         # Egress policy violations are configuration / target issues, not
         # transient. Non-retryable.
         respond(

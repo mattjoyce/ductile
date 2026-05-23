@@ -1,5 +1,10 @@
 # Changelog
 
+## 2026-05-23
+- **BREAKING (auth scopes):** `plugin:ro` is now catalog-only. Tokens that previously invoked read-class plugin commands via `plugin:ro` (e.g. `stress.cpu`) must add `plugin:invoke:ro` to retain invocation. `plugin:rw` and wildcard `*` are unaffected — they continue to grant both catalog read and read-class invocation. New scopes: `plugin:catalog:ro` (read manifests, list commands) and `plugin:invoke:ro` (invoke read-class commands). Phase 2 CIA finding P2-07 — was over-broad least-privilege boundary.
+- Bundled `fetch` plugin: hard-blocks egress to loopback / link-local / private (RFC1918, ULA) / cloud-metadata IPs by default. Resolves the URL hostname and re-validates each redirect hop; pins the resolved IP between admission and connect to defeat DNS rebinding. Caps response bodies at 1 MiB (configurable). Default `follow_redirects` flipped from true to false. New optional config keys `allowed_hosts` / `denied_hosts` / `max_response_bytes`. Phase 2 CIA finding P2-06.
+- Add narrower OPTIONAL `jobs:*:ro` / `events:*:ro` scopes (`jobs:status:ro`, `jobs:result:ro`, `jobs:logs:ro`, `jobs:tree:ro`, `events:meta:ro`, `events:payload:ro`) with per-principal response shaping: principals without `jobs:result:ro` no longer see `result`, `last_error`, or `stderr` fields in `/job/{id}`, `/job/{id}/tree`, or `/job-logs?include_result=true`. Back-compat: `jobs:ro` is a super-scope that implies all four narrower scopes — existing tokens see identical response shape. SSE `/events` payload shaping is reserved for a follow-up bead. Phase 2 CIA design note D1.
+
 ## 2026-05-05
 - Add `tcc_paths` top-level config field (macOS-only): paths stat()-ed once on cold-start to surface Files-and-Folders TCC popups synchronously after a binary redeploy. Adhoc-signed binary cdhash changes per build invalidate existing TCC grants; pre-warming under operator presence avoids unattended popup deadlocks where launchd-spawned plugin children block on first protected-path access. No-op on non-darwin and when paths empty. Fail-soft: missing paths log Warn and continue.
 

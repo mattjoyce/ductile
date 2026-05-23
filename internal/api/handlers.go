@@ -475,14 +475,9 @@ func (s *Server) handleGetJob(w http.ResponseWriter, r *http.Request) {
 		CompletedAt: job.CompletedAt,
 	}
 
-	// D1: principals without jobs:result:ro (and not the back-compat
-	// super-scope jobs:ro / jobs:rw / wildcard) see status fields only;
-	// the result payload is omitted from the JSON output (omitempty on
-	// the Result tag).
-	if principal, ok := auth.PrincipalFromContext(r.Context()); ok {
-		if !s.canSeeJobResults(principal) {
-			resp.Result = nil
-		}
+	// D1: hide result-class fields from principals lacking jobs:result:ro.
+	if !s.canSeeJobResultsFromCtx(r.Context()) {
+		resp.Result = nil
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -492,13 +487,30 @@ func (s *Server) handleGetJob(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// canSeeJobResults reports whether the principal may receive Result payloads
-// in job-related responses. jobs:result:ro is the explicit narrower scope;
-// jobs:ro and jobs:rw imply it via the auth normalize map; wildcard always
-// passes. Used by handleGetJob / handleGetJobTree / handleListJobLogs to
-// shape responses per D1.
+// canSeeJobResults reports whether the principal may receive result-class
+// payloads in job-related responses. "Result-class" covers:
+//   - Result (json.RawMessage, the plugin's structured return value)
+//   - LastError (plugin error message, often contains failing payload echo)
+//   - Stderr (plugin diagnostic output)
+//
+// All three are gated under jobs:result:ro because they all carry data the
+// plugin produced — distinct from status/metadata fields (job_id, status,
+// timestamps, attempt count) which ride on jobs:status:ro / jobs:logs:ro.
+//
+// jobs:ro and jobs:rw imply jobs:result:ro via the auth normalize map;
+// wildcard always passes. Used by handleGetJob, handleGetJobTree, and
+// handleListJobLogs.
 func (s *Server) canSeeJobResults(p auth.Principal) bool {
 	return auth.HasAnyScope(p, "jobs:result:ro", "jobs:rw", "*")
+}
+
+// canSeeJobResultsFromCtx is a context-aware wrapper that consolidates the
+// "extract principal then ask" pattern used by three handlers. HasAnyScope
+// returns false on a zero-value Principal (empty scope map), so a missing
+// principal naturally maps to "cannot see results" — the strict default.
+func (s *Server) canSeeJobResultsFromCtx(ctx context.Context) bool {
+	p, _ := auth.PrincipalFromContext(ctx)
+	return s.canSeeJobResults(p)
 }
 
 var errRootBaggageClaims = errors.New("root baggage claims failed")
@@ -725,13 +737,10 @@ func (s *Server) handleListJobLogs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// D1: shape Result per principal. Even when the caller requested
-	// include_result=true, omit the result payload for principals without
-	// jobs:result:ro (back-compat super-scopes still see it).
-	canSeeResults := true
-	if principal, ok := auth.PrincipalFromContext(r.Context()); ok {
-		canSeeResults = s.canSeeJobResults(principal)
-	}
+	// D1: hide result-class fields (Result, LastError, Stderr) when the
+	// caller lacks jobs:result:ro. include_result=true is still accepted
+	// for back-compat but produces a shaped response for narrower scopes.
+	canSeeResults := s.canSeeJobResultsFromCtx(r.Context())
 
 	resp := JobLogListResponse{
 		Logs:  make([]JobLogItem, 0, len(logs)),
@@ -754,6 +763,8 @@ func (s *Server) handleListJobLogs(w http.ResponseWriter, r *http.Request) {
 		}
 		if !canSeeResults {
 			item.Result = nil
+			item.LastError = nil
+			item.Stderr = nil
 		}
 		resp.Logs = append(resp.Logs, item)
 	}
@@ -957,11 +968,8 @@ func (s *Server) handleGetJobTree(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// D1: shape each per-job Result by principal scope.
-	canSeeResults := true
-	if principal, ok := auth.PrincipalFromContext(r.Context()); ok {
-		canSeeResults = s.canSeeJobResults(principal)
-	}
+	// D1: shape per-job result-class fields by principal scope.
+	canSeeResults := s.canSeeJobResultsFromCtx(r.Context())
 
 	resp := make([]JobResultData, 0, len(results))
 	for _, res := range results {
@@ -978,6 +986,7 @@ func (s *Server) handleGetJobTree(w http.ResponseWriter, r *http.Request) {
 		}
 		if !canSeeResults {
 			item.Result = nil
+			item.LastError = nil
 		}
 		resp = append(resp, item)
 	}
