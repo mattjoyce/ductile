@@ -120,6 +120,36 @@ func TestStoreRecordStopwatch_AppendsPerAttempt(t *testing.T) {
 	}
 }
 
+// TestJobStopwatch_HasNoForeignKey is a regression test for the
+// fact-log-FK-direction mistake. job_stopwatch must NOT carry an FK
+// on job_id referencing job_queue(id): with PRAGMA foreign_keys=ON
+// (sqlite.go:44) such an FK blocks PruneJobQueue on every row that
+// has telemetry — i.e. every row once telemetry is operational. Same
+// lesson the codebase already learned with job_transitions and
+// job_attempts (see scripts/migrate-drop-job-fact-fks.py and the
+// PruneJobTransitions comment in queue.go:1644-1647).
+func TestJobStopwatch_HasNoForeignKey(t *testing.T) {
+	t.Parallel()
+
+	dbPath := filepath.Join(t.TempDir(), "sw.db")
+	db, err := storage.OpenSQLite(context.Background(), dbPath)
+	if err != nil {
+		t.Fatalf("OpenSQLite: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	rows, err := db.QueryContext(context.Background(),
+		`PRAGMA foreign_key_list('job_stopwatch')`)
+	if err != nil {
+		t.Fatalf("PRAGMA foreign_key_list: %v", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	if rows.Next() {
+		t.Fatalf("job_stopwatch declares a FOREIGN KEY — must not (would block PruneJobQueue)")
+	}
+}
+
 func TestStoreRecordStopwatch_EmptyJobIDReturnsError(t *testing.T) {
 	t.Parallel()
 

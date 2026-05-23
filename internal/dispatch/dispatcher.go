@@ -448,7 +448,14 @@ func (d *Dispatcher) executeJob(ctx context.Context, job *queue.Job) {
 		swSubs = stopwatch.SubsFromResponse(resp.StopwatchSubs, jobLogger)
 	}
 	swRec := sw.Finish(swExitTime, swStatus, 0, swSubs)
-	if writeErr := d.state.RecordStopwatch(ctx, job.ID, swRec, pipelineName, pipelineInstanceID); writeErr != nil {
+	// Detach the write from the dispatch context: the rows we most want
+	// (timeout, error, shutdown-canceled) are exactly the ones whose
+	// parent ctx may already be dead by the time we get here. Persisting
+	// telemetry must not depend on the supervised work's ctx still being
+	// live. context.WithoutCancel preserves any context values while
+	// ignoring cancellation/deadline.
+	writeCtx := context.WithoutCancel(ctx)
+	if writeErr := d.state.RecordStopwatch(writeCtx, job.ID, swRec, pipelineName, pipelineInstanceID); writeErr != nil {
 		jobLogger.Warn("stopwatch record write failed", "error", writeErr, "job_id", job.ID)
 	}
 

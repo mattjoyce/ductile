@@ -201,6 +201,14 @@ ON circuit_breaker_transitions(created_at);
 -- Telemetry is system data, separate from domain payload (Hickey
 -- decomplecting).
 --
+-- No FK on job_id. job_queue is the mutable hot table whose terminal rows
+-- get pruned by PruneJobQueue. An FK from this fact log back to job_queue
+-- would invert the dependency direction (fact-log binds to hot table) and
+-- block prune under foreign_keys=ON. Same lesson as job_transitions and
+-- job_attempts -- see scripts/migrate-drop-job-fact-fks.py and the
+-- PruneJobTransitions comment in queue.go for the canonical rationale.
+-- job_id remains the join column, just not DB-enforced.
+--
 -- Soft introduction: this table is NOT in the validator requiredTables
 -- list, so existing databases continue to start without it. Operators
 -- upgrade via scripts/migrate-add-job-stopwatch-table.py. Fresh databases
@@ -220,8 +228,7 @@ CREATE TABLE IF NOT EXISTS job_stopwatch (
   runtime_post_ns       INTEGER NOT NULL,
   status                TEXT    NOT NULL,
   subs_json             TEXT    NOT NULL DEFAULT '[]',
-  recorded_at           TEXT    NOT NULL,
-  FOREIGN KEY(job_id) REFERENCES job_queue(id)
+  recorded_at           TEXT    NOT NULL
 );
 CREATE INDEX IF NOT EXISTS job_stopwatch_job_attempt_idx
   ON job_stopwatch(job_id, attempt);

@@ -49,8 +49,11 @@ SAFETY
   no table rebuild, no data copy. Brief schema lock held only for the
   DDL transaction; busy_timeout=5000 gives concurrent connections a
   5-second grace if they collide.
-- FK enforcement on job_id applies to FUTURE inserts only. The table is
-  empty at creation; nothing existing is validated against job_queue.
+- No FK on job_id. job_queue is the mutable hot table whose terminal rows
+  get pruned by PruneJobQueue; an FK from this fact log would invert the
+  dependency direction and block prune under foreign_keys=ON. Same lesson
+  as the earlier migrate-drop-job-fact-fks.py for job_transitions and
+  job_attempts. job_id is still the join column, just not DB-enforced.
 - Soft introduction: this table is NOT in ductile's startup
   ValidateSQLiteSchema requiredTables list. Forgetting to run the
   migration does not prevent ductile from starting; it only means
@@ -88,8 +91,9 @@ from pathlib import Path
 # courtesy that gives all-or-nothing semantics if one DDL were to fail.
 SCHEMA_STATEMENTS = [
     # The fact table. One row per dispatcher spawnPlugin invocation.
-    # FK is declarative for future inserts -- table is empty at creation
-    # so no retroactive validation against job_queue occurs.
+    # Deliberately no FK on job_id -- see SAFETY note in the module
+    # docstring; an FK here would block PruneJobQueue on every row that
+    # has telemetry, which would be every row.
     """
     CREATE TABLE IF NOT EXISTS job_stopwatch (
       id                    INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -106,8 +110,7 @@ SCHEMA_STATEMENTS = [
       runtime_post_ns       INTEGER NOT NULL,
       status                TEXT    NOT NULL,
       subs_json             TEXT    NOT NULL DEFAULT '[]',
-      recorded_at           TEXT    NOT NULL,
-      FOREIGN KEY(job_id) REFERENCES job_queue(id)
+      recorded_at           TEXT    NOT NULL
     )
     """,
     # Primary inspect lookup: "show me everything for this job (across

@@ -71,6 +71,64 @@ echo '{"status": "ok", "result": "ok"}'
 	}
 }
 
+// TestDispatcher_ExecuteJob_WritesStopwatchRowOnTimeout is the regression
+// test for the "timeout rows go missing" finding. If RecordStopwatch is
+// called with the same ctx that spawnPlugin used, any ctx-cancellation
+// path (including the one that signals timeout) can race with the write.
+// Detaching the write ctx via context.WithoutCancel guarantees the row
+// lands even on the supervised-work's worst exit path. This test sets a
+// tiny plugin timeout, runs a deliberately slow plugin, and asserts a
+// timeout-status row appears in job_stopwatch.
+func TestDispatcher_ExecuteJob_WritesStopwatchRowOnTimeout(t *testing.T) {
+	disp, db, pluginsDir, cleanup := setupTestDispatcher(t)
+	defer cleanup()
+
+	// Plugin sleeps longer than the timeout will allow.
+	script := `#!/bin/bash
+read input
+sleep 5
+echo '{"status": "ok"}'
+`
+	plug := createTestPlugin(t, pluginsDir, "slow", script)
+	if err := disp.registry.Add(plug); err != nil {
+		t.Fatalf("registry.Add: %v", err)
+	}
+	disp.cfg.Plugins["slow"] = config.PluginConf{
+		Enabled: true,
+		Config:  map[string]any{},
+		Timeouts: &config.TimeoutsConfig{
+			Poll: 250 * time.Millisecond,
+		},
+	}
+
+	ctx := context.Background()
+	jobID, err := disp.queue.Enqueue(ctx, queue.EnqueueRequest{
+		Plugin: "slow", Command: "poll", SubmittedBy: "test",
+	})
+	if err != nil {
+		t.Fatalf("Enqueue: %v", err)
+	}
+	job, err := disp.queue.Dequeue(ctx)
+	if err != nil {
+		t.Fatalf("Dequeue: %v", err)
+	}
+	disp.executeJob(ctx, job)
+
+	var status string
+	var durNs int64
+	err = db.QueryRow(`SELECT status, dur_ns FROM job_stopwatch WHERE job_id = ?`, jobID).Scan(&status, &durNs)
+	if err != nil {
+		t.Fatalf("query job_stopwatch (timeout row missing): %v", err)
+	}
+	if status != "timeout" {
+		t.Errorf("expected status=timeout, got %q", status)
+	}
+	// Duration should be ~250ms, generously bracketed.
+	if durNs < int64(100*time.Millisecond) || durNs > int64(3*time.Second) {
+		t.Errorf("dur_ns out of expected range for 250ms timeout: %d", durNs)
+	}
+}
+
 // TestDispatcher_ExecuteJob_WritesStopwatchRowForPluginError proves that
 // the supervisor still emits a row even when the plugin returns error —
 // observability does not depend on success.
