@@ -29,25 +29,25 @@ const MaxSubsPerRecord = 32
 
 // Status values for a Record. A closed set; treat as opaque tokens.
 const (
-	StatusOK            = "ok"
-	StatusError         = "err"
-	StatusTimeout       = "timeout"
-	StatusCaptureError  = "capture_error"
+	StatusOK           = "ok"
+	StatusError        = "err"
+	StatusTimeout      = "timeout"
+	StatusCaptureError = "capture_error"
 )
 
 // Record is the immutable timing value emitted by the supervisor for one
 // plugin invocation. Field order is the wire contract; do not reorder.
 type Record struct {
-	PluginID       string           `json:"plugin_id"`
-	StepName       string           `json:"step_name"`
-	Attempt        int              `json:"attempt"`
-	EnterWallNs    int64            `json:"enter_wall_ns"`
-	ExitWallNs     int64            `json:"exit_wall_ns"`
-	DurNs          int64            `json:"dur_ns"`
-	RuntimePreNs   int64            `json:"runtime_pre_ns"`
-	RuntimePostNs  int64            `json:"runtime_post_ns"`
-	Status         string           `json:"status"`
-	Subs           []map[string]any `json:"subs"`
+	PluginID      string           `json:"plugin_id"`
+	StepName      string           `json:"step_name"`
+	Attempt       int              `json:"attempt"`
+	EnterWallNs   int64            `json:"enter_wall_ns"`
+	ExitWallNs    int64            `json:"exit_wall_ns"`
+	DurNs         int64            `json:"dur_ns"`
+	RuntimePreNs  int64            `json:"runtime_pre_ns"`
+	RuntimePostNs int64            `json:"runtime_post_ns"`
+	Status        string           `json:"status"`
+	Subs          []map[string]any `json:"subs"`
 }
 
 // Stopwatch is the per-invocation handle held by the supervisor between

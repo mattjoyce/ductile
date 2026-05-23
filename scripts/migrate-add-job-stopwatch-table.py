@@ -26,7 +26,7 @@ existing is touched.
 FIELD REFERENCE (job_stopwatch columns)
 ---------------------------------------
   id                    surrogate PK, auto-increment
-  job_id                FK to job_queue.id (the supervised invocation)
+  job_id                join key to job_queue/job_log for the invocation
   plugin                plugin name that ran
   pipeline              pipeline name, when known (else empty string)
   step_id               pipeline step id, when known
