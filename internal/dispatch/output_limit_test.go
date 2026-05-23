@@ -84,8 +84,23 @@ echo '{"status":"ok","result":"ok"}'
 func writeDispatchTestScript(t *testing.T, body string) string {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "plugin.sh")
-	if err := os.WriteFile(path, []byte(body), 0o700); err != nil {
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	if err != nil {
+		t.Fatalf("create script: %v", err)
+	}
+	if _, err := f.WriteString(body); err != nil {
+		_ = f.Close()
 		t.Fatalf("write script: %v", err)
+	}
+	if err := f.Sync(); err != nil {
+		_ = f.Close()
+		t.Fatalf("sync script: %v", err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatalf("close script: %v", err)
+	}
+	if err := os.Chmod(path, 0o700); err != nil {
+		t.Fatalf("chmod script: %v", err)
 	}
 	return path
 }

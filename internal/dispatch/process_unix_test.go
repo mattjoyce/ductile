@@ -25,7 +25,6 @@ func TestSpawnPluginTimeoutKillsProcessGroup(t *testing.T) {
 
 	tmpDir := t.TempDir()
 	childPIDPath := filepath.Join(tmpDir, "child.pid")
-	scriptPath := filepath.Join(tmpDir, "plugin.sh")
 	script := fmt.Sprintf(`#!/bin/sh
 (
   trap '' TERM
@@ -35,9 +34,7 @@ func TestSpawnPluginTimeoutKillsProcessGroup(t *testing.T) {
 while [ ! -s %q ]; do sleep 0.05; done
 while :; do sleep 1; done
 `, childPIDPath, childPIDPath)
-	if err := os.WriteFile(scriptPath, []byte(script), 0o700); err != nil {
-		t.Fatalf("write plugin script: %v", err)
-	}
+	scriptPath := writeDispatchTestScript(t, script)
 
 	d := &Dispatcher{events: events.NewHub(16), cfg: config.Defaults()}
 	req := &protocol.Request{Protocol: 2, JobID: "job-timeout", Command: "poll"}
