@@ -328,6 +328,59 @@ class FetchRedirectRevalidationTests(unittest.TestCase):
         self.assertIn("denied_hosts", resp["error"])
 
 
+class FetchRedirectDefaultRefusalTests(unittest.TestCase):
+    """P2-06: when follow_redirects is NOT set (default = false), the plugin
+    must refuse to follow redirects entirely — NOT silently follow them as
+    the urllib default would. Regression test for the bug caught by the .10
+    testing agent: `build_opener(HTTPErrorProcessor())` does NOT remove the
+    auto-installed default HTTPRedirectHandler; only installing a subclass
+    of HTTPRedirectHandler replaces the default."""
+
+    def setUp(self):
+        _RedirectToHandler.redirect_target = "http://example.com/elsewhere"
+        self.server, self.port, self.thread = _serve(_RedirectToHandler)
+
+    def tearDown(self):
+        _stop_server(self.server, self.thread)
+
+    def test_default_no_follow_refuses_redirect(self):
+        # Operator allows the source loopback host but does NOT set
+        # follow_redirects, so the default false applies. Pre-fix the plugin
+        # silently followed the 302 to example.com and returned status=ok
+        # with final_url set to the redirect target. Post-fix it must
+        # return status=error with "redirect refused".
+        resp = run_plugin(
+            {
+                "command": "handle",
+                "config": {
+                    "allowed_hosts": ["127.0.0.1"],
+                    # no follow_redirects key → default false
+                },
+                "event": {"payload": {"url": f"http://127.0.0.1:{self.port}/source"}},
+            }
+        )
+        self.assertEqual(resp["status"], "error", msg=resp)
+        self.assertIn("redirect refused", resp["error"], msg=resp)
+        self.assertIn("follow_redirects=false", resp["error"], msg=resp)
+
+    def test_explicit_no_follow_refuses_redirect(self):
+        # Same as above but with the operator explicitly opting into
+        # follow_redirects=false. Confirms the explicit path matches the
+        # default path.
+        resp = run_plugin(
+            {
+                "command": "handle",
+                "config": {
+                    "allowed_hosts": ["127.0.0.1"],
+                    "follow_redirects": "false",
+                },
+                "event": {"payload": {"url": f"http://127.0.0.1:{self.port}/source"}},
+            }
+        )
+        self.assertEqual(resp["status"], "error", msg=resp)
+        self.assertIn("redirect refused", resp["error"], msg=resp)
+
+
 class FetchHealthCommandTest(unittest.TestCase):
     """Sanity: the health command does not touch the network and should
     not be affected by egress policy."""

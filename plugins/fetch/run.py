@@ -268,11 +268,28 @@ class _ValidatingRedirectHandler(urllib.request.HTTPRedirectHandler):
         return super().redirect_request(req, fp, code, msg, headers, newurl)
 
 
+class _RefusingRedirectHandler(urllib.request.HTTPRedirectHandler):
+    """Refuse to follow any redirect. Used when follow_redirects=false.
+
+    NOTE: simply omitting a redirect handler from build_opener() does NOT
+    disable redirects — urllib auto-installs its default HTTPRedirectHandler
+    when no instance of (or subclass of) HTTPRedirectHandler is present in
+    the supplied handlers. Installing this subclass replaces the default
+    and ensures 3xx responses surface as an EgressRejectedError instead of
+    silently being followed.
+    """
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        raise EgressRejectedError(
+            f"redirect refused (follow_redirects=false): "
+            f"{req.full_url!r} -> {newurl!r} (HTTP {code})"
+        )
+
+
 def _build_opener():
     if FOLLOW_REDIRECTS:
         return urllib.request.build_opener(_ValidatingRedirectHandler())
-    # Suppress automatic redirect following: 3xx responses surface as HTTPError.
-    return urllib.request.build_opener(urllib.request.HTTPErrorProcessor())
+    return urllib.request.build_opener(_RefusingRedirectHandler())
 
 
 def fetch_url(url):
