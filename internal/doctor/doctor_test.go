@@ -273,6 +273,35 @@ func TestValidate_RouteCycle(t *testing.T) {
 	assertHasError(t, r, "routes", "circular")
 }
 
+// TestValidate_WarnsLowTickInterval — P2-10: doctor flags tick rates below the
+// recommended bound (1s) but above the hard floor (100ms) so operators see the
+// chatty-poll warning before runtime symptoms appear.
+func TestValidate_WarnsLowTickInterval(t *testing.T) {
+	t.Parallel()
+	cfg := validConfig()
+	cfg.Service.TickInterval = 500 * time.Millisecond
+	d := New(cfg, registryWith(echoPlugin()))
+	r := d.Validate()
+	if !r.Valid {
+		t.Fatalf("expected valid (warning only), got errors: %v", r.Errors)
+	}
+	assertHasWarning(t, r, "service", "tick_interval")
+}
+
+// TestValidate_NoWarnForRecommendedTickInterval — boundary: 1s exactly should not warn.
+func TestValidate_NoWarnForRecommendedTickInterval(t *testing.T) {
+	t.Parallel()
+	cfg := validConfig()
+	cfg.Service.TickInterval = 1 * time.Second
+	d := New(cfg, registryWith(echoPlugin()))
+	r := d.Validate()
+	for _, w := range r.Warnings {
+		if w.Category == "service" && strings.Contains(w.Message, "tick_interval") {
+			t.Fatalf("did not expect tick_interval warning at 1s boundary, got: %v", w)
+		}
+	}
+}
+
 func TestValidate_WarnUnusedPlugin(t *testing.T) {
 	t.Parallel()
 	extra := &plugin.Plugin{Name: "unused-plugin", Commands: plugin.Commands{{Name: "poll", Type: plugin.CommandTypeRead}}}

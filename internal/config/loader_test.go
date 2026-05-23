@@ -955,6 +955,35 @@ func TestValidate(t *testing.T) {
 			wantErr: true,
 		},
 		{
+			// P2-10: tick_interval below the floor (sub-100ms) is a sanity guard against
+			// hostile or accidental tight ticks that flood the work loop.
+			name: "tick interval below 100ms floor",
+			cfg: &Config{
+				Service: ServiceConfig{
+					TickInterval: 50 * time.Millisecond,
+					LogLevel:     "info",
+					MaxWorkers:   1,
+				},
+				State:       StateConfig{Path: "./test.db"},
+				PluginRoots: []string{"./plugins"},
+			},
+			wantErr: true,
+		},
+		{
+			// P2-10: the floor itself is accepted.
+			name: "tick interval at 100ms floor",
+			cfg: &Config{
+				Service: ServiceConfig{
+					TickInterval: 100 * time.Millisecond,
+					LogLevel:     "info",
+					MaxWorkers:   1,
+				},
+				State:       StateConfig{Path: "./test.db"},
+				PluginRoots: []string{"./plugins"},
+			},
+			wantErr: false,
+		},
+		{
 			name: "invalid max workers",
 			cfg: &Config{
 				Service: ServiceConfig{

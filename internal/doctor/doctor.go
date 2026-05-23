@@ -75,6 +75,13 @@ func (d *Doctor) validateServiceConfig(r *Result) {
 	if d.cfg.Service.TickInterval <= 0 {
 		d.addError(r, "service", "service.tick_interval", "tick_interval must be positive")
 	}
+	// P2-10: warn when tick_interval is below the recommended threshold even if it
+	// passes the hard floor. Loader rejects sub-MinTickInterval values; doctor warns
+	// for everything between MinTickInterval and RecommendedTickInterval.
+	if d.cfg.Service.TickInterval >= config.MinTickInterval && d.cfg.Service.TickInterval < config.RecommendedTickInterval {
+		d.addWarning(r, "service", "service.tick_interval",
+			fmt.Sprintf("tick_interval %s is below recommended (%s); chatty service polls can flood dispatch", d.cfg.Service.TickInterval, config.RecommendedTickInterval))
+	}
 }
 
 // validatePluginRefs checks that plugins in config are discoverable.
