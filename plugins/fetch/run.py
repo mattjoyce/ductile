@@ -34,6 +34,13 @@ import urllib.error
 import urllib.request
 from urllib.parse import urlparse
 
+from _stopwatch import Spans
+
+# Sub-span collector for this invocation. Threaded into respond() so every
+# exit path (success or any failure mode) ships whatever spans were
+# captured before the path diverged.
+_SPANS = Spans()
+
 # ---------------------------------------------------------------------------
 # Read request
 # ---------------------------------------------------------------------------
@@ -113,6 +120,9 @@ def respond(status, result=None, error=None, retry=True, events=None, logs=None)
     if events:
         resp["events"] = events
     resp["logs"] = logs or []
+    subs = _SPANS.to_response_key()
+    if subs:
+        resp["ductile_stopwatch_subs"] = subs
     json.dump(resp, sys.stdout)
     sys.exit(0)
 
@@ -298,7 +308,8 @@ def fetch_url(url):
     Raises EgressRejected if the initial URL or any redirect hop violates
     the egress policy.
     """
-    _validate_target(url)
+    with _SPANS.time("fetch.egress_validate"):
+        _validate_target(url)
 
     headers = {"User-Agent": USER_AGENT}
     if OUTPUT_FORMAT == "markdown":
@@ -307,10 +318,15 @@ def fetch_url(url):
     req = urllib.request.Request(url, headers=headers)
     opener = _build_opener()
 
-    with opener.open(req, timeout=TIMEOUT) as resp:
-        # Read one byte past the cap so we can detect overflow without
-        # buffering an unbounded body.
-        raw = resp.read(MAX_RESPONSE_BYTES + 1)
+    # http_get covers connect + TLS + request + response-headers; the body
+    # read is timed separately because body size and server stream rate are
+    # independent of the request critical path.
+    with _SPANS.time("fetch.http_get") as http_span:
+        resp = opener.open(req, timeout=TIMEOUT)
+    try:
+        with _SPANS.time("fetch.body_read") as body_span:
+            raw = resp.read(MAX_RESPONSE_BYTES + 1)
+            body_span.annotate(bytes=len(raw))
         if len(raw) > MAX_RESPONSE_BYTES:
             raise EgressRejectedError(
                 f"response body exceeds max_response_bytes ({MAX_RESPONSE_BYTES})"
@@ -320,8 +336,13 @@ def fetch_url(url):
         content_type = resp.headers.get("Content-Type", "")
         markdown_tokens = resp.headers.get("x-markdown-tokens")
         charset = resp.headers.get_content_charset() or "utf-8"
+    finally:
+        resp.close()
+    http_span.annotate(status="ok")
 
-    body = raw.decode(charset, errors="replace")
+    with _SPANS.time("fetch.decode") as decode_span:
+        body = raw.decode(charset, errors="replace")
+        decode_span.annotate(bytes=len(raw))
     server_sent_markdown = "text/markdown" in content_type
 
     return body, status_code, final_url, markdown_tokens, server_sent_markdown
@@ -377,7 +398,11 @@ elif command == "handle":
         content = body
         effective_format = "html"
     elif OUTPUT_FORMAT == "text":
-        content = html_to_text(body)
+        # The HTML→text strip is the only transform that does real work; the
+        # other branches are passthrough and don't warrant a span.
+        with _SPANS.time("fetch.transform") as transform_span:
+            content = html_to_text(body)
+            transform_span.annotate(bytes=len(content))
     else:
         content = body
 
