@@ -30,6 +30,7 @@ import (
 	"github.com/mattjoyce/ductile/internal/router"
 	"github.com/mattjoyce/ductile/internal/scheduler"
 	"github.com/mattjoyce/ductile/internal/state"
+	"github.com/mattjoyce/ductile/internal/stopwatchjanitor"
 	"github.com/mattjoyce/ductile/internal/storage"
 	"github.com/mattjoyce/ductile/internal/webhook"
 )
@@ -574,6 +575,18 @@ func buildRuntime(cfg *config.Config, configPath string, configSource string, re
 		if err := disp.Start(rt.ctx); err != nil && err != context.Canceled {
 			rt.errCh <- fmt.Errorf("dispatcher: %w", err)
 		}
+	}()
+
+	// Stopwatch janitor: isolated retention + rollup loop. Failures
+	// here must not crash the dispatcher, so the goroutine never
+	// publishes to errCh -- the heartbeat row carries the signal and
+	// the doctor check surfaces it. Defaults applied when the
+	// telemetry block is empty.
+	janitor := stopwatchjanitor.New(st, cfg.Telemetry.Stopwatch, log.WithComponent("stopwatch_janitor"))
+	rt.wg.Add(1)
+	go func() {
+		defer rt.wg.Done()
+		janitor.Run(rt.ctx)
 	}()
 
 	if cfg.API.Enabled || relayReceiver != nil {
