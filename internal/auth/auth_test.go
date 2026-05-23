@@ -226,19 +226,52 @@ func TestNormalizeScopes(t *testing.T) {
 			},
 		},
 		{
-			name:   "jobs rw expansion",
+			name:   "jobs rw expansion (full jobs tree)",
 			scopes: []string{"jobs:rw"},
 			want: map[string]struct{}{
-				"jobs:rw": {},
-				"jobs:ro": {},
+				"jobs:rw":        {},
+				"jobs:ro":        {},
+				"jobs:status:ro": {},
+				"jobs:result:ro": {},
+				"jobs:logs:ro":   {},
+				"jobs:tree:ro":   {},
 			},
 		},
 		{
-			name:   "events rw expansion",
+			name:   "jobs ro is super-scope (D1 back-compat)",
+			scopes: []string{"jobs:ro"},
+			want: map[string]struct{}{
+				"jobs:ro":        {},
+				"jobs:status:ro": {},
+				"jobs:result:ro": {},
+				"jobs:logs:ro":   {},
+				"jobs:tree:ro":   {},
+			},
+		},
+		{
+			name:   "jobs status ro alone does not imply others (D1 narrowing)",
+			scopes: []string{"jobs:status:ro"},
+			want: map[string]struct{}{
+				"jobs:status:ro": {},
+			},
+		},
+		{
+			name:   "events rw expansion (full events tree)",
 			scopes: []string{"events:rw"},
 			want: map[string]struct{}{
-				"events:rw": {},
-				"events:ro": {},
+				"events:rw":         {},
+				"events:ro":         {},
+				"events:meta:ro":    {},
+				"events:payload:ro": {},
+			},
+		},
+		{
+			name:   "events ro is super-scope (D1)",
+			scopes: []string{"events:ro"},
+			want: map[string]struct{}{
+				"events:ro":         {},
+				"events:meta:ro":    {},
+				"events:payload:ro": {},
 			},
 		},
 		{

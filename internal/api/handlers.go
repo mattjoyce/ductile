@@ -475,11 +475,30 @@ func (s *Server) handleGetJob(w http.ResponseWriter, r *http.Request) {
 		CompletedAt: job.CompletedAt,
 	}
 
+	// D1: principals without jobs:result:ro (and not the back-compat
+	// super-scope jobs:ro / jobs:rw / wildcard) see status fields only;
+	// the result payload is omitted from the JSON output (omitempty on
+	// the Result tag).
+	if principal, ok := auth.PrincipalFromContext(r.Context()); ok {
+		if !s.canSeeJobResults(principal) {
+			resp.Result = nil
+		}
+	}
+
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	if err := json.NewEncoder(w).Encode(resp); err != nil {
 		s.logger.Error("failed to write job response", "error", err)
 	}
+}
+
+// canSeeJobResults reports whether the principal may receive Result payloads
+// in job-related responses. jobs:result:ro is the explicit narrower scope;
+// jobs:ro and jobs:rw imply it via the auth normalize map; wildcard always
+// passes. Used by handleGetJob / handleGetJobTree / handleListJobLogs to
+// shape responses per D1.
+func (s *Server) canSeeJobResults(p auth.Principal) bool {
+	return auth.HasAnyScope(p, "jobs:result:ro", "jobs:rw", "*")
 }
 
 var errRootBaggageClaims = errors.New("root baggage claims failed")
@@ -706,12 +725,20 @@ func (s *Server) handleListJobLogs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// D1: shape Result per principal. Even when the caller requested
+	// include_result=true, omit the result payload for principals without
+	// jobs:result:ro (back-compat super-scopes still see it).
+	canSeeResults := true
+	if principal, ok := auth.PrincipalFromContext(r.Context()); ok {
+		canSeeResults = s.canSeeJobResults(principal)
+	}
+
 	resp := JobLogListResponse{
 		Logs:  make([]JobLogItem, 0, len(logs)),
 		Total: total,
 	}
 	for _, logEntry := range logs {
-		resp.Logs = append(resp.Logs, JobLogItem{
+		item := JobLogItem{
 			JobID:       logEntry.JobID,
 			LogID:       logEntry.LogID,
 			Plugin:      logEntry.Plugin,
@@ -724,7 +751,11 @@ func (s *Server) handleListJobLogs(w http.ResponseWriter, r *http.Request) {
 			LastError:   logEntry.LastError,
 			Stderr:      logEntry.Stderr,
 			Result:      logEntry.Result,
-		})
+		}
+		if !canSeeResults {
+			item.Result = nil
+		}
+		resp.Logs = append(resp.Logs, item)
 	}
 
 	respondJSON(w, http.StatusOK, resp)
@@ -926,9 +957,15 @@ func (s *Server) handleGetJobTree(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// D1: shape each per-job Result by principal scope.
+	canSeeResults := true
+	if principal, ok := auth.PrincipalFromContext(r.Context()); ok {
+		canSeeResults = s.canSeeJobResults(principal)
+	}
+
 	resp := make([]JobResultData, 0, len(results))
 	for _, res := range results {
-		resp = append(resp, JobResultData{
+		item := JobResultData{
 			JobID:       res.JobID,
 			ParentJobID: res.ParentJobID,
 			Plugin:      res.Plugin,
@@ -938,7 +975,11 @@ func (s *Server) handleGetJobTree(w http.ResponseWriter, r *http.Request) {
 			LastError:   res.LastError,
 			StartedAt:   res.StartedAt,
 			CompletedAt: res.CompletedAt,
-		})
+		}
+		if !canSeeResults {
+			item.Result = nil
+		}
+		resp = append(resp, item)
 	}
 
 	respondJSON(w, http.StatusOK, resp)
