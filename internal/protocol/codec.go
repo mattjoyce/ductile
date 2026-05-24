@@ -8,23 +8,25 @@ import (
 )
 
 type responseV2Wire struct {
-	Status       string         `json:"status"`
-	Error        string         `json:"error,omitempty"`
-	Retry        *bool          `json:"retry,omitempty"`
-	Result       string         `json:"result,omitempty"`
-	Events       []Event        `json:"events,omitempty"`
-	StateUpdates map[string]any `json:"state_updates,omitempty"`
-	Logs         []LogEntry     `json:"logs,omitempty"`
+	Status        string           `json:"status"`
+	Error         string           `json:"error,omitempty"`
+	Retry         *bool            `json:"retry,omitempty"`
+	Result        string           `json:"result,omitempty"`
+	Events        []Event          `json:"events,omitempty"`
+	StateUpdates  map[string]any   `json:"state_updates,omitempty"`
+	Logs          []LogEntry       `json:"logs,omitempty"`
+	StopwatchSubs []map[string]any `json:"ductile_stopwatch_subs,omitempty"`
 }
 
 func (w responseV2Wire) response() *Response {
 	return &Response{
-		Status:       w.Status,
-		Error:        w.Error,
-		Result:       w.Result,
-		Events:       w.Events,
-		StateUpdates: w.StateUpdates,
-		Logs:         w.Logs,
+		Status:        w.Status,
+		Error:         w.Error,
+		Result:        w.Result,
+		Events:        w.Events,
+		StateUpdates:  w.StateUpdates,
+		Logs:          w.Logs,
+		StopwatchSubs: w.StopwatchSubs,
 	}
 }
 

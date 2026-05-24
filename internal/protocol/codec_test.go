@@ -259,3 +259,34 @@ func TestDecodeResponseLenient(t *testing.T) {
 		})
 	}
 }
+
+// TestDecodeResponse_StopwatchSubsRoundTrip locks in that the wire
+// decoder populates Response.StopwatchSubs from the plugin's
+// ductile_stopwatch_subs key. The struct field has existed since
+// sub-spans landed, but until 2026-05-24 the wire struct didn't, so
+// the dispatcher always saw a nil slice and the supervisor stored
+// empty subs_json on every row -- regression caught on the first
+// real deploy of instrumented plugins.
+func TestDecodeResponse_StopwatchSubsRoundTrip(t *testing.T) {
+	body := `{
+		"status": "ok",
+		"result": "fine",
+		"ductile_stopwatch_subs": [
+			{"name": "fetch.http_get", "dur_ns": 100, "status": "ok"},
+			{"name": "fetch.body_read", "dur_ns": 50, "bytes": 1024}
+		]
+	}`
+	resp, _, _, err := DecodeResponseLenient(bytes.NewReader([]byte(body)))
+	if err != nil {
+		t.Fatalf("DecodeResponse: %v", err)
+	}
+	if resp == nil {
+		t.Fatal("nil response")
+	}
+	if len(resp.StopwatchSubs) != 2 {
+		t.Fatalf("StopwatchSubs len = %d, want 2", len(resp.StopwatchSubs))
+	}
+	if resp.StopwatchSubs[0]["name"] != "fetch.http_get" {
+		t.Errorf("first span name lost: %v", resp.StopwatchSubs[0])
+	}
+}
