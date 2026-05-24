@@ -7,10 +7,31 @@ import (
 	"os"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/mattjoyce/ductile/internal/config"
 	"github.com/mattjoyce/ductile/internal/plugin"
 )
+
+// StopwatchRetentionThresholds: when both row count and oldest-row age
+// exceed these, doctor warns the operator that the stopwatch ledger
+// looks like it has no retention configured. Two conditions in
+// conjunction so a small instance with a few months of rows doesn't
+// get nagged.
+const (
+	StopwatchWarnRowCount = 100_000
+	StopwatchWarnMaxAge   = 90 * 24 * time.Hour
+)
+
+// StopwatchSnapshot is a cheap probe of job_stopwatch fed to Doctor by
+// the caller (typically `ductile config check`, which has DB access).
+// When nil, the stopwatch retention check is silently skipped — useful
+// for callers that don't have or want a DB connection (e.g. startup
+// strict-mode validation).
+type StopwatchSnapshot struct {
+	RowCount         int
+	OldestRecordedAt time.Time // zero value if RowCount == 0
+}
 
 // Result holds the outcome of a validation run.
 type Result struct {
@@ -38,9 +59,10 @@ type HookPipeline struct {
 
 // Doctor validates configuration against discovered plugins.
 type Doctor struct {
-	cfg           *config.Config
-	registry      *plugin.Registry
-	hookPipelines []HookPipeline
+	cfg                *config.Config
+	registry           *plugin.Registry
+	hookPipelines      []HookPipeline
+	stopwatchSnapshot  *StopwatchSnapshot
 }
 
 // New creates a Doctor from a loaded config and plugin registry.
@@ -53,6 +75,15 @@ func New(cfg *config.Config, registry *plugin.Registry) *Doctor {
 // P2-11.
 func (d *Doctor) AddHookPipelines(hooks []HookPipeline) *Doctor {
 	d.hookPipelines = hooks
+	return d
+}
+
+// AddStopwatchSnapshot supplies a probe of job_stopwatch (row count +
+// oldest-row timestamp). When set, warnStopwatchRetention runs. When
+// nil, the check is silently skipped — callers without DB access
+// (e.g. startup strict-mode validation) can simply not call this.
+func (d *Doctor) AddStopwatchSnapshot(snap *StopwatchSnapshot) *Doctor {
+	d.stopwatchSnapshot = snap
 	return d
 }
 
@@ -71,9 +102,43 @@ func (d *Doctor) Validate() *Result {
 	d.warnUnusedPlugins(r)
 	d.warnMissingEnvVars(r)
 	d.warnSuspiciousSchedule(r)
+	d.warnStopwatchRetention(r)
 
 	r.Valid = len(r.Errors) == 0
 	return r
+}
+
+// warnStopwatchRetention surfaces unbounded growth of job_stopwatch
+// when both the row count AND oldest-row age cross their thresholds.
+// Silent when no snapshot is provided OR when either threshold is not
+// crossed. The conjunction matters: a small instance with a long
+// history shouldn't be nagged, and a busy instance with recent
+// pruning shouldn't be either.
+//
+// Suggestion text names the CLI directly so the operator can copy-paste.
+func (d *Doctor) warnStopwatchRetention(r *Result) {
+	snap := d.stopwatchSnapshot
+	if snap == nil {
+		return
+	}
+	if snap.RowCount < StopwatchWarnRowCount {
+		return
+	}
+	if snap.OldestRecordedAt.IsZero() {
+		return
+	}
+	age := time.Since(snap.OldestRecordedAt)
+	if age < StopwatchWarnMaxAge {
+		return
+	}
+	d.addWarning(r, "telemetry", "job_stopwatch", fmt.Sprintf(
+		"job_stopwatch has %d rows and the oldest is %s old (threshold %s). "+
+			"Consider running 'ductile stopwatch prune --older-than 14d' or wiring "+
+			"it as a scheduled sys_exec invocation.",
+		snap.RowCount,
+		age.Round(time.Hour),
+		StopwatchWarnMaxAge,
+	))
 }
 
 func (d *Doctor) addError(r *Result, category, field, msg string) {

@@ -331,6 +331,43 @@ func TestClearStopwatchSubs_PreservesParentRowFields(t *testing.T) {
 	}
 }
 
+func TestStopwatchSnapshot_EmptyTable(t *testing.T) {
+	t.Parallel()
+	s := newPruneStore(t)
+	count, oldest, err := s.StopwatchSnapshot(context.Background())
+	if err != nil {
+		t.Fatalf("StopwatchSnapshot: %v", err)
+	}
+	if count != 0 {
+		t.Errorf("count = %d, want 0", count)
+	}
+	if !oldest.IsZero() {
+		t.Errorf("oldest = %v, want zero", oldest)
+	}
+}
+
+func TestStopwatchSnapshot_PopulatedTable(t *testing.T) {
+	t.Parallel()
+	s := newPruneStore(t)
+	old := time.Date(2020, 1, 1, 12, 0, 0, 0, time.UTC)
+	mid := time.Date(2022, 6, 15, 12, 0, 0, 0, time.UTC)
+	recent := time.Date(2024, 12, 31, 23, 59, 59, 0, time.UTC)
+	for _, ts := range []time.Time{recent, old, mid} { // intentional unsorted insert order
+		seedRow(t, s, "echo", "s", "ok", ts, nil)
+	}
+
+	count, oldest, err := s.StopwatchSnapshot(context.Background())
+	if err != nil {
+		t.Fatalf("StopwatchSnapshot: %v", err)
+	}
+	if count != 3 {
+		t.Errorf("count = %d, want 3", count)
+	}
+	if !oldest.Equal(old) {
+		t.Errorf("oldest = %v, want %v", oldest, old)
+	}
+}
+
 func TestCountStopwatchSubsMatching_AgreesWithClear(t *testing.T) {
 	t.Parallel()
 	s := newPruneStore(t)

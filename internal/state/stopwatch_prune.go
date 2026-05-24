@@ -2,6 +2,8 @@ package state
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -86,6 +88,28 @@ func (s *Store) PruneStopwatchRows(ctx context.Context, filter StopwatchPruneFil
 		return 0, fmt.Errorf("PruneStopwatchRows: rows affected: %w", err)
 	}
 	return int(n), nil
+}
+
+// StopwatchSnapshot is a cheap "how full is the ledger" probe used by
+// `ductile config check` to surface unbounded growth. Returns the row
+// count and the oldest recorded_at (zero when the table is empty).
+func (s *Store) StopwatchSnapshot(ctx context.Context) (rowCount int, oldestRecordedAt time.Time, err error) {
+	const q = `SELECT COUNT(*), MIN(recorded_at) FROM job_stopwatch`
+	var oldestRaw sql.NullString
+	if err := s.db.QueryRowContext(ctx, q).Scan(&rowCount, &oldestRaw); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return 0, time.Time{}, nil
+		}
+		return 0, time.Time{}, fmt.Errorf("StopwatchSnapshot: %w", err)
+	}
+	if !oldestRaw.Valid || oldestRaw.String == "" {
+		return rowCount, time.Time{}, nil
+	}
+	t, parseErr := time.Parse(time.RFC3339Nano, oldestRaw.String)
+	if parseErr != nil {
+		return rowCount, time.Time{}, fmt.Errorf("StopwatchSnapshot: parse oldest %q: %w", oldestRaw.String, parseErr)
+	}
+	return rowCount, t, nil
 }
 
 // CountStopwatchSubsMatching returns how many job_stopwatch rows match

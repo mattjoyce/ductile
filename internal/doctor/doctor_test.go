@@ -475,3 +475,70 @@ func assertHasWarning(t *testing.T, r *Result, category, substring string) {
 	}
 	t.Fatalf("expected warning with category=%q containing %q, got: %v", category, substring, r.Warnings)
 }
+
+func assertNoWarningCategory(t *testing.T, r *Result, category string) {
+	t.Helper()
+	for _, w := range r.Warnings {
+		if w.Category == category {
+			t.Fatalf("unexpected warning with category=%q: %v", category, w)
+		}
+	}
+}
+
+func TestValidate_StopwatchRetention_NoSnapshot_NoWarning(t *testing.T) {
+	t.Parallel()
+	// Default doctor (no snapshot fed) should not warn about retention.
+	d := New(validConfig(), registryWith(echoPlugin()))
+	r := d.Validate()
+	assertNoWarningCategory(t, r, "telemetry")
+}
+
+func TestValidate_StopwatchRetention_SnapshotUnderThreshold_NoWarning(t *testing.T) {
+	t.Parallel()
+	// Small instance with old data — count under threshold, no warning.
+	snap := &StopwatchSnapshot{
+		RowCount:         100,
+		OldestRecordedAt: time.Now().Add(-365 * 24 * time.Hour),
+	}
+	d := New(validConfig(), registryWith(echoPlugin())).AddStopwatchSnapshot(snap)
+	r := d.Validate()
+	assertNoWarningCategory(t, r, "telemetry")
+}
+
+func TestValidate_StopwatchRetention_RecentRows_NoWarning(t *testing.T) {
+	t.Parallel()
+	// Busy instance with recent rows — age under threshold, no warning
+	// even though the count is huge.
+	snap := &StopwatchSnapshot{
+		RowCount:         StopwatchWarnRowCount * 10,
+		OldestRecordedAt: time.Now().Add(-7 * 24 * time.Hour),
+	}
+	d := New(validConfig(), registryWith(echoPlugin())).AddStopwatchSnapshot(snap)
+	r := d.Validate()
+	assertNoWarningCategory(t, r, "telemetry")
+}
+
+func TestValidate_StopwatchRetention_BothThresholdsCrossed_Warns(t *testing.T) {
+	t.Parallel()
+	snap := &StopwatchSnapshot{
+		RowCount:         StopwatchWarnRowCount + 1,
+		OldestRecordedAt: time.Now().Add(-100 * 24 * time.Hour),
+	}
+	d := New(validConfig(), registryWith(echoPlugin())).AddStopwatchSnapshot(snap)
+	r := d.Validate()
+	assertHasWarning(t, r, "telemetry", "ductile stopwatch prune")
+}
+
+func TestValidate_StopwatchRetention_ZeroOldest_NoWarning(t *testing.T) {
+	t.Parallel()
+	// RowCount > 0 with zero OldestRecordedAt is a contract violation
+	// from the snapshot caller (shouldn't happen), but doctor must not
+	// false-positive on it. Treat as "skip".
+	snap := &StopwatchSnapshot{
+		RowCount:         StopwatchWarnRowCount + 1,
+		OldestRecordedAt: time.Time{},
+	}
+	d := New(validConfig(), registryWith(echoPlugin())).AddStopwatchSnapshot(snap)
+	r := d.Validate()
+	assertNoWarningCategory(t, r, "telemetry")
+}
