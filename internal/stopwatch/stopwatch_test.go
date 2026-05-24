@@ -186,6 +186,54 @@ func TestSubsFromResponse_RejectsAboveHardUpperFallsBackToDefault(t *testing.T) 
 	}
 }
 
+func TestSubsFromResponse_DropsEntireListWhenByteCapExceeded(t *testing.T) {
+	// 8 entries × 4 KiB each = 32 KiB, well over MaxSubsBytesPerRecord
+	// (16 KiB). Each entry is under any plausible per-entry cap; the
+	// count cap (32) is also not hit. Only the byte cap fires.
+	big := make([]any, 8)
+	bigString := make([]byte, 4*1024)
+	for i := range bigString {
+		bigString[i] = 'x'
+	}
+	for i := range big {
+		big[i] = map[string]any{
+			"name":   "test.bloat",
+			"dur_ns": 1,
+			"junk":   string(bigString),
+		}
+	}
+
+	out := SubsFromResponse(big, 0, nil)
+	if len(out) != 0 {
+		t.Errorf("expected entire subs list dropped when byte cap exceeded; got %d entries", len(out))
+	}
+}
+
+func TestSubsFromResponse_AcceptsListUnderByteCap(t *testing.T) {
+	// 8 small entries — well under both caps. Should pass through.
+	small := make([]any, 8)
+	for i := range small {
+		small[i] = map[string]any{"name": "small", "dur_ns": 100}
+	}
+	out := SubsFromResponse(small, 0, nil)
+	if len(out) != 8 {
+		t.Errorf("expected 8 entries under byte cap; got %d", len(out))
+	}
+}
+
+func TestSubsFromResponse_ByteCapFiresAfterCountCap(t *testing.T) {
+	// 100 entries, each tiny. Count cap (32) takes 32 of them; the
+	// resulting 32 entries should be well under the byte cap and pass.
+	many := make([]any, 100)
+	for i := range many {
+		many[i] = map[string]any{"name": "small", "dur_ns": int64(i)}
+	}
+	out := SubsFromResponse(many, 0, nil)
+	if len(out) != MaxSubsPerRecord {
+		t.Errorf("count cap should fire first; got %d entries, want %d", len(out), MaxSubsPerRecord)
+	}
+}
+
 func TestResolveMaxSubs(t *testing.T) {
 	cases := []struct {
 		in, want int

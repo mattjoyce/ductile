@@ -14,6 +14,7 @@
 package stopwatch
 
 import (
+	"encoding/json"
 	"log/slog"
 	"time"
 )
@@ -35,6 +36,18 @@ const MaxSubsPerRecord = 32
 // API response, log line, future dashboards) needs a stable upper bound
 // to budget against.
 const MaxSubsHardUpper = 256
+
+// MaxSubsBytesPerRecord caps the total JSON byte size of subs_json. The
+// count cap (MaxSubsPerRecord / manifest override) bounds entry count;
+// this bounds the total payload size, defending against a compromised
+// plugin that emits a small number of huge entries to bloat DB rows,
+// API responses, and log lines.
+//
+// 16 KiB is generous (~80 bytes per entry × 32 entries = ~2.5 KiB
+// typical) but bounded enough to keep API responses and rollup queries
+// predictable. When exceeded, the entire subs list is dropped with a
+// single warn-log -- fail-soft, matching the count-cap pattern.
+const MaxSubsBytesPerRecord = 16 * 1024
 
 // Status values for a Record. A closed set; treat as opaque tokens.
 const (
@@ -147,22 +160,61 @@ func resolveMaxSubs(maxSubs int) int {
 // capSubs returns at most maxSubs entries. If logger is non-nil and the
 // cap is exceeded, a single warning is emitted (not per dropped entry).
 // maxSubs <= 0 means "use the default cap" (MaxSubsPerRecord).
+//
+// After the count cap, the total JSON byte size is also checked against
+// MaxSubsBytesPerRecord. If the byte budget is exceeded, the ENTIRE
+// subs list is dropped (empty slice returned) with a single warn-log.
+// Total-drop rather than partial-drop because we can't keep "the first
+// N bytes" of a structured payload without breaking JSON or per-entry
+// semantics, and the byte cap exists for adversarial cases (a
+// compromised plugin emitting huge entries) where the operator wants
+// to see "subs dropped, suspicious plugin" rather than "subs partially
+// preserved, attacker partially succeeded."
 func capSubs(subs []map[string]any, maxSubs int, logger *slog.Logger) []map[string]any {
 	limit := resolveMaxSubs(maxSubs)
-	if len(subs) <= limit {
-		if subs == nil {
-			return []map[string]any{}
+	capped := subs
+	if len(capped) > limit {
+		if logger != nil {
+			logger.Warn("stopwatch sub-spans exceeded count cap",
+				"received", len(capped),
+				"cap", limit,
+				"dropped", len(capped)-limit,
+			)
 		}
-		return subs
+		capped = capped[:limit]
 	}
-	if logger != nil {
-		logger.Warn("stopwatch sub-spans exceeded cap",
-			"received", len(subs),
-			"cap", limit,
-			"dropped", len(subs)-limit,
-		)
+	if capped == nil {
+		return []map[string]any{}
 	}
-	return subs[:limit]
+
+	// Byte cap check. Marshal once to measure; the dispatcher will
+	// re-marshal for storage, which is fine -- the cost is small
+	// relative to actual capture work and only the supervisor pays it.
+	if encoded, err := json.Marshal(capped); err != nil {
+		// json.Marshal failing on a []map[string]any built from
+		// SubsFromResponse should be unreachable (we filtered to
+		// real maps), but if it happens we still don't want to
+		// crash. Treat as "drop entirely" — matches the byte-cap
+		// fail-soft pattern.
+		if logger != nil {
+			logger.Warn("stopwatch sub-spans marshal failed; dropping",
+				"error", err,
+				"entries", len(capped),
+			)
+		}
+		return []map[string]any{}
+	} else if len(encoded) > MaxSubsBytesPerRecord {
+		if logger != nil {
+			logger.Warn("stopwatch sub-spans exceeded byte cap; dropping all",
+				"received_entries", len(capped),
+				"received_bytes", len(encoded),
+				"byte_cap", MaxSubsBytesPerRecord,
+			)
+		}
+		return []map[string]any{}
+	}
+
+	return capped
 }
 
 // SubsFromResponse extracts plugin-emitted sub-spans defensively from an
