@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -10,8 +11,34 @@ import (
 
 	"github.com/mattjoyce/ductile/internal/config"
 	"github.com/mattjoyce/ductile/internal/doctor"
+	"github.com/mattjoyce/ductile/internal/state"
+	"github.com/mattjoyce/ductile/internal/storage"
 	"gopkg.in/yaml.v3"
 )
+
+// loadStopwatchSnapshot opens the state DB read-only-ish (storage opens
+// SQLite in WAL with shared access), reads the stopwatch snapshot, and
+// closes. Returns the snapshot or an error -- caller is responsible
+// for treating errors as "skip the check" rather than fatal.
+func loadStopwatchSnapshot(dbPath string) (*doctor.StopwatchSnapshot, error) {
+	if dbPath == "" {
+		return nil, fmt.Errorf("state.path is empty")
+	}
+	db, err := storage.OpenSQLite(context.Background(), dbPath)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = db.Close() }()
+	store := state.NewStore(db)
+	rowCount, oldest, err := store.StopwatchSnapshot(context.Background())
+	if err != nil {
+		return nil, err
+	}
+	return &doctor.StopwatchSnapshot{
+		RowCount:         rowCount,
+		OldestRecordedAt: oldest,
+	}, nil
+}
 
 func runConfigNoun(args []string) int {
 	if len(args) < 1 {
@@ -444,6 +471,14 @@ func runConfigCheck(args []string) int {
 	}
 
 	doc := doctor.New(cfg, registry)
+
+	// Feed doctor a stopwatch snapshot when the state DB is reachable.
+	// Failure to open is non-fatal -- the check is advisory and missing
+	// snapshot means doctor silently skips warnStopwatchRetention.
+	if snap, snapErr := loadStopwatchSnapshot(cfg.State.Path); snapErr == nil {
+		doc = doc.AddStopwatchSnapshot(snap)
+	}
+
 	result := doc.Validate()
 
 	switch format {

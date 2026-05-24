@@ -103,7 +103,7 @@ func TestFinish_NilSubsBecomesEmptySlice(t *testing.T) {
 }
 
 func TestSubsFromResponse_HandlesNil(t *testing.T) {
-	out := SubsFromResponse(nil, nil)
+	out := SubsFromResponse(nil, 0, nil)
 	if out == nil || len(out) != 0 {
 		t.Errorf("nil input must yield empty slice, got %v", out)
 	}
@@ -117,7 +117,7 @@ func TestSubsFromResponse_HandlesMalformed(t *testing.T) {
 		[]any{"not-a-map", 7, nil},
 	}
 	for _, c := range cases {
-		out := SubsFromResponse(c, nil)
+		out := SubsFromResponse(c, 0, nil)
 		if out == nil {
 			t.Errorf("must never return nil for input %v", c)
 		}
@@ -129,7 +129,7 @@ func TestSubsFromResponse_ParsesValidShape(t *testing.T) {
 		map[string]any{"name": "db_query", "dur_ns": 100},
 		map[string]any{"name": "http_call", "dur_ns": 50},
 	}
-	out := SubsFromResponse(in, nil)
+	out := SubsFromResponse(in, 0, nil)
 	if len(out) != 2 {
 		t.Fatalf("expected 2 subs, got %d", len(out))
 	}
@@ -143,8 +143,113 @@ func TestSubsFromResponse_CapsAndDoesNotPanic(t *testing.T) {
 	for i := range big {
 		big[i] = map[string]any{"name": "x"}
 	}
-	out := SubsFromResponse(big, nil)
+	out := SubsFromResponse(big, 0, nil)
 	if len(out) != MaxSubsPerRecord {
 		t.Errorf("not capped: got %d", len(out))
+	}
+}
+
+func TestSubsFromResponse_HonorsManifestCapWithinHardUpper(t *testing.T) {
+	// A manifest declaring max_subs=64 should keep the first 64 spans.
+	big := make([]any, 200)
+	for i := range big {
+		big[i] = map[string]any{"name": "x"}
+	}
+	out := SubsFromResponse(big, 64, nil)
+	if len(out) != 64 {
+		t.Errorf("manifest cap=64 not honored: got %d", len(out))
+	}
+}
+
+func TestSubsFromResponse_AcceptsHardUpperExactly(t *testing.T) {
+	big := make([]any, MaxSubsHardUpper*2)
+	for i := range big {
+		big[i] = map[string]any{"name": "x"}
+	}
+	out := SubsFromResponse(big, MaxSubsHardUpper, nil)
+	if len(out) != MaxSubsHardUpper {
+		t.Errorf("hard-upper cap not honored: got %d want %d", len(out), MaxSubsHardUpper)
+	}
+}
+
+func TestSubsFromResponse_RejectsAboveHardUpperFallsBackToDefault(t *testing.T) {
+	// A maxSubs above the hard upper is treated as garbage and falls back
+	// to the default; manifest validation is the front-line defense, this
+	// is belt-and-braces in the runtime.
+	big := make([]any, 200)
+	for i := range big {
+		big[i] = map[string]any{"name": "x"}
+	}
+	out := SubsFromResponse(big, MaxSubsHardUpper+1, nil)
+	if len(out) != MaxSubsPerRecord {
+		t.Errorf("above-hard-upper should fall back to default: got %d", len(out))
+	}
+}
+
+func TestSubsFromResponse_DropsEntireListWhenByteCapExceeded(t *testing.T) {
+	// 8 entries × 4 KiB each = 32 KiB, well over MaxSubsBytesPerRecord
+	// (16 KiB). Each entry is under any plausible per-entry cap; the
+	// count cap (32) is also not hit. Only the byte cap fires.
+	big := make([]any, 8)
+	bigString := make([]byte, 4*1024)
+	for i := range bigString {
+		bigString[i] = 'x'
+	}
+	for i := range big {
+		big[i] = map[string]any{
+			"name":   "test.bloat",
+			"dur_ns": 1,
+			"junk":   string(bigString),
+		}
+	}
+
+	out := SubsFromResponse(big, 0, nil)
+	if len(out) != 0 {
+		t.Errorf("expected entire subs list dropped when byte cap exceeded; got %d entries", len(out))
+	}
+}
+
+func TestSubsFromResponse_AcceptsListUnderByteCap(t *testing.T) {
+	// 8 small entries — well under both caps. Should pass through.
+	small := make([]any, 8)
+	for i := range small {
+		small[i] = map[string]any{"name": "small", "dur_ns": 100}
+	}
+	out := SubsFromResponse(small, 0, nil)
+	if len(out) != 8 {
+		t.Errorf("expected 8 entries under byte cap; got %d", len(out))
+	}
+}
+
+func TestSubsFromResponse_ByteCapFiresAfterCountCap(t *testing.T) {
+	// 100 entries, each tiny. Count cap (32) takes 32 of them; the
+	// resulting 32 entries should be well under the byte cap and pass.
+	many := make([]any, 100)
+	for i := range many {
+		many[i] = map[string]any{"name": "small", "dur_ns": int64(i)}
+	}
+	out := SubsFromResponse(many, 0, nil)
+	if len(out) != MaxSubsPerRecord {
+		t.Errorf("count cap should fire first; got %d entries, want %d", len(out), MaxSubsPerRecord)
+	}
+}
+
+func TestResolveMaxSubs(t *testing.T) {
+	cases := []struct {
+		in, want int
+	}{
+		{-1, MaxSubsPerRecord},
+		{0, MaxSubsPerRecord},
+		{1, 1},
+		{32, 32},
+		{MaxSubsHardUpper, MaxSubsHardUpper},
+		{MaxSubsHardUpper + 1, MaxSubsPerRecord},
+		{10000, MaxSubsPerRecord},
+	}
+	for _, c := range cases {
+		got := resolveMaxSubs(c.in)
+		if got != c.want {
+			t.Errorf("resolveMaxSubs(%d) = %d, want %d", c.in, got, c.want)
+		}
 	}
 }

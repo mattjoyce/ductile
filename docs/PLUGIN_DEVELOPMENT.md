@@ -935,19 +935,81 @@ the top level of your response. Shape:
   "status": "ok",
   "result": "...",
   "ductile_stopwatch_subs": [
-    {"name": "db_query", "dur_ns": 11000000},
-    {"name": "http_call", "dur_ns": 31000000}
+    {"name": "fetch.http_get",   "dur_ns": 31000000, "status": "ok"},
+    {"name": "fetch.body_read",  "dur_ns": 11000000, "status": "ok", "bytes": 482103},
+    {"name": "fetch.decode",     "dur_ns":  2400000, "status": "ok"}
   ]
 }
 ```
 
-Rules:
+#### Field convention
 
-- Sub-spans are advisory. The dispatcher's own Record is always emitted
-  regardless of whether you include sub-spans.
-- The dispatcher caps the list at 32 entries per invocation. If you emit
-  more, the excess is dropped and one warning is logged for the call.
-- Malformed entries (non-object items, non-list values) are dropped
-  silently. Defensive parsing is part of the contract.
-- The dispatcher does not interpret sub-span fields beyond storing them.
-  You choose the key names; `name` and `dur_ns` are conventional.
+| Field    | Required | Notes                                                                            |
+|----------|----------|----------------------------------------------------------------------------------|
+| `name`   | yes      | Dotted name `<plugin>.<phase>` (e.g. `fetch.http_get`). Prefix enables filtering. |
+| `dur_ns` | yes      | Monotonic duration in nanoseconds. Use `time.perf_counter_ns()` deltas.          |
+| `status` | optional | `ok` / `err` / `skip`. Explains zero-duration or partial spans.                  |
+| `bytes`  | optional | For I/O spans (body reads, file hashes). Quartile bytes vs. dur_ns to find slow servers. |
+| `count`  | optional | For batch spans (files scanned, watches polled, retries attempted).              |
+
+The dispatcher stores additional fields verbatim, but the convention above
+is what downstream tools query. New fields should be added by RFC, not by
+ad-hoc plugin choice — the convention is only as strong as its exemplars.
+
+See `plugins/_lib/_stopwatch.py` for a vendored Python helper that emits
+this shape from a context-manager API. The four exemplar plugins (`fetch`,
+`file_watch`, `folder_watch`, `sys_exec`) use it.
+
+#### Rules
+
+- **Sub-spans are advisory.** The dispatcher's own Record is always emitted
+  regardless of whether you include sub-spans. A buggy or lying plugin
+  poisons its own breakdowns only; the supervisor's timing is independent.
+- **The dispatcher caps the list at 32 entries per invocation by default.**
+  If you emit more, the excess is dropped (head-keep — first 32 survive)
+  and one warning is logged for the call. **Order matters:** put
+  high-signal spans first. The default is appropriate for almost all
+  plugins; see "Raising the cap" below before considering an override.
+- **Malformed entries are dropped silently.** Non-object items and
+  non-list values do not raise. Defensive parsing is part of the contract.
+- **The dispatcher does not interpret sub-span fields beyond storing them.**
+  Field semantics are the plugin's responsibility. Follow the convention
+  above so quartile dashboards work across plugins.
+
+#### Raising the cap (rare)
+
+A plugin that legitimately produces more than 32 spans — typically a
+multi-stage pipeline coordinator with structurally distinct sub-phases —
+may declare a higher cap in its `manifest.yaml`:
+
+```yaml
+stopwatch:
+  max_subs: 64
+```
+
+Range: `[1, 256]`. The hard upper of 256 is a system-wide invariant —
+every consumer of `subs_json` (DB row, API response, log line, future
+dashboards) needs a stable budget. A manifest declaring `max_subs > 256`
+is rejected at plugin load with a warn-level log; the plugin is not
+registered. Manifests omitting the field, or setting it to 0, use the
+default 32 — no behaviour change for existing plugins.
+
+Before adding a `stopwatch` block, ask: can the spans be aggregated? The
+default cap is a design forcing function. Aggregation patterns (above)
+will handle 95% of cases that initially look like "I need more spans."
+
+#### Aggregation patterns
+
+The 32 cap pushes you toward aggregation over per-event tracing. Patterns
+that work well within the cap:
+
+| Anti-pattern                                    | Pattern                                                                  |
+|-------------------------------------------------|--------------------------------------------------------------------------|
+| One span per file in a 5000-file scan           | One `<plugin>.fingerprint_total` with `count=5000`, `bytes=...`          |
+| One span per HTTP retry                         | One `<plugin>.http_get` with `count=<attempts>` annotation               |
+| One span per loop iteration                     | Histogram buckets: `<plugin>.loop.bucket_0_10ms`, `…bucket_10_100ms`, … |
+| One span per polled watch (many watches)        | Aggregate totals, plus **outlier-only** per-watch spans (`> 50ms`)       |
+
+For real per-event tracing, use an external tracing backend (OTel) — the
+stopwatch ledger is for quartile-grade aggregation, not timeline
+reconstruction.

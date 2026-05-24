@@ -886,3 +886,130 @@ fact_outputs:
 		t.Fatalf("unexpected FactOutputs[0] = %+v", p.FactOutputs[0])
 	}
 }
+
+// stopwatchManifestFixture writes a manifest with the supplied stopwatch
+// YAML block (or omits the block when blockYAML is empty) and an
+// executable run.sh, then returns the temp dir.
+func stopwatchManifestFixture(t *testing.T, blockYAML string) string {
+	t.Helper()
+	tmpDir := t.TempDir()
+	pluginDir := filepath.Join(tmpDir, "p")
+	if err := os.Mkdir(pluginDir, 0o755); err != nil {
+		t.Fatalf("Mkdir(pluginDir): %v", err)
+	}
+	manifest := `manifest_spec: ductile.plugin
+manifest_version: 1
+name: p
+version: 1.0.0
+protocol: 2
+entrypoint: run.sh
+commands:
+  - name: handle
+    type: write
+`
+	if blockYAML != "" {
+		manifest += blockYAML
+	}
+	if err := os.WriteFile(filepath.Join(pluginDir, "manifest.yaml"), []byte(manifest), 0o644); err != nil {
+		t.Fatalf("WriteFile(manifest): %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(pluginDir, "run.sh"), []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatalf("WriteFile(run.sh): %v", err)
+	}
+	return tmpDir
+}
+
+func TestDiscover_StopwatchMaxSubs_Parsed(t *testing.T) {
+	tmp := stopwatchManifestFixture(t, "stopwatch:\n  max_subs: 64\n")
+	reg, err := DiscoverManyWithOptions([]string{tmp}, func(level, msg string, args ...any) {}, DiscoverOptions{AllowSymlinks: true})
+	if err != nil {
+		t.Fatalf("DiscoverManyWithOptions: %v", err)
+	}
+	p, ok := reg.Get("p")
+	if !ok {
+		t.Fatal("plugin not discovered")
+	}
+	if p.Stopwatch == nil {
+		t.Fatal("Stopwatch field nil after parsing manifest with stopwatch block")
+	}
+	if p.Stopwatch.MaxSubs != 64 {
+		t.Errorf("MaxSubs = %d, want 64", p.Stopwatch.MaxSubs)
+	}
+}
+
+func TestDiscover_StopwatchAbsent_LeavesFieldNil(t *testing.T) {
+	tmp := stopwatchManifestFixture(t, "")
+	reg, err := DiscoverManyWithOptions([]string{tmp}, func(level, msg string, args ...any) {}, DiscoverOptions{AllowSymlinks: true})
+	if err != nil {
+		t.Fatalf("DiscoverManyWithOptions: %v", err)
+	}
+	p, _ := reg.Get("p")
+	if p.Stopwatch != nil {
+		t.Errorf("Stopwatch should be nil when not declared; got %+v", p.Stopwatch)
+	}
+}
+
+func TestDiscover_StopwatchMaxSubs_RejectsOutOfRange(t *testing.T) {
+	// Discovery logs invalid manifests and continues (doesn't error the
+	// whole walk), so the contract is: rejected plugins do not appear in
+	// the registry. Direct validateManifest path is exercised by
+	// TestValidateManifest_StopwatchMaxSubsRange.
+	for _, value := range []string{"-1", "257", "1000"} {
+		t.Run("value="+value, func(t *testing.T) {
+			tmp := stopwatchManifestFixture(t, "stopwatch:\n  max_subs: "+value+"\n")
+			var loggedErrors []string
+			logger := func(level, msg string, args ...any) {
+				if level == "warn" {
+					loggedErrors = append(loggedErrors, msg)
+				}
+			}
+			reg, err := DiscoverManyWithOptions([]string{tmp}, logger, DiscoverOptions{AllowSymlinks: true})
+			if err != nil {
+				t.Fatalf("DiscoverManyWithOptions returned hard error: %v", err)
+			}
+			if _, ok := reg.Get("p"); ok {
+				t.Fatalf("plugin with max_subs=%s should have been rejected, but is in registry", value)
+			}
+			if len(loggedErrors) == 0 {
+				t.Errorf("expected a warn-level log when rejecting invalid manifest")
+			}
+		})
+	}
+}
+
+func TestValidateManifest_StopwatchMaxSubsRange(t *testing.T) {
+	// Direct path-coverage on validateManifest (avoids filesystem fixture
+	// for boundary values, especially 0 and 1).
+	base := func(maxSubs int) *Manifest {
+		return &Manifest{
+			ManifestSpec:    SupportedManifestSpec,
+			ManifestVersion: SupportedManifestVersion,
+			Name:            "p",
+			Version:         "1.0.0",
+			Protocol:        2,
+			Entrypoint:      "run.sh",
+			Commands:        Commands{{Name: "handle", Type: CommandTypeWrite}},
+			Stopwatch:       &StopwatchManifest{MaxSubs: maxSubs},
+		}
+	}
+
+	// 0 means "use default" — no error, but the field is preserved as 0
+	// so the dispatcher's "use default" branch fires.
+	if err := validateManifest(base(0)); err != nil {
+		t.Errorf("max_subs=0 should be accepted as 'use default': %v", err)
+	}
+	if err := validateManifest(base(1)); err != nil {
+		t.Errorf("max_subs=1 (boundary low) should be accepted: %v", err)
+	}
+	if err := validateManifest(base(256)); err != nil {
+		t.Errorf("max_subs=256 (boundary high) should be accepted: %v", err)
+	}
+
+	// Out-of-range values must fail.
+	for _, bad := range []int{-1, 257, 10000} {
+		if err := validateManifest(base(bad)); err == nil {
+			t.Errorf("max_subs=%d should fail validation, got nil", bad)
+		}
+	}
+}
+

@@ -390,5 +390,92 @@ class FetchHealthCommandTest(unittest.TestCase):
         self.assertEqual(resp["status"], "ok")
 
 
+class FetchStopwatchSubSpansTests(unittest.TestCase):
+    """Sub-spans are emitted on the success path under the documented
+    ductile_stopwatch_subs response key and follow the convention."""
+
+    def setUp(self):
+        self.server, self.port, self.thread = _serve(_StaticBodyHandler)
+
+    def tearDown(self):
+        _stop_server(self.server, self.thread)
+
+    def _spans(self, resp):
+        self.assertIn("ductile_stopwatch_subs", resp, msg=f"no sub-spans in {resp}")
+        spans = resp["ductile_stopwatch_subs"]
+        self.assertIsInstance(spans, list)
+        # All spans must have the convention-required fields.
+        for span in spans:
+            self.assertIn("name", span)
+            self.assertIn("dur_ns", span)
+            self.assertIsInstance(span["dur_ns"], int)
+            self.assertGreaterEqual(span["dur_ns"], 0)
+        return spans
+
+    def test_success_path_emits_egress_http_body_decode_spans(self):
+        resp = run_plugin(
+            {
+                "command": "handle",
+                "config": {"allowed_hosts": ["127.0.0.1"], "output_format": "html"},
+                "event": {"payload": {"url": f"http://127.0.0.1:{self.port}/"}},
+            }
+        )
+        self.assertEqual(resp["status"], "ok", msg=resp)
+        names = [s["name"] for s in self._spans(resp)]
+        # html output does NOT trigger fetch.transform — those four are the
+        # success-path floor.
+        self.assertIn("fetch.egress_validate", names)
+        self.assertIn("fetch.http_get", names)
+        self.assertIn("fetch.body_read", names)
+        self.assertIn("fetch.decode", names)
+        self.assertNotIn("fetch.transform", names)
+
+    def test_body_read_span_carries_bytes_annotation(self):
+        resp = run_plugin(
+            {
+                "command": "handle",
+                "config": {"allowed_hosts": ["127.0.0.1"]},
+                "event": {"payload": {"url": f"http://127.0.0.1:{self.port}/"}},
+            }
+        )
+        self.assertEqual(resp["status"], "ok", msg=resp)
+        spans = self._spans(resp)
+        body_read = next(s for s in spans if s["name"] == "fetch.body_read")
+        self.assertIn("bytes", body_read)
+        # Default _StaticBodyHandler body is 27 bytes; assert it's recorded
+        # honestly rather than checking an exact number we'd have to keep
+        # in sync.
+        self.assertGreater(body_read["bytes"], 0)
+
+    def test_text_output_format_adds_transform_span(self):
+        resp = run_plugin(
+            {
+                "command": "handle",
+                "config": {"allowed_hosts": ["127.0.0.1"], "output_format": "text"},
+                "event": {"payload": {"url": f"http://127.0.0.1:{self.port}/"}},
+            }
+        )
+        self.assertEqual(resp["status"], "ok", msg=resp)
+        names = [s["name"] for s in self._spans(resp)]
+        self.assertIn("fetch.transform", names)
+
+    def test_egress_rejection_still_emits_validate_span(self):
+        # Even on the egress-rejected error path, sub-spans captured before
+        # the failure should ship — letting operators see "the validate
+        # span ran fast / slow before we bounced."
+        resp = run_plugin(
+            {
+                "command": "handle",
+                "event": {"payload": {"url": "http://127.0.0.1:1/"}},
+            }
+        )
+        self.assertEqual(resp["status"], "error")
+        spans = self._spans(resp)
+        names = [s["name"] for s in spans]
+        self.assertIn("fetch.egress_validate", names)
+        validate = next(s for s in spans if s["name"] == "fetch.egress_validate")
+        self.assertEqual(validate["status"], "err")
+
+
 if __name__ == "__main__":
     unittest.main()

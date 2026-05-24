@@ -8,6 +8,8 @@ import (
 	"strings"
 	"unicode"
 
+	"github.com/mattjoyce/ductile/internal/stopwatch"
+
 	"gopkg.in/yaml.v3"
 )
 
@@ -204,6 +206,7 @@ func loadPlugin(name, pluginPath, pluginsDir string, allowSymlinks bool, logger 
 		Commands:        manifest.Commands,
 		FactOutputs:     manifest.FactOutputs,
 		ConfigKeys:      manifest.ConfigKeys,
+		Stopwatch:       manifest.Stopwatch,
 	}, nil
 }
 
@@ -260,6 +263,15 @@ func validateManifest(m *Manifest) error {
 	for i, rule := range m.FactOutputs {
 		if err := validateFactOutputRule(m.Commands, rule); err != nil {
 			return fmt.Errorf("fact_outputs[%d]: %w", i, err)
+		}
+	}
+
+	if m.Stopwatch != nil && m.Stopwatch.MaxSubs != 0 {
+		if m.Stopwatch.MaxSubs < 1 || m.Stopwatch.MaxSubs > stopwatch.MaxSubsHardUpper {
+			return fmt.Errorf(
+				"stopwatch.max_subs %d out of range [1, %d]",
+				m.Stopwatch.MaxSubs, stopwatch.MaxSubsHardUpper,
+			)
 		}
 	}
 

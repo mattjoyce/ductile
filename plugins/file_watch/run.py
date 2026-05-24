@@ -17,8 +17,16 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
+from _stopwatch import Spans
+
 _DURATION_RE = re.compile(r"^\s*(\d+(?:\.\d+)?)(ns|us|µs|ms|s|m|h)\s*$")
 _VALID_STRATEGIES = {"sha256", "mtime_size"}
+
+# A per-watch fingerprint slower than this threshold gets its own
+# outlier span so a single slow watch is visible without us emitting
+# one span per watch (which would blow the 32-entry cap with many
+# watches). Aggregates are emitted regardless.
+_FINGERPRINT_SLOW_NS = 50_000_000  # 50ms
 
 
 def utc_now() -> datetime:
@@ -104,6 +112,14 @@ def compact_ok(
     if state_updates:
         out["state_updates"] = state_updates
     return out
+
+
+def attach_subs(response: Dict[str, Any], spans: Spans) -> Dict[str, Any]:
+    """Attach sub-spans to a response if any were captured."""
+    subs = spans.to_response_key()
+    if subs:
+        response["ductile_stopwatch_subs"] = subs
+    return response
 
 
 def snapshot_state(watches: Dict[str, Any]) -> Dict[str, Any]:
@@ -240,7 +256,7 @@ def watch_event(
     }
 
 
-def handle_poll(config: Dict[str, Any], state: Dict[str, Any]) -> Dict[str, Any]:
+def handle_poll(config: Dict[str, Any], state: Dict[str, Any], spans: Spans) -> Dict[str, Any]:
     watches, errors = normalize_watches(config)
     if errors:
         return compact_error("invalid file_watch config", retry=False, logs=[{"level": "error", "message": e} for e in errors])
@@ -252,6 +268,13 @@ def handle_poll(config: Dict[str, Any], state: Dict[str, Any]) -> Dict[str, Any]
     next_state_watches: Dict[str, Any] = {}
     events: List[Dict[str, Any]] = []
     logs: List[Dict[str, str]] = []
+
+    # Per-fingerprint timing accumulators. Emitted as a single aggregate
+    # span after the watch loop so the 32-entry cap is preserved even
+    # with many watches; individual outliers (>50ms) emit alongside.
+    fp_count = 0
+    fp_bytes_total = 0
+    fp_dur_total_ns = 0
 
     for watch in watches:
         watch_id = watch["id"]
@@ -284,6 +307,7 @@ def handle_poll(config: Dict[str, Any], state: Dict[str, Any]) -> Dict[str, Any]
                     next_state_watches[watch_id] = previous_raw
                 continue
 
+            fp_t0 = time.perf_counter_ns()
             try:
                 fingerprint, size, mtime_ns = stat_fingerprint(path, str(watch["strategy"]))
             except OSError as exc:
@@ -291,6 +315,17 @@ def handle_poll(config: Dict[str, Any], state: Dict[str, Any]) -> Dict[str, Any]
                 if known_previous:
                     next_state_watches[watch_id] = previous_raw
                 continue
+            fp_dur = time.perf_counter_ns() - fp_t0
+            fp_count += 1
+            fp_bytes_total += size
+            fp_dur_total_ns += fp_dur
+            if fp_dur > _FINGERPRINT_SLOW_NS:
+                spans.add(
+                    f"file_watch.fingerprint_slow.{watch_id}",
+                    dur_ns=fp_dur,
+                    bytes=size,
+                    status="ok",
+                )
 
             current_entry = {
                 "exists": True,
@@ -333,6 +368,15 @@ def handle_poll(config: Dict[str, Any], state: Dict[str, Any]) -> Dict[str, Any]
         next_state_watches[watch_id] = current_entry
 
     logs.append({"level": "info", "message": f"file_watch poll complete: watches={len(watches)} events={len(events)}"})
+
+    if fp_count > 0:
+        spans.add(
+            "file_watch.fingerprint_total",
+            dur_ns=fp_dur_total_ns,
+            count=fp_count,
+            bytes=fp_bytes_total,
+            status="ok",
+        )
 
     return compact_ok(
         result=f"file_watch poll complete: watches={len(watches)} events={len(events)}",
@@ -393,8 +437,9 @@ def main() -> None:
     if not isinstance(state, dict):
         state = {}
 
+    spans = Spans()
     if command == "poll":
-        response = handle_poll(config, state)
+        response = handle_poll(config, state, spans)
     elif command == "health":
         response = handle_health(config)
     else:
@@ -403,6 +448,7 @@ def main() -> None:
             retry=False,
         )
 
+    attach_subs(response, spans)
     json.dump(response, sys.stdout, separators=(",", ":"))
     sys.stdout.write("\n")
     sys.stdout.flush()
