@@ -1,0 +1,4 @@
+## 2025-05-25 - Prevent SQL Injection in PRAGMA Queries
+**Vulnerability:** The `sqliteColumnExists` function was vulnerable to SQL injection because it used `fmt.Sprintf` to interpolate the table name directly into a `PRAGMA table_info(%s)` string before passing it to `db.QueryContext`.
+**Learning:** Standard PRAGMA statements cannot be parameterized. This leads developers to mistakenly use string concatenation or interpolation when dynamic PRAGMA execution is required.
+**Prevention:** Since SQLite 3.16.0, table-valued functions exist for pragmas (e.g., `pragma_table_info(?)`). These functions allow parameterized queries. Always use the table-valued function form (like `SELECT * FROM pragma_table_info(?)`) to safely parameterize schema queries instead of directly interpolating strings into `PRAGMA` commands. Note that column names matching reserved keywords (like `notnull`) must be enclosed in double quotes (e.g., `"notnull"`).
