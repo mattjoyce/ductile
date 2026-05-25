@@ -131,7 +131,7 @@ func setupTestServer(t *testing.T, db *sql.DB, reg PluginRegistry) *Server {
 	q := queue.New(db)
 	cs := state.NewContextStore(db)
 	hub := events.NewHub(10)
-	return New(cfg, q, reg, &mockRouter{}, &mockWaiter{}, cs, state.NewAdmitter(q, state.DefaultMaxContextBytes), hub, logger)
+	return New(cfg, q, reg, &mockRouter{}, &mockWaiter{}, cs, state.NewAdmitter(q, state.DefaultMaxContextBytes), nil, hub, logger)
 }
 
 func newTestServer(reg PluginRegistry) *Server {
@@ -151,7 +151,7 @@ func setupTestServerWithDB(db *sql.DB, reg PluginRegistry) *Server {
 	q := queue.New(db)
 	cs := state.NewContextStore(db)
 	hub := events.NewHub(10)
-	return New(cfg, q, reg, &mockRouter{}, &mockWaiter{}, cs, state.NewAdmitter(q, state.DefaultMaxContextBytes), hub, logger)
+	return New(cfg, q, reg, &mockRouter{}, &mockWaiter{}, cs, state.NewAdmitter(q, state.DefaultMaxContextBytes), nil, hub, logger)
 }
 
 // setupTestServerWithRouter wires a Server with a caller-supplied router so
@@ -167,7 +167,7 @@ func setupTestServerWithRouter(_ *testing.T, db *sql.DB, reg PluginRegistry, r P
 	q := queue.New(db)
 	cs := state.NewContextStore(db)
 	hub := events.NewHub(10)
-	return New(cfg, q, reg, r, &mockWaiter{}, cs, state.NewAdmitter(q, state.DefaultMaxContextBytes), hub, logger)
+	return New(cfg, q, reg, r, &mockWaiter{}, cs, state.NewAdmitter(q, state.DefaultMaxContextBytes), nil, hub, logger)
 }
 
 func TestHandleRoot_NoAuth(t *testing.T) {
@@ -274,7 +274,7 @@ func TestHandleSchedulerJobs_Authorized(t *testing.T) {
 		Listen:        "localhost:8080",
 		Tokens:        []auth.TokenConfig{{Token: "test-key-123", Scopes: []string{"*"}}},
 		RuntimeConfig: runtimeCfg,
-	}, q, reg, &mockRouter{}, &mockWaiter{}, cs, state.NewAdmitter(q, state.DefaultMaxContextBytes), events.NewHub(10), slog.Default())
+	}, q, reg, &mockRouter{}, &mockWaiter{}, cs, state.NewAdmitter(q, state.DefaultMaxContextBytes), nil, events.NewHub(10), slog.Default())
 
 	req := httptest.NewRequest(http.MethodGet, "/scheduler/jobs", nil)
 	req.Header.Set("Authorization", "Bearer test-key-123")

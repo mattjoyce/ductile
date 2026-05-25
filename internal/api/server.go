@@ -95,6 +95,7 @@ type Server struct {
 	waiter        TreeWaiter
 	contextStore  EventContextStore
 	admitter      AdmissionGate
+	stopwatch     StopwatchReader
 	logger        *slog.Logger
 	server        *http.Server
 	startedAt     time.Time
@@ -110,7 +111,16 @@ type Server struct {
 // runtime supplies state.NewAdmitter(queue, state.DefaultMaxContextBytes).
 // A nil admitter disables the admission check (size cap then surfaces via the
 // existing inner ContextStore.Create defensive check, as a 500).
-func New(config Config, queue JobQueuer, registry PluginRegistry, router PipelineRouter, waiter TreeWaiter, contextStore EventContextStore, admitter AdmissionGate, hub *events.Hub, logger *slog.Logger) *Server {
+// New creates a new API server instance. admitter decides whether ingress
+// requests are admitted before durable event_context creation; production
+// runtime supplies state.NewAdmitter(queue, state.DefaultMaxContextBytes).
+// A nil admitter disables the admission check (size cap then surfaces via the
+// existing inner ContextStore.Create defensive check, as a 500).
+//
+// stopwatch backs the /stopwatch/{plugin} endpoint. A nil stopwatch leaves
+// the endpoint registered but responding 503 — callers that don't care about
+// latency observability (tests, lightweight harnesses) can pass nil.
+func New(config Config, queue JobQueuer, registry PluginRegistry, router PipelineRouter, waiter TreeWaiter, contextStore EventContextStore, admitter AdmissionGate, stopwatch StopwatchReader, hub *events.Hub, logger *slog.Logger) *Server {
 	if config.MaxConcurrentSync <= 0 {
 		config.MaxConcurrentSync = 10
 	}
@@ -122,6 +132,7 @@ func New(config Config, queue JobQueuer, registry PluginRegistry, router Pipelin
 		waiter:        waiter,
 		contextStore:  contextStore,
 		admitter:      admitter,
+		stopwatch:     stopwatch,
 		logger:        logger,
 		startedAt:     time.Now(),
 		events:        hub,
@@ -238,6 +249,11 @@ func (s *Server) setupRoutes() *chi.Mux {
 		r.With(s.requireScopes("jobs:status:ro", "jobs:rw", "*")).Get("/scheduler/jobs", s.handleSchedulerJobs)
 		r.With(s.requireScopes("jobs:status:ro", "*")).Get("/analytics/summary", s.handleAnalyticsSummary)
 		r.With(s.requireScopes("jobs:status:ro", "*")).Get("/analytics/queue", s.handleQueueMetrics)
+		// Stopwatch percentile aggregation. Base latency stats need only
+		// jobs:status:ro (or its supersets); sub-span exposure via
+		// ?include_subs=true is gated INSIDE the handler on jobs:result:ro
+		// because subs_json carries plugin-supplied unvalidated content.
+		r.With(s.requireScopes("jobs:status:ro", "jobs:rw", "*")).Get("/stopwatch/{plugin}", s.handleStopwatch)
 		r.With(s.requireScopes("system:rw", "*")).Post("/system/reload", s.handleSystemReload)
 		r.With(s.requireScopes("system:ro", "system:rw", "*")).Get("/config/view", s.handleConfigView)
 	})

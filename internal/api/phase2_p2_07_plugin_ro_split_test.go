@@ -60,6 +60,7 @@ func setupTestServerWithTokens(t *testing.T, tokens []auth.TokenConfig) *Server 
 		&mockWaiter{},
 		cs,
 		state.NewAdmitter(q, state.DefaultMaxContextBytes),
+		nil,
 		hub,
 		slog.Default(),
 	)
