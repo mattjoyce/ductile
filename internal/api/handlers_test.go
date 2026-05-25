@@ -62,6 +62,7 @@ type mockRouter struct {
 	getEntryDispatchesFunc   func(pipelineName string, event protocol.Event) ([]router.Dispatch, error)
 	getNodeFunc              func(pipelineName string, stepID string) (dsl.Node, bool)
 	getCompiledRoutesFunc    func(pipelineName string) []dsl.CompiledRoute
+	pipelineSummary          []router.PipelineInfo
 }
 
 func (m *mockRouter) GetPipelineByTrigger(trigger string) *router.PipelineInfo {
@@ -106,7 +107,7 @@ func (m *mockRouter) GetCompiledRoutes(pipelineName string) []dsl.CompiledRoute 
 	return nil
 }
 
-func (m *mockRouter) PipelineSummary() []router.PipelineInfo { return nil }
+func (m *mockRouter) PipelineSummary() []router.PipelineInfo { return m.pipelineSummary }
 
 // mockWaiter implements TreeWaiter for testing
 type mockWaiter struct {

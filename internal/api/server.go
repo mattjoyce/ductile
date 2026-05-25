@@ -217,6 +217,12 @@ func (s *Server) setupRoutes() *chi.Mux {
 		// plugin:rw) so existing tokens continue to discover plugins.
 		r.With(s.requireScopes("plugin:invoke:ro", "plugin:rw", "*")).Post("/plugin/{plugin}/{command}", s.handlePluginTrigger)
 		r.With(s.requireScopes("plugin:catalog:ro", "plugin:rw", "*")).Get("/plugin/{plugin}", s.handleGetPlugin)
+		// Topology aggregates plugin Command.Emit declarations with compiled
+		// router routes into a graph shape. Reuses the catalog scope rather
+		// than introducing a new topology:ro scope (mid-flight scope
+		// proliferation is its own debt); can split later if operators want
+		// to grant topology visibility independently of plugin catalog.
+		r.With(s.requireScopes("plugin:catalog:ro", "plugin:rw", "*")).Get("/topology", s.handleTopology)
 		r.With(s.requireScopes("plugin:rw", "*")).Post("/pipeline/{pipeline}", s.handlePipelineTrigger)
 		// D1: each endpoint accepts its narrower scope as well as the back-compat
 		// super-scopes (jobs:ro / jobs:rw / wildcard). jobs:ro implies all
