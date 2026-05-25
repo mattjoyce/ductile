@@ -50,6 +50,7 @@ go.work.sum
 
 # Agent scratch notes (specs, sprint plans, RCAs)
 .agent-notes/
+MEMORY/
 
 # Fixture state
 test/fixtures/docker/**/state/
