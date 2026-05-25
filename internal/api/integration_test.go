@@ -115,7 +115,7 @@ func TestAPIIntegration(t *testing.T) {
 	server := api.New(api.Config{
 		Listen: listenAddr,
 		Tokens: []auth.TokenConfig{{Token: "test-key-123", Scopes: []string{"*"}}},
-	}, q, registry, r, &queueBackedWaiter{q: q}, ctxStore, state.NewAdmitter(q, state.DefaultMaxContextBytes), events.NewHub(10), slog.Default())
+	}, q, registry, r, &queueBackedWaiter{q: q}, ctxStore, state.NewAdmitter(q, state.DefaultMaxContextBytes), nil, events.NewHub(10), slog.Default())
 
 	serverCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
@@ -329,7 +329,7 @@ echo '{"status":"ok","result":"B"}'
 	server := api.New(api.Config{
 		Listen: testPort,
 		Tokens: []auth.TokenConfig{{Token: "test-key-123", Scopes: []string{"*"}}},
-	}, q, registry, routerEngine, disp, contextStore, state.NewAdmitter(q, state.DefaultMaxContextBytes), hub, slog.Default())
+	}, q, registry, routerEngine, disp, contextStore, state.NewAdmitter(q, state.DefaultMaxContextBytes), nil, hub, slog.Default())
 
 	serverCtx, cancel := context.WithCancel(ctx)
 	defer cancel()

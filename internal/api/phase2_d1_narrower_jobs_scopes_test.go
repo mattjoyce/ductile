@@ -39,6 +39,7 @@ func setupTestServerForJobScopes(t *testing.T, tokens []auth.TokenConfig) (strin
 		&mockWaiter{},
 		cs,
 		state.NewAdmitter(q, state.DefaultMaxContextBytes),
+		nil,
 		hub,
 		slog.Default(),
 	)

@@ -80,7 +80,15 @@ type Config struct {
 	Version           string
 	RuntimeConfig     *config.Config
 	ReloadFunc        func(context.Context) (ReloadResponse, error)
-	RelayReceiver     *relay.Receiver
+	// DoctorFunc backs GET /system/doctor. nil disables the endpoint
+	// (handler responds 503). Runtime wires a closure that runs the
+	// same validation pipeline as `ductile config check`.
+	DoctorFunc DoctorFunc
+	// SelfcheckFunc backs GET /system/selfcheck. nil disables the endpoint
+	// (handler responds 503). Runtime wires a closure that runs the
+	// same six invariants as `ductile system selfcheck`.
+	SelfcheckFunc SelfcheckFunc
+	RelayReceiver *relay.Receiver
 	// AllowedOrigins lists the origins that may receive credentialed CORS
 	// headers. An empty list disables cross-origin credential sharing entirely.
 	AllowedOrigins []string
@@ -95,6 +103,7 @@ type Server struct {
 	waiter        TreeWaiter
 	contextStore  EventContextStore
 	admitter      AdmissionGate
+	stopwatch     StopwatchReader
 	logger        *slog.Logger
 	server        *http.Server
 	startedAt     time.Time
@@ -110,7 +119,16 @@ type Server struct {
 // runtime supplies state.NewAdmitter(queue, state.DefaultMaxContextBytes).
 // A nil admitter disables the admission check (size cap then surfaces via the
 // existing inner ContextStore.Create defensive check, as a 500).
-func New(config Config, queue JobQueuer, registry PluginRegistry, router PipelineRouter, waiter TreeWaiter, contextStore EventContextStore, admitter AdmissionGate, hub *events.Hub, logger *slog.Logger) *Server {
+// New creates a new API server instance. admitter decides whether ingress
+// requests are admitted before durable event_context creation; production
+// runtime supplies state.NewAdmitter(queue, state.DefaultMaxContextBytes).
+// A nil admitter disables the admission check (size cap then surfaces via the
+// existing inner ContextStore.Create defensive check, as a 500).
+//
+// stopwatch backs the /stopwatch/{plugin} endpoint. A nil stopwatch leaves
+// the endpoint registered but responding 503 — callers that don't care about
+// latency observability (tests, lightweight harnesses) can pass nil.
+func New(config Config, queue JobQueuer, registry PluginRegistry, router PipelineRouter, waiter TreeWaiter, contextStore EventContextStore, admitter AdmissionGate, stopwatch StopwatchReader, hub *events.Hub, logger *slog.Logger) *Server {
 	if config.MaxConcurrentSync <= 0 {
 		config.MaxConcurrentSync = 10
 	}
@@ -122,6 +140,7 @@ func New(config Config, queue JobQueuer, registry PluginRegistry, router Pipelin
 		waiter:        waiter,
 		contextStore:  contextStore,
 		admitter:      admitter,
+		stopwatch:     stopwatch,
 		logger:        logger,
 		startedAt:     time.Now(),
 		events:        hub,
@@ -217,6 +236,12 @@ func (s *Server) setupRoutes() *chi.Mux {
 		// plugin:rw) so existing tokens continue to discover plugins.
 		r.With(s.requireScopes("plugin:invoke:ro", "plugin:rw", "*")).Post("/plugin/{plugin}/{command}", s.handlePluginTrigger)
 		r.With(s.requireScopes("plugin:catalog:ro", "plugin:rw", "*")).Get("/plugin/{plugin}", s.handleGetPlugin)
+		// Topology aggregates plugin Command.Emit declarations with compiled
+		// router routes into a graph shape. Reuses the catalog scope rather
+		// than introducing a new topology:ro scope (mid-flight scope
+		// proliferation is its own debt); can split later if operators want
+		// to grant topology visibility independently of plugin catalog.
+		r.With(s.requireScopes("plugin:catalog:ro", "plugin:rw", "*")).Get("/topology", s.handleTopology)
 		r.With(s.requireScopes("plugin:rw", "*")).Post("/pipeline/{pipeline}", s.handlePipelineTrigger)
 		// D1: each endpoint accepts its narrower scope as well as the back-compat
 		// super-scopes (jobs:ro / jobs:rw / wildcard). jobs:ro implies all
@@ -232,8 +257,15 @@ func (s *Server) setupRoutes() *chi.Mux {
 		r.With(s.requireScopes("jobs:status:ro", "jobs:rw", "*")).Get("/scheduler/jobs", s.handleSchedulerJobs)
 		r.With(s.requireScopes("jobs:status:ro", "*")).Get("/analytics/summary", s.handleAnalyticsSummary)
 		r.With(s.requireScopes("jobs:status:ro", "*")).Get("/analytics/queue", s.handleQueueMetrics)
+		// Stopwatch percentile aggregation. Base latency stats need only
+		// jobs:status:ro (or its supersets); sub-span exposure via
+		// ?include_subs=true is gated INSIDE the handler on jobs:result:ro
+		// because subs_json carries plugin-supplied unvalidated content.
+		r.With(s.requireScopes("jobs:status:ro", "jobs:rw", "*")).Get("/stopwatch/{plugin}", s.handleStopwatch)
 		r.With(s.requireScopes("system:rw", "*")).Post("/system/reload", s.handleSystemReload)
 		r.With(s.requireScopes("system:ro", "system:rw", "*")).Get("/config/view", s.handleConfigView)
+		r.With(s.requireScopes("system:ro", "system:rw", "*")).Get("/system/doctor", s.handleDoctor)
+		r.With(s.requireScopes("system:ro", "system:rw", "*")).Get("/system/selfcheck", s.handleSelfcheck)
 	})
 
 	// SSE endpoint — also accepts ?token= because EventSource cannot send
