@@ -599,8 +599,15 @@ func buildRuntime(cfg *config.Config, configPath string, configSource string, re
 			Version:           version,
 			RuntimeConfig:     cfg,
 			ReloadFunc:        reloadFunc,
-			RelayReceiver:     relayReceiver,
-			AllowedOrigins:    cfg.API.AllowedOrigins,
+			DoctorFunc: func(_ context.Context) (*doctor.Result, error) {
+				result, _, err := validateConfigAtPath(configPath)
+				return result, err
+			},
+			SelfcheckFunc: func(_ context.Context) (api.SystemCheckReport, error) {
+				return selfcheckReportForAPI(configPath), nil
+			},
+			RelayReceiver:  relayReceiver,
+			AllowedOrigins: cfg.API.AllowedOrigins,
 		}
 		apiServer := api.New(apiConfig, q, registry, routerEngine, disp, contextStore, admitter, st, hub, log.WithComponent("api"))
 		rt.apiServer = apiServer

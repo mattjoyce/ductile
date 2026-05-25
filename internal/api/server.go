@@ -80,7 +80,15 @@ type Config struct {
 	Version           string
 	RuntimeConfig     *config.Config
 	ReloadFunc        func(context.Context) (ReloadResponse, error)
-	RelayReceiver     *relay.Receiver
+	// DoctorFunc backs GET /system/doctor. nil disables the endpoint
+	// (handler responds 503). Runtime wires a closure that runs the
+	// same validation pipeline as `ductile config check`.
+	DoctorFunc DoctorFunc
+	// SelfcheckFunc backs GET /system/selfcheck. nil disables the endpoint
+	// (handler responds 503). Runtime wires a closure that runs the
+	// same six invariants as `ductile system selfcheck`.
+	SelfcheckFunc SelfcheckFunc
+	RelayReceiver *relay.Receiver
 	// AllowedOrigins lists the origins that may receive credentialed CORS
 	// headers. An empty list disables cross-origin credential sharing entirely.
 	AllowedOrigins []string
@@ -256,6 +264,8 @@ func (s *Server) setupRoutes() *chi.Mux {
 		r.With(s.requireScopes("jobs:status:ro", "jobs:rw", "*")).Get("/stopwatch/{plugin}", s.handleStopwatch)
 		r.With(s.requireScopes("system:rw", "*")).Post("/system/reload", s.handleSystemReload)
 		r.With(s.requireScopes("system:ro", "system:rw", "*")).Get("/config/view", s.handleConfigView)
+		r.With(s.requireScopes("system:ro", "system:rw", "*")).Get("/system/doctor", s.handleDoctor)
+		r.With(s.requireScopes("system:ro", "system:rw", "*")).Get("/system/selfcheck", s.handleSelfcheck)
 	})
 
 	// SSE endpoint — also accepts ?token= because EventSource cannot send
