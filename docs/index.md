@@ -26,7 +26,7 @@ See the [Constitution](https://github.com/mattjoyce/ductile/blob/main/CONSTITUTI
 
     Architecture, pipelines, routing, scheduling, and the ten idioms that make Ductile feel natural.
 
-    [:octicons-arrow-right-24: 10 Idioms](10_IDIOMS_OF_DUCTILE.md)
+    [:octicons-arrow-right-24: 8 Idioms](8_IDIOMS_OF_DUCTILE.md)
 
 -   :material-robot-outline:{ .lg .middle } **Operate with an agent**
 
