@@ -619,8 +619,8 @@ func (q *Queue) Dequeue(ctx context.Context) (*Job, error) {
 // The running-exclusion is target-scoped (plugin + command) on purpose
 // (C-FRO-16): fan-out siblings inherit one source-event dedupe_key but go to
 // distinct targets, so a raw same-dedupe_key exclusion serialized them and
-// starved later siblings behind a slow/stuck first one. The documented
-// contract is a per-target guard (docs/ZK_2026-03-04_concurrency-rollout.md).
+// starved later siblings behind a slow/stuck first one. The contract is a
+// per-target guard.
 //
 // Dequeue calls this with empty explicit filters; same (key, target) running
 // exclusion still applies because job_queue is the concurrency source of
