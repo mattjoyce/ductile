@@ -136,7 +136,7 @@ Planned: `ductile-doctor` (Pillar 2: Debug), `ductile-plugin-tester` (Pillar 4: 
 ---
 
 ## License
-MIT. See [LICENSE](LICENSE) for details.
+Apache 2.0. See [LICENSE](LICENSE) for details.
 
 ## Changelog
 See [CHANGELOG.md](CHANGELOG.md).
