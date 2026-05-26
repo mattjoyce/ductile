@@ -1,0 +1,16 @@
+// Cloudflare Workers config for serving the MkDocs site at ductile.run.
+// The site is built by `mkdocs build` (see Build command in CF dashboard);
+// wrangler then deploys the resulting ./site directory as static assets,
+// served by an auto-provisioned Worker. No application code, no nodejs_compat
+// needed — pure static hosting on the Workers runtime.
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "ductile",
+  "compatibility_date": "2026-05-26",
+  "assets": {
+    "directory": "./site"
+  },
+  "observability": {
+    "enabled": true
+  }
+}
