@@ -3,17 +3,17 @@
 [![Go Version](https://img.shields.io/badge/go-1.25.4-blue.svg)](https://golang.org)
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 
-**The Glue for Your Homelab Automation.**
+**An automation runtime designed to be operated by AI agents.**
 
-Ductile is a lightweight, polyglot integration engine that turns simple scripts into reliable, event-driven pipelines. It fills the gap between fragile cron jobs and heavy-duty automation platforms (n8n, Node-RED).
-
-A single Go binary orchestrates connectors written in any language via a simple JSON protocol. No cluster, no managed services, no ops overhead—just your logic, unified.
+Ductile is a self-hosted automation runtime. You describe a goal — *"every hour fetch X and notify me if Y"* — and your AI agent authors, runs, and debugs the pipeline that delivers it. A single Go binary executes connectors written in any language via a simple JSON protocol. No cluster, no SaaS, no canvas-and-drag — your intent, your hardware, your agent.
 
 ---
 
 ## Grokking Ductile in 30 Seconds
 
-Ductile works by connecting **Connectors** (plugins) via **Pipelines** using an internal **Event Bus**.
+You state a goal. Your agent writes a pipeline. Ductile runs it.
+
+Pipelines connect **Connectors** (plugins) via the internal **Event Bus**.
 
 ```text
 [ Trigger ] --(event)--> [ Pipeline ] --(step 1)--> [ Connector A ]
@@ -30,6 +30,7 @@ Ductile works by connecting **Connectors** (plugins) via **Pipelines** using an 
 
 ## Core Capabilities
 
+-   **LLM-First Discovery** — Built-in `/skills` registry and auto-generated OpenAPI specs make every pipeline, plugin, and runtime command discoverable and callable by AI agents out of the box.
 -   **Polyglot Runtime** — Write connectors in Python, Bash, Node.js, Go, or Rust. If it reads `stdin` and writes `stdout` JSON, it works.
 -   **Event-Driven Pipelines** — Chain connectors into multi-step workflows. Pass data downstream with automatic metadata (baggage) propagation.
 -   **Step-Level Payload Remap** — Use pipeline `with:` mappings to adapt downstream plugin inputs without creating one-off plugin aliases.
@@ -38,9 +39,21 @@ Ductile works by connecting **Connectors** (plugins) via **Pipelines** using an 
 -   **Parallel Dispatch** — Bounded worker pool with per-plugin concurrency caps and "concurrency-safe" manifest hints.
 -   **Plugin Aliasing** — Run multiple instances of the same connector (e.g., three different Discord notifications) without duplicating code.
 -   **Resilient Queue** — SQLite-backed, at-least-once delivery. Automatically recovers and retries orphaned jobs after a system crash.
--   **Optional TUI client** — Under redesign for v1.1 as the standalone `ductile-watch` binary; interim observability is the API and structured logs.
--   **LLM-First Discovery** — Built-in `/skills` registry and auto-generated OpenAPI specs for seamless AI agent operation.
 -   **Local & Private** — Zero-ops, single-binary architecture. Your data, your keys, your hardware.
+
+> A standalone `ductile-watch` TUI is under redesign for v1.1; interim observability is the HTTP API and structured logs.
+
+---
+
+## Operate with an AI Agent
+
+Ductile is designed to be operated, not just used. The loop:
+
+1. Load the `ductile-operator` skill into your Claude / Cursor / Codex client (see [`skills/ductile/`](skills/ductile/)).
+2. Describe what you want: *"Every morning at 7am, fetch the headlines from these RSS feeds, summarize them with Fabric, and post the summary to Discord."*
+3. The agent authors the pipeline, runs it, watches the logs, and iterates until your goal is met.
+
+The `/skills` registry and auto-generated OpenAPI surface make every pipeline, plugin, and runtime command discoverable by name. Your agent does not need to read the source.
 
 ---
 
@@ -48,6 +61,8 @@ Ductile works by connecting **Connectors** (plugins) via **Pipelines** using an 
 
 ### 1. The "YouTube Wisdom" Pipeline
 Automatically fetch, transcribe, and AI-summarize new videos from a playlist, then save them to your blog and notify Discord.
+
+> *Tell your agent:* "When a new video appears in this YouTube playlist, get the transcript, summarize it with Fabric, save the markdown to my blog repo, and ping me on Discord."
 
 ```yaml
 # Define the workflow in pipelines.yaml
@@ -107,6 +122,8 @@ go build -o ductile ./cmd/ductile
 ./ductile system start
 ```
 
+To operate via an AI agent, load the `ductile-operator` skill in your Claude / Cursor / Codex client, point it at this binary, and describe your goal.
+
 ## Documentation
 
 -   [**Getting Started**](docs/GETTING_STARTED.md) — From zero to your first pipeline.
@@ -124,7 +141,7 @@ go build -o ductile ./cmd/ductile
 ---
 
 ## License
-MIT. See [LICENSE](LICENSE) for details.
+Apache 2.0. See [LICENSE](LICENSE) for details.
 
 ## Changelog
 See [CHANGELOG.md](CHANGELOG.md).
