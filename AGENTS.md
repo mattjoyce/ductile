@@ -13,17 +13,24 @@ explains *what* the code is.
 
 ## 1. Project Identity
 
-Ductile is a lightweight, YAML-configured integration gateway written in Go.
-It orchestrates polyglot plugins via a subprocess protocol (JSON over
-stdin/stdout). It is sized for personal-scale automation (~50–500 jobs/day),
-with emphasis on simplicity, reliability, and predictable behaviour under
-crash, retry, and timeout conditions.
+Ductile is an automation runtime AI agents can run, debug, and build for. Its
+audience is LLM operators driving the full lifecycle — operating the gateway,
+diagnosing failures, RCA'ing incidents, testing plugins, and authoring new
+ones — with humans as auditors. See [`CONSTITUTION.md`](CONSTITUTION.md) for
+the alignment paragraph and the five lifecycle pillars every change must
+serve.
+
+Technically: a Go core orchestrates polyglot plugins via a subprocess
+protocol (JSON over stdin/stdout). Sized for personal-scale automation
+(~50–500 jobs/day), with emphasis on simplicity, reliability, and predictable
+behaviour under crash, retry, and timeout conditions.
 
 It is research-grade in scope, production-disciplined in execution. Code
 should be readable, composable, and explicit about what it does.
 
 **Core philosophy:** Plugins stay dumb; the core controls flow. Simple enough
-to understand in an afternoon. Extensible enough to grow with new connectors.
+for a human to understand in an afternoon; structured enough for an agent to
+drive without supervision.
 
 ---
 

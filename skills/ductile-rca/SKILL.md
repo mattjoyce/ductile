@@ -19,10 +19,11 @@ description: >
 
 # Ductile RCA
 
-This skill is the **thinking discipline** for ductile incidents. It is not a
-recipe book. The recipe is in `ductile` (commands) and the fix is in
-`ductile-plugin-developer` (code). What this skill insists on is *what you
-think before you type*.
+This skill is **Pillar 3: RCA** of the Ductile Constitution (see
+[`../../CONSTITUTION.md`](../../CONSTITUTION.md)) — the thinking discipline
+for incidents. It is not a recipe book. The recipe is in `ductile` (Pillar 1)
+and the fix is in `ductile-plugin-developer` (Pillar 5). What this skill
+insists on is *what you think before you type*.
 
 ## Seam: relationship to other skills
 

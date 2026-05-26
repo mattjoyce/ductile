@@ -17,9 +17,11 @@ description: >
 
 # Ductile Plugin Developer
 
-This skill helps you write ductile plugins that survive contact with the queue,
-the supervisor, retries, crashes, and public-repo sanitization. It is opinionated
-in the same direction `AGENTS.md` is opinionated: **simple is the goal, not easy.**
+This skill is **Pillar 5: Author** of the Ductile Constitution (see
+[`../../CONSTITUTION.md`](../../CONSTITUTION.md)) — write plugins that survive
+contact with the queue, the supervisor, retries, crashes, and public-repo
+sanitization. It is opinionated in the same direction `AGENTS.md` is
+opinionated: **simple is the goal, not easy.**
 
 > **Decision rule.** When two designs are on the table, ask: which one introduces
 > fewer concepts? Fewer concepts wins, even if it requires more typing. Easy is

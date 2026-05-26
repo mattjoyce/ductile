@@ -213,7 +213,8 @@ func validateScheduledCommands(cfg *config.Config, registry *plugin.Registry) er
 }
 
 func printUsage() {
-	fmt.Print(`ductile - Lightweight, open-source integration engine for the agentic era.
+	fmt.Print(`ductile — automation runtime AI agents can run, debug, and build for.
+NOUN ACTION CLI, structured I/O, queryable execution ledger. See CONSTITUTION.md.
 
 Usage:
   ductile <noun> <action> [flags]

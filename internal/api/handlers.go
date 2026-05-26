@@ -38,7 +38,7 @@ func (s *Server) maxAttemptsForPlugin(pluginName string) int {
 func (s *Server) handleRoot(w http.ResponseWriter, r *http.Request) {
 	respondJSON(w, http.StatusOK, RootResponse{
 		Name:          "Ductile Gateway",
-		Description:   "Lightweight, open-source integration engine for the agentic era.",
+		Description:   "Automation runtime AI agents can run, debug, and build for.",
 		UptimeSeconds: int64(time.Since(s.startedAt).Seconds()),
 		Discovery: map[string]string{
 			"health":    "/healthz",
@@ -945,8 +945,8 @@ func (s *Server) handleWellKnownPlugin(w http.ResponseWriter, r *http.Request) {
 		"schema_version":        "v1",
 		"name_for_human":        "Ductile Gateway",
 		"name_for_model":        "ductile",
-		"description_for_human": "Integration gateway for triggering plugins and pipelines.",
-		"description_for_model": "Discover and invoke plugins. Fetch /openapi.json for the full spec, or /plugin/{name}/openapi.json for a single plugin. Invoke commands via POST /plugin/{name}/{command}.",
+		"description_for_human": "Automation runtime AI agents can run, debug, and build for.",
+		"description_for_model": "Ductile is an automation runtime designed for agent operation. Discover plugins via /openapi.json (per-plugin: /plugin/{name}/openapi.json); invoke commands via POST /plugin/{name}/{command}; query runs via /jobs; inspect health via /system/doctor and /system/selfcheck; read latency stats via /stopwatch/{plugin}; read the plugin graph via /topology. For deeper work (RCA, plugin authoring, diagnostics) load the matching skill from skills/ductile-*.",
 		"auth": map[string]any{
 			"type": "bearer",
 		},

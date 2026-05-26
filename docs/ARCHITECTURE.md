@@ -17,7 +17,7 @@ Ductile currently exists as a FastAPI monolith handling health data ETL, LLM pro
 
 ### 1.2 Solution
 
-A lightweight, YAML-configured, modular integration gateway. A compiled Go core orchestrates polyglot plugins via a subprocess protocol. Simple enough to understand in an afternoon. Extensible enough to grow with new connectors.
+An automation runtime built for AI agents to operate, diagnose, and extend. Where platforms impose workflow, Ductile provides primitives: a NOUN ACTION CLI, a manifest-contracted plugin protocol, and a queryable execution ledger. A compiled Go core orchestrates polyglot plugins via a subprocess protocol. Simple enough for a human to understand in an afternoon; structured enough for an agent to drive the full lifecycle without supervision. See [`../CONSTITUTION.md`](../CONSTITUTION.md).
 
 ### 1.3 Scope
 

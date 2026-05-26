@@ -1,6 +1,6 @@
 # Getting Started with Ductile
 
-Welcome to **Ductile**, a lightweight, reliable, and secure integration gateway designed for personal automation. This guide will help you get up and running in minutes.
+Welcome to **Ductile**, an automation runtime AI agents can run, debug, and build for — and humans can audit. This guide will help you get up and running in minutes. See [`CONSTITUTION.md`](../CONSTITUTION.md) for why the system is shaped this way.
 
 ---
 

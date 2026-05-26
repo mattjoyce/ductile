@@ -3,11 +3,11 @@
 [![Go Version](https://img.shields.io/badge/go-1.25.4-blue.svg)](https://golang.org)
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 
-**The Glue for Your Homelab Automation.**
+**An automation runtime AI agents can run, debug, and build for.**
 
-Ductile is a lightweight, polyglot integration engine that turns simple scripts into reliable, event-driven pipelines. It fills the gap between fragile cron jobs and heavy-duty automation platforms (n8n, Node-RED).
+Ductile is an automation runtime designed to be operated by AI agents. Every surface — CLI, REST API, plugin protocol, execution ledger — is shaped so an LLM can drive it as confidently as a human can audit it. A single Go binary orchestrates polyglot plugins via a simple JSON protocol; agents schedule jobs, route webhooks, diagnose failures, RCA incidents, test plugins, and author new ones in any language the integration needs.
 
-A single Go binary orchestrates connectors written in any language via a simple JSON protocol. No cluster, no managed services, no ops overhead—just your logic, unified.
+See [`CONSTITUTION.md`](CONSTITUTION.md) for the alignment target and the five lifecycle pillars every change must serve.
 
 ---
 
@@ -39,7 +39,7 @@ Ductile works by connecting **Connectors** (plugins) via **Pipelines** using an 
 -   **Plugin Aliasing** — Run multiple instances of the same connector (e.g., three different Discord notifications) without duplicating code.
 -   **Resilient Queue** — SQLite-backed, at-least-once delivery. Automatically recovers and retries orphaned jobs after a system crash.
 -   **Optional TUI client** — Under redesign for v1.1 as the standalone `ductile-watch` binary; interim observability is the API and structured logs.
--   **LLM-First Discovery** — Built-in `/skills` registry and auto-generated OpenAPI specs for seamless AI agent operation.
+-   **AI-First Surfaces** — Built-in `/skills` registry, auto-generated OpenAPI, `/topology` plugin graph, `/stopwatch/{plugin}` latency aggregation, and `/system/doctor` + `/system/selfcheck` for HTTP-driven observability. Agents drive the full lifecycle without GUIs.
 -   **Local & Private** — Zero-ops, single-binary architecture. Your data, your keys, your hardware.
 
 ---
@@ -107,8 +107,19 @@ go build -o ductile ./cmd/ductile
 ./ductile system start
 ```
 
+## Skills for AI Operators
+
+Ductile ships skill manifests that give AI agents structured ways to operate it. Drop these into your agent's skills directory (`cp -r skills/<name>/ ~/.claude/skills/<name>/`):
+
+-   [`skills/ductile/`](skills/ductile/) — **Pillar 1: Run.** Operate, configure, deploy.
+-   [`skills/ductile-rca/`](skills/ductile-rca/) — **Pillar 3: RCA.** Root cause analysis from the execution ledger.
+-   [`skills/ductile-plugin-developer/`](skills/ductile-plugin-developer/) — **Pillar 5: Author.** Build plugins to the manifest contract.
+
+Planned: `ductile-doctor` (Pillar 2: Debug), `ductile-plugin-tester` (Pillar 4: Test).
+
 ## Documentation
 
+-   [**Constitution**](CONSTITUTION.md) — Why Ductile exists and the five pillars (read this first).
 -   [**Getting Started**](docs/GETTING_STARTED.md) — From zero to your first pipeline.
 -   [**Cookbook**](docs/COOKBOOK.md) — Real-world recipes (Discord, YouTube, Astro, etc.).
 -   [**10 Idioms of Ductile**](docs/10_IDIOMS_OF_DUCTILE.md) — How to think in Ductile.
@@ -118,7 +129,8 @@ go build -o ductile ./cmd/ductile
 
 ## Contributing
 
--   [**AGENTS.md**](AGENTS.md) — Contributor contract: design lenses, vocabulary, Go quality bar. Read first.
+-   [**CONSTITUTION.md**](CONSTITUTION.md) — Alignment target. Every change should name the pillar it serves.
+-   [**AGENTS.md**](AGENTS.md) — Contributor contract: design lenses, vocabulary, Go quality bar.
 -   [**CONTRIBUTING.md**](CONTRIBUTING.md) — Build, test, and PR mechanics.
 
 ---

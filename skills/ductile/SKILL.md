@@ -19,9 +19,12 @@ description: >
 
 # Ductile — Operator / Admin / Deploy
 
-Ductile is a lightweight YAML-configured integration gateway for personal
-automation. This skill operates it. Plugin authoring lives in
-`ductile-plugin-developer`; incident analysis lives in `ductile-rca`.
+Ductile is an automation runtime AI agents can run, debug, and build for (see
+[`CONSTITUTION.md`](../../CONSTITUTION.md)). This skill is **Pillar 1: Run** —
+operating, configuring, and deploying the gateway. Plugin authoring (Pillar
+5) lives in `ductile-plugin-developer`; incident analysis (Pillar 3) lives in
+`ductile-rca`. Diagnostics (Pillar 2) and plugin testing (Pillar 4) are
+planned skills.
 
 ## Seam: when to also load
 
