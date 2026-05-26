@@ -122,7 +122,7 @@ Planned: `ductile-doctor` (Pillar 2: Debug), `ductile-plugin-tester` (Pillar 4: 
 -   [**Constitution**](CONSTITUTION.md) — Why Ductile exists and the five pillars (read this first).
 -   [**Getting Started**](docs/GETTING_STARTED.md) — From zero to your first pipeline.
 -   [**Cookbook**](docs/COOKBOOK.md) — Real-world recipes (Discord, YouTube, Astro, etc.).
--   [**10 Idioms of Ductile**](docs/10_IDIOMS_OF_DUCTILE.md) — How to think in Ductile.
+-   [**8 Idioms of Ductile**](docs/8_IDIOMS_OF_DUCTILE.md) — How to think in Ductile.
 -   [**Core Architecture**](docs/ARCHITECTURE.md) — The technical deep dive.
 -   [**Database Reference**](docs/DATABASE.md) — Schemas and useful SQL queries.
 -   [**Plugin Development**](docs/PLUGIN_DEVELOPMENT.md) — Build your own connectors.

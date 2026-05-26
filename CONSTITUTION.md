@@ -75,7 +75,7 @@ Agents create new plugins in whatever language the integration needs.
 
 - Subprocess protocol — JSON over stdin/stdout, any executable
 - Manifest contract + `fact_outputs` schema
-- The 10 idioms ([`docs/10_IDIOMS_OF_DUCTILE.md`](docs/10_IDIOMS_OF_DUCTILE.md))
+- The 8 idioms ([`docs/8_IDIOMS_OF_DUCTILE.md`](docs/8_IDIOMS_OF_DUCTILE.md))
 - Skill: [`skills/ductile-plugin-developer/`](skills/ductile-plugin-developer/)
 
 ---
