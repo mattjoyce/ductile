@@ -1,0 +1,4 @@
+## 2024-05-27 - [CRITICAL] SQL Injection in SQLite PRAGMA Statements
+**Vulnerability:** A SQL injection vulnerability existed in `internal/storage/sqlite.go` within the `sqliteColumnExists` function. The table name was being directly interpolated into a `PRAGMA table_info(%s)` string, which is executed directly against the database.
+**Learning:** SQLite's `PRAGMA` statements do not support standard prepared statement parameter binding (`?`). Developers often fall back to string interpolation to parameterize these queries, unintentionally introducing SQL injection if the interpolated string comes from an untrusted source.
+**Prevention:** Use SQLite's built-in table-valued functions (e.g., `pragma_table_info(?)`) which *do* support standard parameter binding, instead of directly executing `PRAGMA` statements. Note that when selecting columns from these functions, reserved keywords like `notnull` must be quoted (e.g., `"notnull"`).
