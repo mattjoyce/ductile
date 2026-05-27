@@ -23,12 +23,28 @@ type StopwatchReader interface {
 // GET /stopwatch/{plugin}. Aggregated by pipeline step_id (the bucket
 // the stopwatch ledger actually uses); the response field name "step"
 // is honest about this rather than pretending the data is per-command.
+//
+// SubsUnavailable is empty when sub-spans were not requested or were
+// returned. When the caller requested ?include_subs=true but the
+// principal scope did not permit exposing plugin-supplied content,
+// SubsUnavailable carries the reason (currently the single value
+// "insufficient_scope") so the caller can tell "no sub-spans were
+// captured" from "you were not allowed to see them".
 type StopwatchResponse struct {
-	Plugin     string               `json:"plugin"`
-	Window     string               `json:"window"`
-	CapturedAt time.Time            `json:"captured_at"`
-	Steps      []StopwatchStepStats `json:"steps"`
+	Plugin          string               `json:"plugin"`
+	Window          string               `json:"window"`
+	CapturedAt      time.Time            `json:"captured_at"`
+	Steps           []StopwatchStepStats `json:"steps"`
+	SubsUnavailable string               `json:"subs_unavailable,omitempty"`
 }
+
+// Reason values for StopwatchResponse.SubsUnavailable. Single value
+// today; named constant so future reasons (e.g. "ledger_capped",
+// "subs_disabled_in_config") can be added without callers special-
+// casing string literals.
+const (
+	SubsUnavailableInsufficientScope = "insufficient_scope"
+)
 
 // StopwatchStepStats holds percentile aggregation for one pipeline
 // step (or for the empty step bucket when the plugin was invoked
@@ -82,12 +98,17 @@ func (s *Server) handleStopwatch(w http.ResponseWriter, r *http.Request) {
 	// HAZARD: subs_json carries plugin-supplied, unvalidated content
 	// (see internal/state/stopwatch.go RecordStopwatch comment). Gate
 	// sub-span exposure behind the result-class scope the same way
-	// canSeeJobResultsFromCtx does for job result payloads. If the
-	// principal lacks the scope, silently downgrade rather than 403 —
-	// the principal can still read the base latency profile.
-	includeSubs := r.URL.Query().Get("include_subs") == "true"
-	if includeSubs && !s.canSeeJobResultsFromCtx(r.Context()) {
+	// canSeeJobResultsFromCtx does for job result payloads. Downgrade
+	// rather than 403 (principal can still read the base latency
+	// profile), but signal the downgrade explicitly via
+	// SubsUnavailable on the response so the caller can distinguish
+	// "no sub-spans captured" from "scope denied".
+	subsRequested := r.URL.Query().Get("include_subs") == "true"
+	includeSubs := subsRequested
+	var subsUnavailable string
+	if subsRequested && !s.canSeeJobResultsFromCtx(r.Context()) {
 		includeSubs = false
+		subsUnavailable = SubsUnavailableInsufficientScope
 	}
 
 	now := time.Now().UTC()
@@ -100,7 +121,9 @@ func (s *Server) handleStopwatch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	respondJSON(w, http.StatusOK, aggregateStopwatch(plugin, windowStr, windowDur, now, since, rows, includeSubs))
+	resp := aggregateStopwatch(plugin, windowStr, windowDur, now, since, rows, includeSubs)
+	resp.SubsUnavailable = subsUnavailable
+	respondJSON(w, http.StatusOK, resp)
 }
 
 // parseStopwatchWindow accepts the small fixed vocabulary the console

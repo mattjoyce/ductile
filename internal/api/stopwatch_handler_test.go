@@ -367,6 +367,12 @@ func TestHandleStopwatch_IncludeSubsScopeGate(t *testing.T) {
 	if len(resp.Steps[0].Subs) != 0 {
 		t.Errorf("subs leaked without jobs:result:ro: %v", resp.Steps[0].Subs)
 	}
+	// Explicit signal: caller asked for subs, was denied. Must be
+	// observable in the response, not silently empty.
+	if resp.SubsUnavailable != SubsUnavailableInsufficientScope {
+		t.Errorf("SubsUnavailable = %q, want %q (downgrade must be explicit)",
+			resp.SubsUnavailable, SubsUnavailableInsufficientScope)
+	}
 
 	// Token with wildcard — sub-spans included.
 	srvFull := setupServerWithStopwatch(t,
@@ -388,5 +394,40 @@ func TestHandleStopwatch_IncludeSubsScopeGate(t *testing.T) {
 	}
 	if len(resp2.Steps) != 1 || len(resp2.Steps[0].Subs) != 1 {
 		t.Errorf("expected one sub with wildcard token; got %v", resp2.Steps)
+	}
+	// Wildcard scope returned subs; no downgrade signal.
+	if resp2.SubsUnavailable != "" {
+		t.Errorf("SubsUnavailable = %q, want empty (subs were returned)", resp2.SubsUnavailable)
+	}
+}
+
+func TestHandleStopwatch_SubsNotRequestedLeavesUnavailableEmpty(t *testing.T) {
+	t.Parallel()
+	// When include_subs is NOT requested, SubsUnavailable must stay
+	// empty even for callers without jobs:result:ro — absence of
+	// signal must mean "you didn't ask", not "you weren't allowed".
+	reader := &mockStopwatchReader{
+		rowsFunc: func(_ context.Context, _ string, since time.Time) ([]state.StopwatchAggregationRow, error) {
+			return []state.StopwatchAggregationRow{
+				{StepID: "poll", DurNs: 10_000_000, RecordedAt: since.Add(time.Minute)},
+			}, nil
+		},
+	}
+	server := setupServerWithStopwatch(t, reader,
+		[]auth.TokenConfig{{Token: "ro-only", Scopes: []string{"jobs:status:ro"}}},
+	)
+	req := httptest.NewRequest(http.MethodGet, "/stopwatch/p", nil) // no include_subs
+	req.Header.Set("Authorization", "Bearer ro-only")
+	rr := httptest.NewRecorder()
+	server.setupRoutes().ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rr.Code)
+	}
+	var resp StopwatchResponse
+	if err := json.NewDecoder(rr.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if resp.SubsUnavailable != "" {
+		t.Errorf("SubsUnavailable = %q, want empty when caller didn't ask for subs", resp.SubsUnavailable)
 	}
 }
