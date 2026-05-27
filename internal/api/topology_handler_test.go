@@ -2,13 +2,18 @@ package api
 
 import (
 	"encoding/json"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 
+	"github.com/mattjoyce/ductile/internal/auth"
+	"github.com/mattjoyce/ductile/internal/events"
 	"github.com/mattjoyce/ductile/internal/plugin"
+	"github.com/mattjoyce/ductile/internal/queue"
 	"github.com/mattjoyce/ductile/internal/router"
 	"github.com/mattjoyce/ductile/internal/router/dsl"
+	"github.com/mattjoyce/ductile/internal/state"
 )
 
 // topologyFixture builds a registry + router pair that exercises every
@@ -280,6 +285,59 @@ func TestHandleTopology_RequiresAuth(t *testing.T) {
 
 	if rr.Code != http.StatusUnauthorized {
 		t.Fatalf("unauthenticated request: status = %d, want 401; body=%s", rr.Code, rr.Body.String())
+	}
+}
+
+// TestHandleTopology_ScopePosture pins the audit fix: /topology
+// requires system:ro (or its supersets), NOT plugin:catalog:ro.
+// Live-audit observation was that plugin:ro tokens — which imply
+// plugin:catalog:ro via the P2-07 normalize map — could read the
+// full automation graph. Topology is operational metadata that
+// exceeds the catalog-only intent; moved to the same scope as
+// /config/view, /system/doctor, /system/selfcheck.
+func TestHandleTopology_ScopePosture(t *testing.T) {
+	t.Parallel()
+	reg, rtr := topologyFixture()
+
+	type tokenCase struct {
+		name   string
+		scopes []string
+		want   int
+	}
+	cases := []tokenCase{
+		{"system:ro grants access", []string{"system:ro"}, http.StatusOK},
+		{"system:rw grants access", []string{"system:rw"}, http.StatusOK},
+		{"wildcard grants access", []string{"*"}, http.StatusOK},
+		{"plugin:catalog:ro denied (was the bug)", []string{"plugin:catalog:ro"}, http.StatusForbidden},
+		{"plugin:ro denied (implies catalog:ro, was the bug)", []string{"plugin:ro"}, http.StatusForbidden},
+		{"plugin:rw denied (operational scope unrelated)", []string{"plugin:rw"}, http.StatusForbidden},
+		{"jobs:status:ro denied", []string{"jobs:status:ro"}, http.StatusForbidden},
+	}
+	for _, c := range cases {
+		c := c
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			db := setupTestDB(t)
+			q := queue.New(db)
+			cs := state.NewContextStore(db)
+			hub := events.NewHub(10)
+			cfg := Config{
+				Listen: "localhost:8080",
+				Tokens: []auth.TokenConfig{{Token: "tok", Scopes: c.scopes}},
+			}
+			server := New(cfg, q, reg, rtr, &mockWaiter{}, cs,
+				state.NewAdmitter(q, state.DefaultMaxContextBytes), nil, hub, slog.Default())
+
+			req := httptest.NewRequest(http.MethodGet, "/topology", nil)
+			req.Header.Set("Authorization", "Bearer tok")
+			rr := httptest.NewRecorder()
+			server.setupRoutes().ServeHTTP(rr, req)
+
+			if rr.Code != c.want {
+				t.Errorf("scopes=%v: status = %d, want %d; body=%s",
+					c.scopes, rr.Code, c.want, rr.Body.String())
+			}
+		})
 	}
 }
 

@@ -523,6 +523,40 @@ func TestHandleListJobs_InvalidLimit(t *testing.T) {
 	}
 }
 
+// TestHandleListJobs_LimitOverCap pins the audit fix. Before this
+// fix /jobs?limit=100000 returned 200 even against a multi-thousand-
+// row DB, while /job-logs already capped at 200 with 400 over-cap.
+// Asymmetric pagination is a foot-gun. /jobs now matches /job-logs.
+func TestHandleListJobs_LimitOverCap(t *testing.T) {
+	t.Parallel()
+	db := setupTestDB(t)
+	server := setupTestServer(t, db, &mockRegistry{})
+
+	cases := []struct {
+		name  string
+		limit string
+		want  int
+	}{
+		{"at-cap is allowed", "200", http.StatusOK},
+		{"over-cap rejected", "201", http.StatusBadRequest},
+		{"large over-cap rejected", "100000", http.StatusBadRequest},
+	}
+	for _, c := range cases {
+		c := c
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			req := httptest.NewRequest(http.MethodGet, "/jobs?limit="+c.limit, nil)
+			req.Header.Set("Authorization", "Bearer test-key-123")
+			rr := httptest.NewRecorder()
+			server.setupRoutes().ServeHTTP(rr, req)
+			if rr.Code != c.want {
+				t.Errorf("limit=%s: status = %d, want %d; body=%s",
+					c.limit, rr.Code, c.want, rr.Body.String())
+			}
+		})
+	}
+}
+
 func TestHandleListJobs_InvalidStatus(t *testing.T) {
 	t.Parallel()
 	db := setupTestDB(t)

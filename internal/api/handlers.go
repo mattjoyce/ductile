@@ -634,6 +634,17 @@ func (s *Server) handleListJobs(w http.ResponseWriter, r *http.Request) {
 			s.writeError(w, http.StatusBadRequest, "limit must be a positive integer")
 			return
 		}
+		// Symmetric cap with /job-logs (handleListJobLogs below). Live
+		// audit observed /jobs?limit=100000 returning 200 against a
+		// ~17k-row DB, while /job-logs already rejected the same shape
+		// with 400. Asymmetric pagination behavior is a foot-gun on
+		// large stores; rejecting over-cap is preferable to silent
+		// clamping because the caller knows immediately rather than
+		// silently getting fewer rows than they asked for.
+		if limit > 200 {
+			s.writeError(w, http.StatusBadRequest, "limit must be <= 200")
+			return
+		}
 		filter.Limit = limit
 	}
 
