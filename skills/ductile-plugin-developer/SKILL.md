@@ -2,7 +2,7 @@
 name: ductile-plugin-developer
 description: >
   Author ductile plugins and compose pipelines with reverence for the manifest
-  contract, protocol v2, fact_outputs, and the 10 idioms of ductile. Use when the
+  contract, protocol v2, fact_outputs, and the 8 idioms of ductile. Use when the
   user wants to: write a new ductile plugin, modify an existing plugin, design a
   manifest, declare fact_outputs, pick watcher vs poller vs writer vs transformer
   pattern, compose a pipeline DSL, route events, or iterate on plugin behavior
@@ -193,17 +193,31 @@ Reading order for pipeline composition: `docs/PIPELINES.md`,
 `docs/ROUTING_SPEC.md`. The reference cards in this skill's `references/`
 folder hold the daily-driver tables.
 
-## Step 8 — The 10 idioms, applied to authors
+## Step 8 — The 8 idioms, applied to authors
 
-The full list lives in `docs/10_IDIOMS_OF_DUCTILE.md` (numbered canonically).
-The author-relevant ones, with their canonical numbers preserved:
+The full list lives in `docs/8_IDIOMS_OF_DUCTILE.md`. The author-relevant
+ones, in their canonical order:
 
-- **Idiom 1** — *If it can be queued, it should be queued.* Don't invent a side channel.
-- **Idiom 2** — *Workflow logic belongs in the plugin.* But not orchestration; that's the pipeline (Idiom 5).
-- **Idiom 4** — *Events are the contract; payloads are the currency.* Stabilize event names early; rename = breaking change.
-- **Idiom 6** — *Composable over configurable.* Two small plugins beat one option-heavy plugin. This is "simple is the goal, not easy" made concrete.
-- **Idiom 8** — *Idempotent by design.* Every command safe to retry without side effects. Your contract with the queue.
-- **Idiom 10** — *Observability is a feature.* Emit `logs[]` generously. Future-you and `ductile-rca` will thank you.
+- **Idiom 1** — *Every unit of work is a queued job.* Don't invent a side
+  channel. Your plugin's output routes through the queue like any other.
+- **Idiom 3** — *Core owns orchestration; plugins own side-effects.* Don't
+  branch on payload inside your plugin to decide what runs next. That's
+  what pipeline `if:` is for. Your plugin does the domain work and emits
+  facts.
+- **Idiom 4** — *Events are the contract; payloads are the currency.*
+  Stabilize event names early; rename = breaking change. Document the
+  payload shape via `fact_outputs`.
+- **Idiom 5** — *Value, state, and identity are kept separate.* What your
+  plugin observes is an append-only fact (a value). The "latest" is a
+  derived view. Don't update in place.
+- **Idiom 6** — *Idempotent by design.* Your contract with the queue.
+  Every command safe to retry without side effects. Use `dedupe_key` if
+  you need uniqueness.
+- **Idiom 7** — *Composable over configurable.* Two small plugins beat
+  one option-heavy plugin. "Simple is the goal, not easy" made concrete.
+- **Idiom 8** — *Every surface is agent-drivable.* Emit `logs[]`
+  generously, write a readable manifest, declare `fact_outputs` shape.
+  Future-you and `ductile-rca` will thank you.
 
 ## Step 9 — Sanitization gate (pre-commit)
 
@@ -240,5 +254,5 @@ If symptoms appear after lock+reload, hand off to `ductile-rca`.
 - `references/api.md` — REST endpoints relevant to manual plugin invocation
 - `references/pipelines.md` — pipeline DSL cheat sheet
 - In-repo: `docs/PLUGIN_DEVELOPMENT.md`, `docs/PLUGIN_FACTS.md`,
-  `docs/PIPELINES.md`, `docs/ROUTING_SPEC.md`, `docs/10_IDIOMS_OF_DUCTILE.md`,
+  `docs/PIPELINES.md`, `docs/ROUTING_SPEC.md`, `docs/8_IDIOMS_OF_DUCTILE.md`,
   `AGENTS.md` (contributor contract; already half-Hickey)
