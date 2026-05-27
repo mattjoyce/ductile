@@ -118,6 +118,11 @@ To maintain fault isolation, transactional durability, and predictable recovery,
 5.  **Event Hub**: An observational sidecar providing real-time pub/sub streams of telemetry events for external diagnostic clients.
 6.  **State Store**: Backed by SQLite, maintains both the append-only `plugin_facts` observed history and the auto-derived `plugin_state` compatibility cache views.
 
+> [!NOTE]
+> **Remote Event Relay Boundaries**: Remote Event Relay is purposefully omitted from the high-level overview diagram to keep boundaries clear and prevent cluttering core architecture with feature-level extensions. Both inbound and outbound relays leverage existing primitives:
+> - **Inbound Relay** is a specialized HTTP API route mounted directly on the **API Server** (`/ingest/peer`).
+> - **Outbound Relay** executes as an on-demand pipeline step (`relay:` or `uses: core.relay`) dispatched by a standard **Dispatcher** worker via an outbound HTTP client.
+
 ### 2.4 Governance Hybrid (The "Control Plane")
 
 Ductile employs a "Governance Hybrid" model to manage state across
