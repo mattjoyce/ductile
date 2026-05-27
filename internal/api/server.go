@@ -236,12 +236,16 @@ func (s *Server) setupRoutes() *chi.Mux {
 		// plugin:rw) so existing tokens continue to discover plugins.
 		r.With(s.requireScopes("plugin:invoke:ro", "plugin:rw", "*")).Post("/plugin/{plugin}/{command}", s.handlePluginTrigger)
 		r.With(s.requireScopes("plugin:catalog:ro", "plugin:rw", "*")).Get("/plugin/{plugin}", s.handleGetPlugin)
-		// Topology aggregates plugin Command.Emit declarations with compiled
-		// router routes into a graph shape. Reuses the catalog scope rather
-		// than introducing a new topology:ro scope (mid-flight scope
-		// proliferation is its own debt); can split later if operators want
-		// to grant topology visibility independently of plugin catalog.
-		r.With(s.requireScopes("plugin:catalog:ro", "plugin:rw", "*")).Get("/topology", s.handleTopology)
+		// Topology surfaces operational metadata about how plugins are
+		// wired together via the compiled router routes — strictly more
+		// than plugin catalog metadata (a single plugin's manifest in
+		// isolation). Gated on system:ro alongside /config/view,
+		// /system/doctor, /system/selfcheck. Originally shipped under
+		// plugin:catalog:ro which plugin:ro implies via the P2-07
+		// normalize map; live audit caught that this gave plugin:ro
+		// tokens visibility into the full automation graph including
+		// pipeline edges, which exceeds the catalog-only intent.
+		r.With(s.requireScopes("system:ro", "system:rw", "*")).Get("/topology", s.handleTopology)
 		r.With(s.requireScopes("plugin:rw", "*")).Post("/pipeline/{pipeline}", s.handlePipelineTrigger)
 		// D1: each endpoint accepts its narrower scope as well as the back-compat
 		// super-scopes (jobs:ro / jobs:rw / wildcard). jobs:ro implies all
