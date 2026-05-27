@@ -13,7 +13,7 @@ See [`CONSTITUTION.md`](CONSTITUTION.md) for the alignment target and the five l
 
 ## Grokking Ductile in 30 Seconds
 
-Ductile works by connecting **Connectors** (plugins) via **Pipelines** using an internal **Event Bus**.
+Ductile works by connecting **Connectors** (plugins) via **Pipelines** orchestrated by a durable, queue-backed **Event Router**.
 
 ```text
 [ Trigger ] --(event)--> [ Pipeline ] --(step 1)--> [ Connector A ]
