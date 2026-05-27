@@ -28,11 +28,19 @@ See the [Constitution](https://github.com/mattjoyce/ductile/blob/main/CONSTITUTI
 
 Ductile ships skill manifests that give agents structured ways to operate it. Drop these into your agent's skills directory (`cp -r skills/<name>/ ~/.claude/skills/<name>/`):
 
+### Pillar skills
+
 - [`skills/ductile/`](https://github.com/mattjoyce/ductile/tree/main/skills/ductile) — **Pillar 1: Run.** Operate, configure, deploy.
 - [`skills/ductile-rca/`](https://github.com/mattjoyce/ductile/tree/main/skills/ductile-rca) — **Pillar 3: RCA.** Root cause analysis from the execution ledger.
 - [`skills/ductile-plugin-developer/`](https://github.com/mattjoyce/ductile/tree/main/skills/ductile-plugin-developer) — **Pillar 5: Author.** Build plugins to the manifest contract.
 
 Planned: `ductile-doctor` (Pillar 2: Debug), `ductile-plugin-tester` (Pillar 4: Test).
+
+### Discipline skills
+
+Skills that don't run Ductile — they keep it honest.
+
+- [`skills/surface-contract/`](https://github.com/mattjoyce/ductile/tree/main/skills/surface-contract) — **Doc/code seam audit.** Ousterhout × Liskov surface/contract discipline applied to the boundary between what the docs claim and what the code does. Run this when docs drift from reality, after a refactor that changes a public-facing API, or before a release. **The code is the reality; the docs are the contract** — this skill is how you keep them aligned.
 
 ## Planned agentic affordances
 
