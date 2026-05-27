@@ -29,6 +29,10 @@
       "type": "array",
       "items": { "type": "string", "minLength": 1 }
     },
+    "tcc_paths": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
     "plugins": {
       "type": "object",
       "additionalProperties": {

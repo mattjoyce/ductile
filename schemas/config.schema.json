@@ -32,6 +32,11 @@
       "items": { "type": "string", "minLength": 1 },
       "minItems": 1
     },
+    "tcc_paths": {
+      "type": "array",
+      "description": "macOS-only: List of absolute paths to stat() on cold start to surface TCC popups synchronously.",
+      "items": { "type": "string" }
+    },
     "plugins": {
       "type": "object",
       "description": "Per-plugin configuration keyed by plugin name.",
@@ -109,6 +114,30 @@
           "pattern": "^[0-9]+(ns|us|µs|ms|s|m|h)+$",
           "default": "720h"
         },
+        "job_queue_retention": {
+          "type": "string",
+          "description": "How long to retain jobs in the work queue database (Go duration).",
+          "pattern": "^[0-9]+(ns|us|µs|ms|s|m|h)+$",
+          "default": "24h"
+        },
+        "job_transitions_retention": {
+          "type": "string",
+          "description": "How long to retain historical job state transitions (Go duration).",
+          "pattern": "^[0-9]+(ns|us|µs|ms|s|m|h)+$",
+          "default": "720h"
+        },
+        "job_attempts_retention": {
+          "type": "string",
+          "description": "How long to retain job execution attempt logs (Go duration).",
+          "pattern": "^[0-9]+(ns|us|µs|ms|s|m|h)+$",
+          "default": "720h"
+        },
+        "breaker_transitions_retention": {
+          "type": "string",
+          "description": "How long to retain circuit breaker state change records (Go duration).",
+          "pattern": "^[0-9]+(ns|us|µs|ms|s|m|h)+$",
+          "default": "2160h"
+        },
         "max_workers": {
           "type": "integer",
           "description": "Maximum number of concurrent job workers across all plugins.",
@@ -173,6 +202,11 @@
           "type": "string",
           "description": "Maximum timeout for synchronous pipeline execution (Go duration).",
           "pattern": "^[0-9]+(ns|us|µs|ms|s|m|h)+$"
+        },
+        "allowed_origins": {
+          "type": "array",
+          "description": "Origins permitted to receive credentialed CORS headers. Empty disables CORS credentials.",
+          "items": { "type": "string" }
         }
       },
       "additionalProperties": false
