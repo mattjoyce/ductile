@@ -51,9 +51,14 @@ USER ductile
 # Expose API port
 EXPOSE 8080
 
-# Health check
+# Health check — hit the real liveness endpoint rather than test for
+# a pid file at /app/ductile.pid. The container did not write that
+# pid file in this mode, so the file-existence check always failed
+# and Docker reported the container unhealthy even when the gateway
+# was serving requests. /healthz is the gateway's actual liveness
+# signal and curl is already installed for runtime use above.
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
-  CMD [ -f /app/ductile.pid ] || exit 1
+  CMD curl -fsS http://localhost:8080/healthz || exit 1
 
 # Default command
 CMD ["./ductile", "system", "start"]
