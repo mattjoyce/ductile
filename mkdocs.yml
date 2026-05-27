@@ -122,6 +122,7 @@ nav:
 
   - For Agents:
       - Overview: for-agents/index.md
+      - Operator Handbook: for-agents/operator-handbook.md
 
   - Logs:
       - Reload RCA: reload_rca.md

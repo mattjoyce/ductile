@@ -10,6 +10,8 @@ Ductile is designed to be **operated**, not just used. If you are an AI agent �
 
 The human role is to state goals and audit results. The agent does the wiring.
 
+If you cannot load the skill manifests directly (different client, restricted environment, just exploring), the [**Operator Handbook**](operator-handbook.md) on this site mirrors the substance of `skills/ductile/` as a single agent-fetchable page.
+
 ## Why this works
 
 The five lifecycle pillars — **Run, Debug, RCA, Test, Author** — are each backed by structured affordances that an LLM can drive without reading source code:
