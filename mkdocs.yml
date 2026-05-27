@@ -1,0 +1,129 @@
+site_name: Ductile
+site_description: An automation runtime designed to be operated by AI agents.
+site_url: https://ductile.run/
+site_author: Matt Joyce
+repo_name: mattjoyce/ductile
+repo_url: https://github.com/mattjoyce/ductile
+edit_uri: edit/main/docs/
+copyright: Copyright &copy; 2026 Matt Joyce — Apache 2.0
+
+theme:
+  name: material
+  language: en
+  features:
+    - navigation.tabs
+    - navigation.tabs.sticky
+    - navigation.sections
+    - navigation.expand
+    - navigation.indexes
+    - navigation.top
+    - navigation.footer
+    - search.suggest
+    - search.highlight
+    - content.code.copy
+    - content.code.annotate
+    - content.action.edit
+    - toc.follow
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+  icon:
+    repo: fontawesome/brands/github
+    edit: material/pencil
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - def_list
+  - footnotes
+  - md_in_html
+  - tables
+  - toc:
+      permalink: true
+      toc_depth: 3
+  - pymdownx.details
+  - pymdownx.highlight:
+      anchor_linenums: true
+      line_spans: __span
+      pygments_lang_class: true
+  - pymdownx.inlinehilite
+  - pymdownx.snippets
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.tasklist:
+      custom_checkbox: true
+  - pymdownx.emoji:
+      emoji_index: !!python/name:material.extensions.emoji.twemoji
+      emoji_generator: !!python/name:material.extensions.emoji.to_svg
+
+plugins:
+  - search
+
+extra:
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/mattjoyce/ductile
+
+nav:
+  - Home: index.md
+
+  - Introduction:
+      - Getting Started: GETTING_STARTED.md
+      - 8 Idioms of Ductile: 8_IDIOMS_OF_DUCTILE.md
+      - Glossary: GLOSSARY.md
+      - Audiences: AUDIENCES.md
+
+  - Concepts:
+      - Architecture: ARCHITECTURE.md
+      - Pipelines: PIPELINES.md
+      - Routing: ROUTING_SPEC.md
+      - Scheduler: SCHEDULER.md
+      - Plugin Facts: PLUGIN_FACTS.md
+
+  - Building:
+      - Cookbook: COOKBOOK.md
+      - Plugin Development: PLUGIN_DEVELOPMENT.md
+      - Webhooks: WEBHOOKS.md
+      - YAML Tips: YAML_TIPS.md
+
+  - Operating:
+      - Deployment: DEPLOYMENT.md
+      - macOS Installation: MACOS_INSTALLATION.md
+      - Operator Guide: OPERATOR_GUIDE.md
+      - Health Check: HEALTH_CHECK.md
+      - Plugin Diagnostics: PLUGIN_DIAGNOSTICS.md
+      - Remote Event Relay: REMOTE_EVENT_RELAY.md
+
+  - Reference:
+      - Config: CONFIG_REFERENCE.md
+      - API: API_REFERENCE.md
+      - CLI Design: CLI_DESIGN_PRINCIPLES.md
+      - Database: DATABASE.md
+      - Testing: TESTING.md
+      - Versioning: VERSIONING.md
+      - Skills Schema: DUCTILE_SKILLS_SCHEMA_V1.md
+
+  - For Agents:
+      - Overview: for-agents/index.md
+      - Operator Handbook: for-agents/operator-handbook.md
+
+  - Logs:
+      - Reload RCA: reload_rca.md
+      - SQL Tightening: SQL_TIGHTENING_LOG.md
