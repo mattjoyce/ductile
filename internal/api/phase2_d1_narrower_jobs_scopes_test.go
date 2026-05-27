@@ -33,15 +33,16 @@ func setupTestServerForJobScopes(t *testing.T, tokens []auth.TokenConfig) (strin
 			Listen: "localhost:0",
 			Tokens: tokens,
 		},
-		q,
-		reg,
-		&mockRouter{},
-		&mockWaiter{},
-		cs,
-		state.NewAdmitter(q, state.DefaultMaxContextBytes),
-		nil,
-		hub,
-		slog.Default(),
+		Deps{
+			Queue:        q,
+			Registry:     reg,
+			Router:       &mockRouter{},
+			Waiter:       &mockWaiter{},
+			ContextStore: cs,
+			Admitter:     state.NewAdmitter(q, state.DefaultMaxContextBytes),
+			Hub:          hub,
+			Logger:       slog.Default(),
+		},
 	)
 
 	ctx := context.Background()

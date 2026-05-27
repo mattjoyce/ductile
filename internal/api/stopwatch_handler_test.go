@@ -45,8 +45,17 @@ func setupServerWithStopwatch(t *testing.T, sw StopwatchReader, tokens []auth.To
 		Listen: "localhost:8080",
 		Tokens: tokens,
 	}
-	return New(cfg, q, &mockRegistry{}, &mockRouter{}, &mockWaiter{}, cs,
-		state.NewAdmitter(q, state.DefaultMaxContextBytes), sw, hub, slog.Default())
+	return New(cfg, Deps{
+		Queue:        q,
+		Registry:     &mockRegistry{},
+		Router:       &mockRouter{},
+		Waiter:       &mockWaiter{},
+		ContextStore: cs,
+		Admitter:     state.NewAdmitter(q, state.DefaultMaxContextBytes),
+		Stopwatch:    sw,
+		Hub:          hub,
+		Logger:       slog.Default(),
+	})
 }
 
 func TestPercentileNs(t *testing.T) {

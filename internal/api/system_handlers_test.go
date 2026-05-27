@@ -32,8 +32,16 @@ func setupServerWithSystemFuncs(t *testing.T, doctorFn DoctorFunc, selfcheckFn S
 		DoctorFunc:    doctorFn,
 		SelfcheckFunc: selfcheckFn,
 	}
-	return New(cfg, q, &mockRegistry{}, &mockRouter{}, &mockWaiter{}, cs,
-		state.NewAdmitter(q, state.DefaultMaxContextBytes), nil, hub, slog.Default())
+	return New(cfg, Deps{
+		Queue:        q,
+		Registry:     &mockRegistry{},
+		Router:       &mockRouter{},
+		Waiter:       &mockWaiter{},
+		ContextStore: cs,
+		Admitter:     state.NewAdmitter(q, state.DefaultMaxContextBytes),
+		Hub:          hub,
+		Logger:       slog.Default(),
+	})
 }
 
 func TestDoctorResultToReport(t *testing.T) {

@@ -609,7 +609,17 @@ func buildRuntime(cfg *config.Config, configPath string, configSource string, re
 			RelayReceiver:  relayReceiver,
 			AllowedOrigins: cfg.API.AllowedOrigins,
 		}
-		apiServer := api.New(apiConfig, q, registry, routerEngine, disp, contextStore, admitter, st, hub, log.WithComponent("api"))
+		apiServer := api.New(apiConfig, api.Deps{
+			Queue:        q,
+			Registry:     registry,
+			Router:       routerEngine,
+			Waiter:       disp,
+			ContextStore: contextStore,
+			Admitter:     admitter,
+			Stopwatch:    st,
+			Hub:          hub,
+			Logger:       log.WithComponent("api"),
+		})
 		rt.apiServer = apiServer
 		rt.wg.Add(1)
 		go func() {

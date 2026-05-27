@@ -114,36 +114,44 @@ type Server struct {
 	relayReceiver *relay.Receiver
 }
 
-// New creates a new API server instance. admitter decides whether ingress
-// requests are admitted before durable event_context creation; production
-// runtime supplies state.NewAdmitter(queue, state.DefaultMaxContextBytes).
-// A nil admitter disables the admission check (size cap then surfaces via the
-// existing inner ContextStore.Create defensive check, as a 500).
-// New creates a new API server instance. admitter decides whether ingress
-// requests are admitted before durable event_context creation; production
-// runtime supplies state.NewAdmitter(queue, state.DefaultMaxContextBytes).
-// A nil admitter disables the admission check (size cap then surfaces via the
-// existing inner ContextStore.Create defensive check, as a 500).
+// Deps groups the runtime dependencies the API server needs. Splitting
+// them out of New's positional argument list lets future endpoints add a
+// dependency without changing the constructor signature, and lets call
+// sites name what they're passing.
 //
-// stopwatch backs the /stopwatch/{plugin} endpoint. A nil stopwatch leaves
-// the endpoint registered but responding 503 — callers that don't care about
-// latency observability (tests, lightweight harnesses) can pass nil.
-func New(config Config, queue JobQueuer, registry PluginRegistry, router PipelineRouter, waiter TreeWaiter, contextStore EventContextStore, admitter AdmissionGate, stopwatch StopwatchReader, hub *events.Hub, logger *slog.Logger) *Server {
+// Required: Queue, Registry, Router, Waiter, ContextStore, Hub, Logger.
+// Optional: Admitter (nil disables admission gating — size cap then
+// surfaces via the inner ContextStore.Create defensive check as 500),
+// Stopwatch (nil leaves /stopwatch/{plugin} returning 503).
+type Deps struct {
+	Queue        JobQueuer
+	Registry     PluginRegistry
+	Router       PipelineRouter
+	Waiter       TreeWaiter
+	ContextStore EventContextStore
+	Admitter     AdmissionGate
+	Stopwatch    StopwatchReader
+	Hub          *events.Hub
+	Logger       *slog.Logger
+}
+
+// New creates a new API server instance.
+func New(config Config, deps Deps) *Server {
 	if config.MaxConcurrentSync <= 0 {
 		config.MaxConcurrentSync = 10
 	}
 	return &Server{
 		config:        config,
-		queue:         queue,
-		registry:      registry,
-		router:        router,
-		waiter:        waiter,
-		contextStore:  contextStore,
-		admitter:      admitter,
-		stopwatch:     stopwatch,
-		logger:        logger,
+		queue:         deps.Queue,
+		registry:      deps.Registry,
+		router:        deps.Router,
+		waiter:        deps.Waiter,
+		contextStore:  deps.ContextStore,
+		admitter:      deps.Admitter,
+		stopwatch:     deps.Stopwatch,
+		logger:        deps.Logger,
 		startedAt:     time.Now(),
-		events:        hub,
+		events:        deps.Hub,
 		syncSemaphore: make(chan struct{}, config.MaxConcurrentSync),
 		reloadFunc:    config.ReloadFunc,
 		serveDone:     make(chan struct{}),

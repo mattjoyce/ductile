@@ -251,7 +251,7 @@ func TestPhase2ConfigViewDoesNotLeakPipelineOrScheduleSecrets(t *testing.T) {
 	server := New(Config{
 		RuntimeConfig: cfg,
 		Tokens:        []auth.TokenConfig{{Token: "system-read-token", Scopes: []string{"system:ro"}}},
-	}, nil, nil, nil, nil, nil, nil, nil, nil, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	}, Deps{Logger: slog.New(slog.NewTextHandler(io.Discard, nil))})
 	req := httptest.NewRequest(http.MethodGet, "/config/view", nil)
 	req.Header.Set("Authorization", "Bearer system-read-token")
 	rec := httptest.NewRecorder()
