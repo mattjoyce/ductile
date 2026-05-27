@@ -1,6 +1,6 @@
 # echo
 
-Demonstration plugin for protocol v2. Emits logs/state updates and is useful for smoke tests.
+Demonstration plugin. Emits logs/state updates and is useful for smoke tests.
 
 ## Commands
 - `poll` (write): Update state and emit logs.

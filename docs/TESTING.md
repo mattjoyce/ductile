@@ -256,7 +256,7 @@ Should verify:
 
 #### `hook-route-compilation`
 Goal:
-- validate Sprint 5 hook runtime behavior against a real running service
+- validate hook runtime behavior against a real running service
 
 Should verify:
 - a root job with `notify_on_complete: true` fires a hook pipeline
@@ -267,7 +267,7 @@ Should verify:
 
 #### `sync-terminal-route`
 Goal:
-- validate Sprint 5 synchronous API result selection against compiled terminal routes
+- validate synchronous API result selection against compiled terminal routes
 
 Should verify:
 - a synchronous pipeline returns `200 OK`
@@ -278,7 +278,7 @@ Should verify:
 
 #### `conditional-with-route`
 Goal:
-- validate Sprint 6 compiled `if:` routing and `with:` remapping against a real running service
+- validate compiled `if:` routing and `with:` remapping against a real running service
 
 Should verify:
 - a compiled `if:` step becomes a real `core.switch` hop at runtime
@@ -289,7 +289,7 @@ Should verify:
 
 #### `from-plugin-scoping`
 Goal:
-- validate Sprint 17 `from_plugin:` selector against a real running service
+- validate the `from_plugin:` selector against a real running service
 
 Should verify:
 - a hook pipeline with `from_plugin:` matches only when the upstream
@@ -303,7 +303,7 @@ Should verify:
 
 #### `context-aware-trigger-if`
 Goal:
-- validate Sprint 17 pipeline-level `if:` evaluating against the upstream
+- validate pipeline-level `if:` evaluating against the upstream
   job's accumulated durable context
 
 Should verify:

@@ -39,7 +39,7 @@ is real and worth keeping in mind.
 ## Out of scope
 
 - How to write a plugin (→ `ductile-plugin-developer`)
-- Plugin manifest / protocol v2 contract (→ `ductile-plugin-developer`)
+- Plugin manifest / protocol contract (→ `ductile-plugin-developer`)
 - Pipeline DSL **authoring** (inspection lives here; composition is plugin-dev)
 - Hypothesis design for a failing job (→ `ductile-rca`)
 

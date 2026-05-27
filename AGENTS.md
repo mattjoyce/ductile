@@ -75,7 +75,7 @@ preferences; they are how we keep Ductile small enough to reason about.
 
 2. **Plugin Lifecycle: Spawn-Per-Command.** No long-lived plugin processes.
    Fork entrypoint → write JSON to stdin → read JSON from stdout → kill
-   process. Protocol v2 carries `context` (baggage). The core does not
+   process. The wire protocol carries `context` (baggage). The core does not
    provision or pass `workspace_dir`; plugins own any filesystem scratch or
    cache paths they require. Timeouts: SIGTERM → 5s grace → SIGKILL.
 

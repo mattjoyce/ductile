@@ -170,10 +170,9 @@ Relative paths (like `./data/state.db`) are resolved against the directory conta
 `dedupe_ttl` uses recent terminal rows in `job_queue`, so `job_queue_retention`
 must be at least as long as `dedupe_ttl`. The defaults are both 24h.
 
-> **Note:** As of Sprint 18 the core no longer provisions per-job
-> filesystem workspaces; the `workspace:` config section has been
-> removed. Plugins that need a scratch path manage it themselves — see
-> `docs/PLUGIN_DEVELOPMENT.md` §9.
+> **Note:** the core does not provision per-job filesystem workspaces;
+> the `workspace:` config section has been removed. Plugins that need a
+> scratch path manage it themselves — see `docs/PLUGIN_DEVELOPMENT.md` §9.
 
 `plugin_roots` is the multi-root setting.
 

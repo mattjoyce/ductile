@@ -100,9 +100,9 @@ This allows an LLM to "find any first class entity node that matches" without pa
 
 | Intent | Command | Status |
 | :--- | :--- | :--- |
-| **Verify Integrity** | `config check` | *Planned (Sprint 5)* |
+| **Verify Integrity** | `config check` | *Implemented* |
 | **Authorize Changes** | `config lock` | *Rename from hash-update* |
-| **Get Value** | `config get <path>` | *Planned (Sprint 5)* |
+| **Get Value** | `config get <path>` | *Implemented* |
 | **Inspect Lineage** | `job inspect <id>` | *Implemented* |
 | **Run Plugin** | `plugin run <name>` | *Refactor from run* |
 | **System Status** | `system status` | *Refactor from status* |

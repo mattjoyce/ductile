@@ -83,7 +83,7 @@ Ductile avoids if/else logic. Plugins decide by emitting different event types:
 3. **Webhook** — Inbound HTTP endpoint triggers plugin `handle` command
 4. **Internal routing** — Plugin emits event → gateway routes to next plugin/pipeline
 
-## Plugin Protocol v2 (Current)
+## Plugin Protocol
 
 Plugins receive via stdin:
 ```json

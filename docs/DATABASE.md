@@ -70,7 +70,7 @@ their durable command.
 
 ### 5. `plugin_state`
 Compatibility/cache view of the latest fact, one row per plugin. Existing
-readers and protocol-v2 plugins still on direct write-through see the same
+readers and legacy plugins still on direct write-through see the same
 shape they always have. The view is rebuilt automatically by core when a new
 fact lands, governed by the manifest's `compatibility_view` (currently
 `mirror_object`).

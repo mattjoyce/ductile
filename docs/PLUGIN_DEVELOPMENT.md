@@ -37,7 +37,7 @@ through the request envelope's `state` field on the next invocation.
 
 ---
 
-## 2. Protocol v2
+## 2. The plugin protocol
 
 ### 2.1 Request Envelope (Core → Plugin)
 
@@ -60,7 +60,7 @@ through the request envelope's `state` field on the next invocation.
 | `job_id` | Ductile-assigned unique id for this invocation. Useful in logs and downstream events. |
 | `command` | The command the plugin is being asked to run. Always one of `poll`, `handle`, `health`, `init` (plus any plugin-declared command name). |
 | `config` | The static plugin config from the operator's YAML, with `${ENV}` interpolated. Read-only. |
-| `state` | The plugin's current compatibility-view row — i.e. the latest fact's snapshot for plugins that declare `fact_outputs`, or the protocol-v2 write-through `plugin_state` row for plugins that have not yet migrated. Treat it as *"what I knew last time."* |
+| `state` | The plugin's current compatibility-view row — i.e. the latest fact's snapshot for plugins that declare `fact_outputs`, or the direct-write `plugin_state` row for plugins that have not yet migrated. Treat it as *"what I knew last time."* |
 | `context` | Shared baggage carried across the pipeline chain. Operator-declared, immutable in the receiving plugin. |
 | `event` | Present only for `handle`. The triggering event envelope from upstream. |
 | `deadline_at` | Informational ISO8601 timestamp. Plugins may abandon long work early; core enforces the real deadline externally. |
@@ -84,7 +84,7 @@ through the request envelope's `state` field on the next invocation.
 | `status` | `ok` for success, `error` for any failure. |
 | `result` | **Required when `status=ok`.** Short human-readable summary of what happened. Surfaces in `ductile job inspect`, the watch UI, and as the result for synchronous pipelines. |
 | `error` | **Required when `status=error`.** Human-readable diagnostic. |
-| `retry` | Protocol-v2 compatibility signal. Defaults `true` if omitted. Set `false` only when retrying the same request cannot succeed (configuration error, permanent input invalid). Core owns the final retry decision; this is a *fact about the failure*, not a policy instruction. |
+| `retry` | Response-envelope compatibility signal. Defaults `true` if omitted. Set `false` only when retrying the same request cannot succeed (configuration error, permanent input invalid). Core owns the final retry decision; this is a *fact about the failure*, not a policy instruction. |
 | `events` | Array of `{type, payload, dedupe_key?}` envelopes that drive downstream pipeline routing. |
 | `state_updates` | The plugin's emitted **snapshot** for this invocation. When the manifest declares a matching `fact_outputs` rule, core records this snapshot append-only as a `plugin_facts` row and rebuilds the compatibility view (`plugin_state`) from it. See §3.4. |
 | `logs` | Array of `{level, message}`. Stored with the job record. |
@@ -103,7 +103,7 @@ A correct snapshot:
 - Has a clear cache-view story: a downstream reader of the latest snapshot
   understands what the plugin knows.
 
-An incorrect snapshot (Sprint 13 anti-patterns — see §6):
+An incorrect snapshot (anti-patterns — see §6):
 
 - A counter that increments each invocation (`executions_count`).
 - A timestamp that updates whether or not anything was observed (`last_run`).
@@ -382,8 +382,8 @@ because both observe durable state).
 
 Currently must be the literal string `state_updates`. The fact is sourced
 from the plugin's emitted snapshot. Future protocol versions may add other
-sources (e.g. a structured `facts` field in protocol v3); they will be
-accretive additions, not breaking changes.
+sources (e.g. a structured `facts` field); they will be accretive additions,
+not breaking changes.
 
 #### `fact_type` (required)
 
@@ -396,8 +396,8 @@ distinct kinds of observation that downstream readers should differentiate.
 
 How `plugin_state` is rebuilt from the latest fact. Currently the only
 supported value is `mirror_object`: replace `plugin_state.state` wholesale
-with the latest fact's `fact_json`. This is exactly what protocol-v2
-readers expect, so the migration is transparent.
+with the latest fact's `fact_json`. This is exactly what legacy readers
+expect, so the migration is transparent.
 
 Future view policies (e.g. a reducer that folds multiple facts) would be
 added as new enum values; today, `mirror_object` is the right answer.
@@ -421,7 +421,7 @@ added as new enum values; today, `mirror_object` is the right answer.
 ```
 
 The plugin author writes only the snapshot. Core does the rest. The
-compatibility view exists so protocol-v2 readers (the request envelope's
+compatibility view exists so legacy readers (the request envelope's
 `state` field, operator inspection, schedules that read prior state) keep
 working without change.
 
@@ -688,7 +688,7 @@ sweeping any historical residue.
 
 ## 6. What Does Not Belong In `state_updates`
 
-These were the explicit non-candidates from the Sprint 13 plugin audit.
+These are the explicit non-candidates for `state_updates` / `fact_outputs`.
 None of them should live in `state_updates` or in a `fact_outputs` rule.
 They belong in `job_log` (which captures all of them automatically) or
 nowhere at all.

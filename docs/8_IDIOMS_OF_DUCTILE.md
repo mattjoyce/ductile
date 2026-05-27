@@ -47,7 +47,7 @@ breaks one job; the supervisor stays up.
 
 **How it shows up.** `internal/dispatch/dispatcher.go` calls
 `spawnPlugin` with a fresh subprocess per invocation. Timeouts are
-SIGTERM → 5s grace → SIGKILL. The protocol v2 envelope is the entire
+SIGTERM → 5s grace → SIGKILL. The wire protocol envelope is the entire
 contract between core and plugin.
 
 ### 3. Core owns orchestration; plugins own side-effects.
@@ -64,8 +64,8 @@ without reading source in three languages. Side-effects are necessarily
 messy and plugin-local; orchestration is necessarily structural and
 shared.
 
-**How it shows up.** Sprint 6 compiled authored `if:` predicates into an
-internal `core.switch` hop in the dispatcher. Plugin code does not branch
+**How it shows up.** Authored `if:` predicates compile into an internal
+`core.switch` hop in the dispatcher. Plugin code does not branch
 on payload to decide downstream routing; that decision is in YAML. The
 legacy `plugins/switch/` reference plugin remains for compatibility but
 its own manifest names it "Legacy payload classifier. Prefer pipeline

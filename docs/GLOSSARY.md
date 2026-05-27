@@ -77,7 +77,7 @@ of what a plugin remembers across runs. See [PLUGIN_FACTS.md](./PLUGIN_FACTS.md)
 ## Plugin State (Compatibility View)
 
 A single JSON row per plugin maintained as the compatibility/cache view of
-the latest fact. Existing readers (and protocol-v2 plugins that have not yet
+the latest fact. Existing readers (and legacy plugins that have not yet
 declared `fact_outputs`) see the same shape they always have. The view is
 rebuilt automatically by core when a new fact lands. New plugins should
 declare `fact_outputs` rather than treating this row as the place where
@@ -118,8 +118,8 @@ A machine-readable description of a capability (either an atomic plugin command 
 ## Workspace (historical)
 
 Formerly: a per-job, hard-link-cloned directory the core provisioned
-for each plugin invocation. Removed in Sprint 18; the core no longer
-touches the filesystem on a job's behalf. Plugins that need a scratch
+for each plugin invocation. Removed; the core no longer touches the
+filesystem on a job's behalf. Plugins that need a scratch
 path manage it themselves.
 
 ## Execution Ledger

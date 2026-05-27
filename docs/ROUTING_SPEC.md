@@ -1,15 +1,14 @@
 # Ductile — Routing & Orchestration Specification
 
-**Version:** 1.0 (Gemini Consensus)  
+**Version:** 1.0  
 **Date:** 2026-02-11  
 **Model:** Governance Hybrid (DB-only)
 
-> **Sprint 18 update:** the original spec described a Data Plane
-> consisting of core-managed workspace directories. As of Sprint 18
-> the core no longer provisions per-job workspaces; filesystem state
-> is the plugin's concern. Sections below referring to `workspace_dir`
-> are retained for historical context but no longer describe runtime
-> behaviour.
+> **Note:** the original spec described a Data Plane consisting of
+> core-managed workspace directories. The core no longer provisions
+> per-job workspaces; filesystem state is the plugin's concern.
+> Sections below referring to `workspace_dir` are retained for
+> historical context but no longer describe runtime behaviour.
 
 ---
 
@@ -85,7 +84,7 @@ CREATE TABLE event_context (
 ```
 
 ### 3.2 Explicit Context Accumulation
-Sprint 3 makes baggage explicit. Plugins emit event payloads; pipeline authors decide which values become durable.
+Baggage is explicit: plugins emit event payloads; pipeline authors decide which values become durable.
 
 When Step A transitions to Step B:
 1.  Core reads `accumulated_json` from Step A's context.
@@ -125,8 +124,8 @@ If a step declares no `baggage`, Core creates no new durable context for that ho
 
 ## 4. Filesystem (Plugin-managed)
 
-As of Sprint 18 the core does not provision per-job workspace
-directories. The previous "Data Plane" section described a
+The core does not provision per-job workspace directories. The
+previous "Data Plane" section described a
 hard-linked, janitor-pruned `<workspace_root>/ws/<job_id>` tree; that
 machinery has been removed.
 
@@ -217,7 +216,7 @@ Pipelines can use the `if` keyword on any step to decide whether it should run b
     value: error
 ```
 
-Sprint 6 compiles authored `if:` conditions into an internal `core.switch` hop. That hop emits `ductile.switch.true` or `ductile.switch.false`, so the gated step only runs on the true branch while the false branch bypasses directly to the downstream route.
+Authored `if:` conditions compile into an internal `core.switch` hop. That hop emits `ductile.switch.true` or `ductile.switch.false`, so the gated step only runs on the true branch while the false branch bypasses directly to the downstream route.
 
 ### 8.2 Multi-Event Branching
 

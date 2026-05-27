@@ -62,7 +62,7 @@ for l in logs:
 |--------|---------|
 | `succeeded` | Plugin ran and returned `status: ok` |
 | `failed` | Plugin returned `status: error` or timed out |
-| `skipped` | A job was explicitly skipped by orchestration logic; uncommon for Sprint 6 `if:` pipelines because they now branch through `core.switch` instead |
+| `skipped` | A job was explicitly skipped by orchestration logic; uncommon for `if:` pipelines because they branch through `core.switch` instead |
 | `retrying` | Core retry policy queued another attempt after a retryable failure |
 
 A high `succeeded` count for `core.switch` is normal for conditional pipeline steps. Only `failed` warrants investigation.
@@ -196,7 +196,7 @@ If a plugin is supposed to run when an upstream job completes but doesn't:
      python3 -c "import json,sys; d=json.load(sys.stdin); [print(l['Status'], l['CreatedAt'][:16]) for l in (d['logs'] or [])]"
    ```
 
-2. **Check the pipeline `if:` condition** — Sprint 6 compiles `if:` into an internal `core.switch` hop. If the condition evaluates false, Ductile bypasses the gated step and routes the false branch onward. Inspect the upstream payload and the `core.switch` result to confirm what matched.
+2. **Check the pipeline `if:` condition** — `if:` predicates compile into an internal `core.switch` hop. If the condition evaluates false, Ductile bypasses the gated step and routes the false branch onward. Inspect the upstream payload and the `core.switch` result to confirm what matched.
 
 3. **Check event routing:**
    ```bash

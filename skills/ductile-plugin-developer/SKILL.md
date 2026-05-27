@@ -2,12 +2,12 @@
 name: ductile-plugin-developer
 description: >
   Author ductile plugins and compose pipelines with reverence for the manifest
-  contract, protocol v2, fact_outputs, and the 8 idioms of ductile. Use when the
+  contract, the plugin protocol, fact_outputs, and the 8 idioms of ductile. Use when the
   user wants to: write a new ductile plugin, modify an existing plugin, design a
   manifest, declare fact_outputs, pick watcher vs poller vs writer vs transformer
   pattern, compose a pipeline DSL, route events, or iterate on plugin behavior
   locally. Trigger keywords: "write a ductile plugin", "plugin manifest",
-  "fact_outputs", "protocol v2", "pipeline DSL", "event routing", "manifest
+  "fact_outputs", "plugin protocol", "pipeline DSL", "event routing", "manifest
   rejected", "fact_outputs not landing", "plugin returns wrong output". Operates
   the value/state/identity gate before code is written, applies Hickey's
   decomplecting discipline, follows Armstrong's isolation and make-it-work /
@@ -105,7 +105,7 @@ automatically. You never write to `plugin_state` directly.
 Full reference: `docs/PLUGIN_DEVELOPMENT.md` (913 lines, canonical) and
 `docs/PLUGIN_FACTS.md`.
 
-## Step 3 — Protocol v2 in one screen
+## Step 3 — The plugin protocol in one screen
 
 Spawn-per-command. **One JSON in, one JSON out, then exit.** No daemon, no shared
 memory, no in-process state across invocations.

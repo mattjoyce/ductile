@@ -151,9 +151,9 @@ predicate runs only when the source plugin matches.
 ```
 
 For multi-plugin scoping, prefer either multiple narrowly-scoped
-pipelines or an `if:` predicate against `payload.plugin`. Sprint 17
-intentionally exposes the simplest single-plugin selector; a generic
-multi-value source matcher is deferred.
+pipelines or an `if:` predicate against `payload.plugin`. The
+single-plugin selector is intentional; a generic multi-value source
+matcher is deferred.
 
 #### Inspection
 
@@ -237,7 +237,7 @@ Rules:
 - `baggage` is an optional explicit projection into the relay envelope baggage.
 
 ### 3.6 `if` (Conditional Step Execution)
-A step may include an optional structured `if` object. Sprint 6 compiles that authored condition into an internal `core.switch` hop. The switch evaluates the condition against the current scope and then either dispatches the gated step or bypasses it without spawning the gated plugin.
+A step may include an optional structured `if` object. Authored conditions compile into an internal `core.switch` hop. The switch evaluates the condition against the current scope and then either dispatches the gated step or bypasses it without spawning the gated plugin.
 
 `if` must be exactly one of:
 - atomic predicate: `path`, `op`, optional `value`
@@ -473,7 +473,7 @@ Preflight executes two operations in order:
 | Outcome | When | Effect |
 |---------|------|--------|
 | **run** | Context loaded successfully | Plugin process or internal builtin executes normally |
-| **skip** | Reserved for explicit orchestration skip paths | Rare for authored Sprint 6 `if:` pipelines |
+| **skip** | Reserved for explicit orchestration skip paths | Rare for authored `if:` pipelines |
 | **fail** | Context load, remap, or builtin evaluation returns an error | Job marked `failed`; no downstream routing |
 
 ### 6.3 Conditional Branch Routing

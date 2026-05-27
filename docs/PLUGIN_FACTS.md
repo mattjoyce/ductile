@@ -4,7 +4,7 @@ This document is the canonical reference for durable plugin memory in Ductile.
 
 **The model:** durable plugin truth is the append-only `plugin_facts` stream.
 `plugin_state` is a compatibility/cache view of the latest fact, kept current
-automatically by core so that protocol-v2 readers see the same shape they
+automatically by core so that legacy readers see the same shape they
 always have. New plugins declare `fact_outputs` in their manifest and let the
 view come for free.
 
@@ -25,10 +25,10 @@ This means:
 - `plugin_state` is the compatibility/cache view.
 
 ```historical-note
-Before Sprint 7, plugins wrote durable truth directly into `plugin_state` via
-shallow merge of `state_updates`. That model is now legacy; new plugins should
+Previously, plugins wrote durable truth directly into `plugin_state` via
+shallow merge of `state_updates`. That model is legacy; new plugins should
 always declare `fact_outputs`. Plugins still on direct write-through are
-running in the protocol-v2 compatibility window.
+running in a compatibility window.
 ```
 
 ## 2. Migrated Plugins
@@ -40,7 +40,7 @@ In-tree (codex repo):
 - `ts-bun-greet` `poll` → `ts-bun-greet.snapshot`
 - `stress` `state` → `stress.state_snapshot`
 
-External (Sprint 13, `~/Projects/ductile-plugins` and `~/Projects/ductile-withings`):
+External plugins:
 - `gmail_poller` `poll` → `gmail_poller.snapshot`
 - `youtube_playlist` `poll` → `youtube_playlist.snapshot`
 - `jina-reader` `poll` → `jina-reader.snapshot`
@@ -211,7 +211,7 @@ Before declaring `fact_outputs` for a plugin, answer:
 - How will an operator inspect recent facts?
 - What realistic test proves the fact path end to end?
 
-If those answers are vague, the plugin should remain on protocol-v2
+If those answers are vague, the plugin should remain on direct
 write-through (action-bookkeeping non-candidates) rather than declaring a
 half-thought fact contract.
 

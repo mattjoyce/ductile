@@ -92,8 +92,8 @@ core is dispatch, routing, and durable state.
     `event_context` SQLite ledger. Values become durable only when a
     pipeline step claims them with `baggage`, and inherited baggage
     paths are immutable.
-*   **No core-managed data plane.** As of Sprint 18 the core does not
-    provision per-job filesystem workspaces. Plugins that need a
+*   **No core-managed data plane.** The core does not provision per-job
+    filesystem workspaces. Plugins that need a
     scratch path (`mktemp -d`) or a persistent cache
     (`~/.cache/<plugin>/`) manage it themselves; pipelines that need
     step-to-step file passing wire absolute paths via `with:` baggage.
@@ -316,7 +316,7 @@ config_keys:
   optional: [access_token]
 ```
 
-**Command type semantics (Sprint 3+):**
+**Command type semantics:**
 - `type: read` - No external side effects, idempotent (safe for automated retries)
   - Examples: poll, fetch, get, list, health
   - May emit a durable snapshot via `state_updates` (declared as a `fact_outputs` rule for append-only persistence; the compatibility view is updated automatically).
@@ -386,7 +386,7 @@ plugins:
 
 **Non-retryable conditions:**
 - Plugin exits with code `78` (EX_CONFIG from sysexits.h) — configuration error.
-- Protocol v2 plugin response includes `"retry": false`; core treats this as a compatibility signal, not plugin-owned policy.
+- Plugin response may include `"retry": false`; core treats this as a compatibility signal, not plugin-owned policy.
 - All other failures are retried.
 
 **Configurable per-plugin:**
@@ -428,7 +428,7 @@ plugins:
   - Config paths (config dir, includes, backups) are local operator-controlled inputs; Ductile does not accept untrusted remote file paths.
   - `service.allow_symlinks` controls whether symlinks are permitted in config/plugin paths (warnings are always emitted when symlinks are detected).
 - `plugin_facts` — append-only record of durable plugin observations. Each row carries a stable snapshot the plugin emitted as `state_updates`, plus a `fact_type` declared in the plugin manifest's `fact_outputs` and a Ductile-owned monotonic `seq`. This is the durable record. See [PLUGIN_FACTS.md](PLUGIN_FACTS.md).
-- `plugin_state` — single JSON row per plugin maintained as a compatibility/cache view of the latest fact. Existing readers see the same shape they saw before facts existed. The view is rebuilt automatically by core when a fact lands, governed by the manifest's `compatibility_view` declaration (currently `mirror_object`). Plugins that have not declared `fact_outputs` still get write-through behaviour during the protocol-v2 compatibility window; new plugins should declare `fact_outputs` rather than treating this row as their durable home.
+- `plugin_state` — single JSON row per plugin maintained as a compatibility/cache view of the latest fact. Existing readers see the same shape they saw before facts existed. The view is rebuilt automatically by core when a fact lands, governed by the manifest's `compatibility_view` declaration (currently `mirror_object`). Plugins that have not declared `fact_outputs` still get write-through behaviour during the compatibility window; new plugins should declare `fact_outputs` rather than treating this row as their durable home.
 
 ```sql
 -- Append-only durable record (primary).
@@ -505,9 +505,9 @@ Single JSON object written to plugin's stdout:
 ```
 
 - `result` — required when `status=ok`. Summarizes what the plugin did.
-- `retry` — protocol v2 compatibility signal. Defaults to `true` if omitted. Set `false` for permanent failures; core still owns the retry decision with exit status, attempts, and config as inputs.
+- `retry` — response-envelope compatibility signal. Defaults to `true` if omitted. Set `false` for permanent failures; core still owns the retry decision with exit status, attempts, and config as inputs.
 - `events` — array of event envelopes (see 6.3).
-- `state_updates` — the plugin's emitted snapshot. When the manifest declares a matching `fact_outputs` rule, core records this snapshot as an append-only `plugin_facts` row and rebuilds the compatibility view from it. Plugins without a declared `fact_outputs` rule get protocol-v2 write-through into `plugin_state` directly during the compatibility window.
+- `state_updates` — the plugin's emitted snapshot. When the manifest declares a matching `fact_outputs` rule, core records this snapshot as an append-only `plugin_facts` row and rebuilds the compatibility view from it. Plugins without a declared `fact_outputs` rule get write-through into `plugin_state` directly during the compatibility window.
 - `logs` — array of `{"level": "info|warn|error", "message": "..."}`. Optional. Stored with the job record.
 
 ### 6.3 Event Envelope
@@ -687,7 +687,7 @@ Retrieves the status and results of a previously triggered job.
 - `401 Unauthorized` - Missing or invalid token
 - `404 Not Found` - Job ID not found
 
-### 9.4 Authentication & Authorization (Sprint 3+)
+### 9.4 Authentication & Authorization
 
 **Bearer token authentication** with scoped permissions.
 
@@ -1079,7 +1079,7 @@ ductile/
 | Topic | Rationale |
 |-------|-----------|
 | Two-tier stderr/stdout caps (capture vs persistence) | Current spec is workable. Clarify post-V1 if storage becomes a concern. |
-| `protocol` field in response envelope | Can be added in protocol v2 without breaking v1 plugins. |
+| `protocol` field in response envelope | Accretive addition; back-compatible with plugins that omit it. |
 | Replay protection for webhooks | Provider-specific. Add per-plugin if a provider requires it. |
 | Rate limiting on webhook listener | Proxy responsibility. Core doesn't duplicate concerns it can't own. |
 | Secret redaction in logs | Operator responsibility. Fix the plugin, don't bandage the core. |
