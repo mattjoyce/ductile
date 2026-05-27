@@ -75,6 +75,48 @@ markdown_extensions:
 
 plugins:
   - search
+  - llmstxt:
+      full_output: llms-full.txt
+      markdown_description: |
+        Ductile is a self-hosted automation runtime designed to be operated
+        by AI agents. You describe a goal in natural language; your AI agent
+        authors a YAML pipeline, runs it, watches the logs, and iterates
+        until your goal is met. A single Go binary orchestrates polyglot
+        plugins via a JSON-over-stdin/stdout subprocess protocol; every
+        surface (NOUN ACTION CLI, REST API with OpenAPI discovery, queryable
+        execution ledger) is shaped so an LLM can drive it. Sized for
+        personal-scale automation (50–500 jobs/day).
+      sections:
+        Introduction:
+          - GETTING_STARTED.md
+          - 8_IDIOMS_OF_DUCTILE.md
+          - GLOSSARY.md
+          - AUDIENCES.md
+        Concepts:
+          - ARCHITECTURE.md
+          - PIPELINES.md
+          - ROUTING_SPEC.md
+          - SCHEDULER.md
+          - PLUGIN_FACTS.md
+        Building:
+          - COOKBOOK.md
+          - PLUGIN_DEVELOPMENT.md
+          - WEBHOOKS.md
+          - YAML_TIPS.md
+        Operating:
+          - DEPLOYMENT.md
+          - OPERATOR_GUIDE.md
+          - HEALTH_CHECK.md
+          - PLUGIN_DIAGNOSTICS.md
+          - REMOTE_EVENT_RELAY.md
+        Reference:
+          - CONFIG_REFERENCE.md
+          - API_REFERENCE.md
+          - DATABASE.md
+          - TESTING.md
+        For Agents:
+          - for-agents/index.md
+          - for-agents/operator-handbook.md
 
 extra:
   social:

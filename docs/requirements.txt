@@ -1,2 +1,3 @@
 mkdocs-material>=9.5,<10
 pymdown-extensions>=10.7
+mkdocs-llmstxt>=0.2
