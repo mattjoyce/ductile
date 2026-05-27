@@ -44,11 +44,15 @@ Skills that don't run Ductile — they keep it honest.
 
 - [`skills/surface-contract/`](https://github.com/mattjoyce/ductile/tree/main/skills/surface-contract) — **Doc/code seam audit.** Ousterhout × Liskov surface/contract discipline applied to the boundary between what the docs claim and what the code does. Run this when docs drift from reality, after a refactor that changes a public-facing API, or before a release. **The code is the reality; the docs are the contract** — this skill is how you keep them aligned.
 
+## Live agentic affordances
+
+- **[`/llms.txt`](../llms.txt)** — curated agent-friendly index of this site, per the [llmstxt.org](https://llmstxt.org) convention. Fetch this first; it lists the pages worth reading and links to their raw markdown.
+- **[`/llms-full.txt`](../llms-full.txt)** — one-shot concatenation of every page named in `/llms.txt`. ~300 KB, designed for agents that want the full corpus in a single fetch.
+
 ## Planned agentic affordances
 
 These don't exist yet but are on the roadmap:
 
-- **`/llms.txt` and `/llms-full.txt`** at the site root — one-shot context manifests for agents that fetch documentation pages.
 - **`/api.json`** — the OpenAPI surface published as a static endpoint.
 - **`/schema/`** — JSON schemas for config, plugin manifest, event shape.
 - **`/examples/`** — known-good pipelines, runnable and human-readable.
