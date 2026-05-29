@@ -5,10 +5,13 @@ version: 0.1.0
 protocol: 2
 entrypoint: run.sh
 description: "A demonstration plugin that returns a configured echo response."
+concurrency_safe: true
 commands:
   - name: handle
     type: write
     description: "Returns a configured echo response."
+    idempotent: true
+    retry_safe: true
     values:
       consume: []
       emit: []
