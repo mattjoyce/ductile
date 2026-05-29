@@ -123,3 +123,28 @@ func assertHeader(t *testing.T, resp *httptest.ResponseRecorder, key, want strin
 		t.Fatalf("%s = %q, want %q", key, got, want)
 	}
 }
+
+// TestCORSMiddlewareWildcard verifies that wildcard allows all and disables credentials.
+func TestCORSMiddlewareWildcard(t *testing.T) {
+	called := false
+	handler := corsMiddleware([]string{"*"})(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		called = true
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	req := httptest.NewRequest(http.MethodGet, "/jobs", nil)
+	req.Header.Set("Origin", "https://any.example")
+	resp := httptest.NewRecorder()
+
+	handler.ServeHTTP(resp, req)
+
+	if !called {
+		t.Fatal("handler was not called")
+	}
+	if got := resp.Header().Get("Access-Control-Allow-Origin"); got != "*" {
+		t.Fatalf("Access-Control-Allow-Origin = %q, want *", got)
+	}
+	if got := resp.Header().Get("Access-Control-Allow-Credentials"); got != "false" {
+		t.Fatalf("Access-Control-Allow-Credentials = %q, want false", got)
+	}
+}
