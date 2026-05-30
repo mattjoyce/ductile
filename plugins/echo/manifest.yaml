@@ -1,37 +1,110 @@
 manifest_spec: ductile.plugin
 manifest_version: 1
 name: echo
-version: 0.1.0
+version: 0.2.0
 protocol: 2
 entrypoint: run.sh
-description: "A demonstration plugin that returns a configured echo response."
 concurrency_safe: true
+description: "Demonstration / smoke-test plugin. All three commands (handle, poll, health) behave identically — return a configured message with a UTC timestamp. The config.mode field lets test harnesses force failure paths (error / hang / protocol_error) without touching the runtime. Use as a reference for the protocol v2 stdin-JSON / stdout-JSON wire format and as a liveness probe for the gateway itself."
 commands:
   - name: handle
     type: write
-    description: "Returns a configured echo response."
+    description: "Return a configured echo response with timestamp. Identical behaviour to poll and health — included for protocol-v2 completeness so callers can exercise the write/read split."
     idempotent: true
     retry_safe: true
+    input_schema: {}
+    output_schema:
+      type: object
+      properties:
+        status:
+          type: string
+          enum: [ok, error]
+          description: "Plugin envelope status."
+        result:
+          type: string
+          description: "Present on ok — '<message> at <UTC ISO timestamp>'."
+        events:
+          type: array
+          description: "Always empty for echo — no signals emitted."
+        error:
+          type: string
+          description: "Present on error — when mode=error or an unknown command is requested."
+        retry:
+          type: boolean
+          description: "Present on error — always false (echo errors are caller-driven, never transient)."
+        logs:
+          type: array
+          items:
+            type: object
+          description: "Single info or error entry mirroring the result/error."
+      required: [status, logs]
+      additionalProperties: false
     values:
       consume: []
       emit: []
   - name: poll
     type: write
-    description: "Returns a configured echo response on a schedule."
-    idempotent: false
-    retry_safe: false
+    description: "Scheduled variant. Returns the same echo response as handle. Used by the in-prod schedule at every 5m as a continuous liveness signal that the dispatcher → plugin → response loop is intact."
+    idempotent: true
+    retry_safe: true
     input_schema:
-      message: string
+      type: object
+      properties:
+        message:
+          type: string
+          description: "Optional override of the configured message for this invocation."
+      additionalProperties: true
     output_schema:
-      status: string
+      type: object
+      properties:
+        status:
+          type: string
+          enum: [ok, error]
+        result:
+          type: string
+        events:
+          type: array
+        error:
+          type: string
+        retry:
+          type: boolean
+        logs:
+          type: array
+          items:
+            type: object
+      required: [status, logs]
+      additionalProperties: false
     values:
       consume: []
       emit: []
   - name: health
     type: read
-    description: "Returns the current health status and plugin version."
+    description: "Return an echo response, identical to handle/poll. Echo has no external dependencies, so the only health check that can fail is when mode is configured to force one."
     idempotent: true
     retry_safe: true
+    input_schema: {}
+    output_schema:
+      type: object
+      properties:
+        status:
+          type: string
+          enum: [ok, error]
+        result:
+          type: string
+        events:
+          type: array
+        error:
+          type: string
+        retry:
+          type: boolean
+        logs:
+          type: array
+          items:
+            type: object
+      required: [status, logs]
+      additionalProperties: false
 config_keys:
   required: []
-  optional: [message, mode]
+  optional:
+    - message
+    - mode
