@@ -1,19 +1,48 @@
 manifest_spec: ductile.plugin
 manifest_version: 1
 name: folder_watch
-version: 0.1.0
+version: 0.2.0
 protocol: 2
 entrypoint: run.py
-description: "Scheduled directory watcher that emits aggregate or per-file change events"
 concurrency_safe: false
+description: "Scheduled directory watcher. Each poll scans one or more configured roots, compares the fingerprint of every matching file against the previous snapshot (held in plugin state), and emits events for created / modified / deleted paths. Per-watch event_type lets one instance feed multiple downstream pipelines. Stateful poller: declares fact_outputs so the gateway snapshots the per-watch file map durably (mirror_object) — folder_watch instances must NOT run in parallel against the same state row, so pair with `parallelism: 1` in plugins.yaml."
 commands:
   - name: poll
     type: write
-    description: "Scan configured directories and emit events for created/modified/deleted files."
+    description: "Walk every configured watch root, fingerprint each matching file (sha256 or mtime_size per watch.strategy), diff against the prior snapshot in state, and emit one event per change. emit_mode=aggregate emits a single event per watch with created/modified/deleted arrays; emit_mode=per_file emits one event per affected path. Aggregate events get dedupe_key=folder_watch:<watch_id>:<snapshot_hash>; per-file events get dedupe_key=folder_watch:<watch_id>:<path>:<fingerprint>. Returns the new state snapshot in state_updates."
+    idempotent: false
+    retry_safe: true
+    input_schema: {}
+    output_schema:
+      type: object
+      properties:
+        status:
+          type: string
+          enum: [ok, error]
+        result:
+          type: string
+        error:
+          type: string
+        retry:
+          type: boolean
+        events:
+          type: array
+          description: "Zero or more change events. Each watch with changes contributes 1 (aggregate) or N (per_file, capped at max_events) events. Empty most polls."
+          items:
+            type: object
+        state_updates:
+          type: object
+          description: "Present on ok — { watches: { <watch_id>: { files: {rel_path: fingerprint}, snapshot_hash, file_count, last_scanned_at, truncated, error } } }. Snapshotted as folder_watch.snapshot facts (see fact_outputs)."
+        logs:
+          type: array
+          items:
+            type: object
+      required: [status, logs]
+      additionalProperties: true
     values:
       consume: []
       emit:
-        - event: "<configured event_type>"
+        - event: "<watches[].event_type>"
           values:
             - payload.watch_id
             - payload.root
@@ -32,7 +61,33 @@ commands:
             - payload.previous_fingerprint
   - name: health
     type: read
-    description: "Validate folder watch roots and glob configuration."
+    description: "Validate that the configured watches list is well-formed (every entry has id/root/event_type, no duplicate ids, recognised strategy + emit_mode) and that every root is a readable directory on the gateway filesystem. Does not scan files."
+    idempotent: true
+    retry_safe: true
+    input_schema: {}
+    output_schema:
+      type: object
+      properties:
+        status:
+          type: string
+          enum: [ok, error]
+        result:
+          type: string
+          description: "Present on ok — 'folder_watch health OK (watches=N)'."
+        error:
+          type: string
+          description: "Present on error — config invalid or one or more roots missing/unreadable."
+        retry:
+          type: boolean
+        logs:
+          type: array
+          items:
+            type: object
+      required: [status, logs]
+      additionalProperties: false
+    values:
+      consume: []
+      emit: []
 fact_outputs:
   - when:
       command: poll
@@ -41,4 +96,5 @@ fact_outputs:
     compatibility_view: mirror_object
 config_keys:
   required: []
-  optional: [watches]
+  optional:
+    - watches
