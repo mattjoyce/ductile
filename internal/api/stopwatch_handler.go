@@ -55,7 +55,12 @@ type StopwatchSubStats struct {
 	P99Ms       int    `json:"p99_ms"`
 }
 
-const stopwatchTrendBuckets = 6
+// stopwatchTrendBuckets fixes the length of every trend_p95_ms array,
+// uniform across all windows so a sparkline always renders the same
+// width. 60 sits inside the consumer's 50–200 target band and keeps
+// the count bounded regardless of window: bucket duration is
+// windowDur/60 (5s for 5m … 12h for 30d), always > 0.
+const stopwatchTrendBuckets = 60
 
 // handleStopwatch handles GET /stopwatch/{plugin}.
 func (s *Server) handleStopwatch(w http.ResponseWriter, r *http.Request) {
@@ -75,7 +80,7 @@ func (s *Server) handleStopwatch(w http.ResponseWriter, r *http.Request) {
 	}
 	windowDur, ok := parseStopwatchWindow(windowStr)
 	if !ok {
-		s.writeError(w, http.StatusBadRequest, "invalid window (use 5m, 1h, or 24h)")
+		s.writeError(w, http.StatusBadRequest, "invalid window (use 5m, 1h, 24h, 7d, or 30d)")
 		return
 	}
 
@@ -104,8 +109,11 @@ func (s *Server) handleStopwatch(w http.ResponseWriter, r *http.Request) {
 }
 
 // parseStopwatchWindow accepts the small fixed vocabulary the console
-// uses (5m / 1h / 24h). Free-form Go duration strings are deliberately
-// rejected so the rolling window can be reasoned about in the UI.
+// uses (5m / 1h / 24h for diagnostic zoom, 7d / 30d for trend-awareness
+// sparklines). Free-form Go duration strings are deliberately rejected
+// so the rolling window can be reasoned about in the UI. The long
+// windows return whatever the operator-pruned ledger still retains;
+// they add no retention guarantee (see ductile-3jn).
 func parseStopwatchWindow(w string) (time.Duration, bool) {
 	switch w {
 	case "5m":
@@ -114,6 +122,10 @@ func parseStopwatchWindow(w string) (time.Duration, bool) {
 		return time.Hour, true
 	case "24h":
 		return 24 * time.Hour, true
+	case "7d":
+		return 7 * 24 * time.Hour, true
+	case "30d":
+		return 30 * 24 * time.Hour, true
 	default:
 		return 0, false
 	}

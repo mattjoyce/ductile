@@ -89,10 +89,13 @@ func TestParseStopwatchWindow(t *testing.T) {
 		{"5m", 5 * time.Minute, true},
 		{"1h", time.Hour, true},
 		{"24h", 24 * time.Hour, true},
+		{"7d", 7 * 24 * time.Hour, true},
+		{"30d", 30 * 24 * time.Hour, true},
 		{"", 0, false},
 		{"7m", 0, false},
 		{"30s", 0, false},
 		{"1d", 0, false},
+		{"14d", 0, false},
 	}
 	for _, c := range cases {
 		got, ok := parseStopwatchWindow(c.in)
@@ -159,9 +162,9 @@ func TestAggregateStopwatch_PerStepPercentiles(t *testing.T) {
 	if len(fetch.TrendP95Ms) != stopwatchTrendBuckets {
 		t.Errorf("fetch.TrendP95Ms len = %d, want %d", len(fetch.TrendP95Ms), stopwatchTrendBuckets)
 	}
-	// 10 samples across 6 buckets of 10 minutes each. Buckets at index
-	// 0..5 should each contain at least one sample because we spaced them
-	// at +5, +10, +15...+50 minutes; samples must yield non-zero p95.
+	// 10 samples across stopwatchTrendBuckets buckets (1h/60 = 1 min
+	// each). Samples spaced at +5, +10, +15...+50 minutes land in
+	// distinct buckets and must yield a non-zero p95 somewhere.
 	nonZero := 0
 	for _, v := range fetch.TrendP95Ms {
 		if v > 0 {
@@ -179,6 +182,54 @@ func TestAggregateStopwatch_PerStepPercentiles(t *testing.T) {
 	if transform.P50Ms != 200 || transform.P95Ms != 200 || transform.P99Ms != 200 {
 		t.Errorf("transform percentiles = %d/%d/%d, want all 200",
 			transform.P50Ms, transform.P95Ms, transform.P99Ms)
+	}
+}
+
+func TestAggregateStopwatch_LongWindowsBucketBound(t *testing.T) {
+	t.Parallel()
+	now := time.Date(2026, 5, 26, 10, 0, 0, 0, time.UTC)
+
+	cases := []struct {
+		window string
+		dur    time.Duration
+	}{
+		{"5m", 5 * time.Minute},
+		{"1h", time.Hour},
+		{"24h", 24 * time.Hour},
+		{"7d", 7 * 24 * time.Hour},
+		{"30d", 30 * 24 * time.Hour},
+	}
+	for _, c := range cases {
+		since := now.Add(-c.dur)
+		// 20 samples spread evenly across the window so at least one
+		// trend bucket is non-zero for every window length.
+		rows := make([]state.StopwatchAggregationRow, 0, 20)
+		for i := 0; i < 20; i++ {
+			rows = append(rows, state.StopwatchAggregationRow{
+				StepID:     "poll",
+				DurNs:      int64((i + 1) * 10_000_000),
+				RecordedAt: since.Add(time.Duration(i+1) * c.dur / 21),
+			})
+		}
+
+		resp := aggregateStopwatch("p", c.window, c.dur, now, since, rows, false)
+		if len(resp.Steps) != 1 {
+			t.Fatalf("window %s: Steps len = %d, want 1", c.window, len(resp.Steps))
+		}
+		trend := resp.Steps[0].TrendP95Ms
+		// Acceptance: bucket count bounded 50-200 regardless of window.
+		if len(trend) < 50 || len(trend) > 200 {
+			t.Errorf("window %s: trend len = %d, want within [50,200]", c.window, len(trend))
+		}
+		nonZero := 0
+		for _, v := range trend {
+			if v > 0 {
+				nonZero++
+			}
+		}
+		if nonZero == 0 {
+			t.Errorf("window %s: trend_p95_ms all zero with samples present", c.window)
+		}
 	}
 }
 
@@ -276,6 +327,53 @@ func TestHandleStopwatch_HappyPath(t *testing.T) {
 	}
 	if resp.Steps[0].SampleCount != 5 {
 		t.Errorf("SampleCount = %d, want 5", resp.Steps[0].SampleCount)
+	}
+}
+
+func TestHandleStopwatch_LongWindowHappyPath(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		window string
+		want   time.Duration
+	}{
+		{"7d", 7 * 24 * time.Hour},
+		{"30d", 30 * 24 * time.Hour},
+	} {
+		reader := &mockStopwatchReader{
+			rowsFunc: func(_ context.Context, _ string, since time.Time) ([]state.StopwatchAggregationRow, error) {
+				return []state.StopwatchAggregationRow{{
+					StepID:     "poll",
+					DurNs:      20_000_000,
+					RecordedAt: since.Add(time.Hour),
+				}}, nil
+			},
+		}
+		server := setupServerWithStopwatch(t, reader, []auth.TokenConfig{
+			{Token: "test-key-123", Scopes: []string{"*"}},
+		})
+
+		req := httptest.NewRequest(http.MethodGet, "/stopwatch/withings?window="+tc.window, nil)
+		req.Header.Set("Authorization", "Bearer test-key-123")
+		rr := httptest.NewRecorder()
+		server.setupRoutes().ServeHTTP(rr, req)
+
+		if rr.Code != http.StatusOK {
+			t.Fatalf("window %s: status = %d, want 200; body=%s", tc.window, rr.Code, rr.Body.String())
+		}
+		lookback := time.Since(reader.gotSince)
+		if lookback < tc.want-time.Minute || lookback > tc.want+time.Minute {
+			t.Errorf("window %s: lookback = %v, want ~%v", tc.window, lookback, tc.want)
+		}
+		var resp StopwatchResponse
+		if err := json.NewDecoder(rr.Body).Decode(&resp); err != nil {
+			t.Fatalf("window %s: decode: %v", tc.window, err)
+		}
+		if resp.Window != tc.window {
+			t.Errorf("window %s: resp.Window = %q", tc.window, resp.Window)
+		}
+		if len(resp.Steps) != 1 || len(resp.Steps[0].TrendP95Ms) != stopwatchTrendBuckets {
+			t.Errorf("window %s: unexpected steps/trend: %+v", tc.window, resp.Steps)
+		}
 	}
 }
 
