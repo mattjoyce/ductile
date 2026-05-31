@@ -1,0 +1,4 @@
+## 2024-05-18 - Prevent SQL Injection via string interpolation in PRAGMA table_info
+**Vulnerability:** Found `fmt.Sprintf("PRAGMA table_info(%s);", table)` which uses unsafe string interpolation to inject a table name directly into an SQLite schema query in `sqliteColumnExists`.
+**Learning:** PRAGMA statements typically do not support parameterized arguments in many SQLite driver implementations. This led developers to incorrectly fallback to unsafe string interpolation `fmt.Sprintf` for dynamically querying schema information based on variables.
+**Prevention:** Use SQLite's safe table-valued function equivalent for pragmas, specifically `pragma_table_info(?)`. This alternative syntax `SELECT ... FROM pragma_table_info(?)` safely accepts parameterized arguments, thereby eliminating SQL injection risks while retrieving schema metadata. Note that columns like `notnull` must be quoted as `"notnull"` because it is a reserved keyword in SQL.
