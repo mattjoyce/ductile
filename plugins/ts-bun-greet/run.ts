@@ -1,8 +1,8 @@
 #!/usr/bin/env bun
 // ts-bun-greet: TypeScript/Bun example plugin for Ductile Gateway
-// Demonstrates protocol v1 JSON I/O over stdin/stdout.
+// Demonstrates protocol v2 JSON I/O over stdin/stdout.
 
-// --- Protocol v1 types ---
+// --- Protocol v2 types ---
 
 interface Request {
   protocol: number;
