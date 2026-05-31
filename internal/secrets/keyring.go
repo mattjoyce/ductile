@@ -31,6 +31,25 @@ func (k *Keyring) Decrypt(ciphertext []byte) ([]byte, error) {
 	return Decrypt(ciphertext, k.identities)
 }
 
+// Recipients derives the age recipients (public keys) that correspond to the
+// keyring's identities, for self-encryption (encrypt to the same key that
+// decrypts). Used by the vault to re-encrypt on save. Identities that cannot
+// yield a recipient (non-X25519) are a hard error rather than a silent skip.
+func (k *Keyring) Recipients() ([]age.Recipient, error) {
+	if k.Empty() {
+		return nil, fmt.Errorf("keyring: no identities to derive recipients from")
+	}
+	recipients := make([]age.Recipient, 0, len(k.identities))
+	for _, id := range k.identities {
+		x, ok := id.(*age.X25519Identity)
+		if !ok {
+			return nil, fmt.Errorf("keyring: identity of type %T cannot derive a recipient", id)
+		}
+		recipients = append(recipients, x.Recipient())
+	}
+	return recipients, nil
+}
+
 // LoadKeyringFromFile reads an age identity (key) file, enforces restrictive
 // permissions (no group/other access), and parses the identities it contains.
 //
