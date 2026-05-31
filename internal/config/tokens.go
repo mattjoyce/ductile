@@ -2,15 +2,15 @@ package config
 
 import (
 	"fmt"
-	"os"
 
+	"github.com/mattjoyce/ductile/internal/secrets"
 	"gopkg.in/yaml.v3"
 )
 
-// graftTokens loads token entries from tokens.yaml into cfg.
-func graftTokens(cfg *Config, path string) error {
-	// #nosec G304 -- config paths are operator-controlled local inputs.
-	data, err := os.ReadFile(path)
+// graftTokens loads token entries from tokens.yaml into cfg, decrypting the file
+// first if it is age-encrypted.
+func graftTokens(cfg *Config, path string, kr *secrets.Keyring) error {
+	data, err := readConfigBytes(kr, path)
 	if err != nil {
 		return fmt.Errorf("failed to read tokens.yaml: %w", err)
 	}

@@ -16,6 +16,7 @@ type Config struct {
 	Service         ServiceConfig         `yaml:"service"`
 	State           StateConfig           `yaml:"state"`
 	Database        StateConfig           `yaml:"database,omitempty"` // Alias for user intuition
+	Secrets         SecretsConfig         `yaml:"secrets,omitempty"`
 	API             APIConfig             `yaml:"api,omitempty"`
 	PluginRoots     []string              `yaml:"plugin_roots,omitempty"`
 	TCCPaths        []string              `yaml:"tcc_paths,omitempty"` // macOS-only: paths stat()-ed on cold start to surface TCC popups synchronously
@@ -28,6 +29,14 @@ type Config struct {
 	Tokens          []TokenEntry          `yaml:"-"`                  // Directory mode: token entries from tokens.yaml
 	Pipelines       []PipelineEntry       `yaml:"-"`                  // Directory mode: pipeline entries
 	ConfigDir       string                `yaml:"-"`                  // Directory mode: root config directory
+}
+
+// SecretsConfig defines encryption-at-rest settings. AgeKeyFile names the age
+// identity (private key) file used to decrypt encrypted config/token includes
+// at load. It is overridden by the DUCTILE_AGE_KEY_FILE environment variable.
+// When unset and no default key file exists, encryption at rest is simply off.
+type SecretsConfig struct {
+	AgeKeyFile string `yaml:"age_key_file,omitempty"`
 }
 
 // EnvironmentVarsConfig defines env file includes for interpolation.
@@ -48,8 +57,12 @@ type ServiceConfig struct {
 	JobAttemptsRetention        time.Duration `yaml:"job_attempts_retention"`
 	BreakerTransitionsRetention time.Duration `yaml:"breaker_transitions_retention"`
 	MaxWorkers                  int           `yaml:"max_workers,omitempty"`
-	StrictMode                  bool          `yaml:"strict_mode"`
-	AllowSymlinks               bool          `yaml:"allow_symlinks"`
+	// PluginEnvPassthrough lists environment variable names granted to plugin
+	// children on top of the built-in spawn-hygiene allowlist. Use sparingly:
+	// every name here is one the child sees from the gateway's environment.
+	PluginEnvPassthrough []string `yaml:"plugin_env_passthrough,omitempty"`
+	StrictMode           bool     `yaml:"strict_mode"`
+	AllowSymlinks        bool     `yaml:"allow_symlinks"`
 	// HookMaxDepth caps the on-hook lifecycle chain depth. A root job that fires
 	// a hook produces a depth-1 hook job; if that hook job itself fires a hook
 	// (because its plugin has notify_on_complete: true), the next would-be hook

@@ -23,6 +23,9 @@
       "$ref": "#/$defs/StateConfig",
       "description": "Alias for state (user intuition)."
     },
+    "secrets": {
+      "$ref": "#/$defs/SecretsConfig"
+    },
     "api": {
       "$ref": "#/$defs/APIConfig"
     },
@@ -59,6 +62,17 @@
   "required": ["service", "state", "plugin_roots"],
   "additionalProperties": false,
   "$defs": {
+    "SecretsConfig": {
+      "type": "object",
+      "description": "Encryption-at-rest settings (age). Encrypted config/token includes are decrypted in memory at load, before ${ENV} interpolation.",
+      "properties": {
+        "age_key_file": {
+          "type": "string",
+          "description": "Path to the age identity (private key) file used to decrypt encrypted includes. Relative paths resolve against the config dir. Overridden by the DUCTILE_AGE_KEY_FILE environment variable. The file must have mode 0600 or load fails. When unset and no default key file exists, encryption at rest is off."
+        }
+      },
+      "additionalProperties": false
+    },
     "EnvironmentVarsConfig": {
       "type": "object",
       "description": "Environment variable file includes for interpolation.",
@@ -114,6 +128,11 @@
           "description": "Maximum number of concurrent job workers across all plugins.",
           "minimum": 1,
           "default": 1
+        },
+        "plugin_env_passthrough": {
+          "type": "array",
+          "description": "Environment variable names granted to plugin child processes on top of the built-in spawn-hygiene allowlist (PATH, HOME, TZ, LANG, LANGUAGE, LC_* locale categories, TMPDIR). Use sparingly: every name here is one a plugin child sees from the gateway's environment. Secrets should travel over the stdin config map, not here.",
+          "items": { "type": "string", "minLength": 1 }
         },
         "strict_mode": {
           "type": "boolean",

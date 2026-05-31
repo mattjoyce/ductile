@@ -67,6 +67,18 @@ func runConfigNoun(args []string) int {
 			return 0
 		}
 		return runConfigCheck(actionArgs)
+	case "schema":
+		if hasHelpFlag(actionArgs) {
+			printConfigSchemaHelp()
+			return 0
+		}
+		return runConfigSchema(actionArgs)
+	case "validate":
+		if hasHelpFlag(actionArgs) {
+			printConfigValidateHelp()
+			return 0
+		}
+		return runConfigValidate(actionArgs)
 	case "show":
 		if hasHelpFlag(actionArgs) {
 			printConfigShowHelp()
@@ -392,7 +404,7 @@ func hasHelpFlag(args []string) bool {
 
 func printConfigNounHelp(w *os.File) {
 	_, _ = fmt.Fprintln(w, "Usage: ductile config <action> [flags]")
-	_, _ = fmt.Fprintln(w, "Actions: lock, check, show, get, set, token, scope, plugin, route, webhook, init, backup, restore")
+	_, _ = fmt.Fprintln(w, "Actions: lock, check, schema, validate, show, get, set, token, scope, plugin, route, webhook, init, backup, restore")
 }
 
 func printConfigLockHelp() {

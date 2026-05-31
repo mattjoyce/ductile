@@ -3,6 +3,7 @@
 package dispatch
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -39,6 +40,32 @@ func init() {
 	os.Exit(0)
 }
 
+// TestExecutorWithholdsSecretEnvFromChild locks the documented sys_exec
+// containment claim: a secret in the gateway's environment must not reach a
+// plugin child. The script echoes the variable the way sys_exec's $VAR
+// expansion would; under the spawn-hygiene allowlist it expands to empty.
+func TestExecutorWithholdsSecretEnvFromChild(t *testing.T) {
+	const secret = "s3cr3t-token-value-should-not-leak"
+	t.Setenv("DUCTILE_TEST_GATEWAY_SECRET", secret)
+
+	script := writeDispatchTestScript(t, `#!/bin/sh
+echo "probe=[$DUCTILE_TEST_GATEWAY_SECRET]"
+`)
+	executor := newSubprocessExecutor(nil, nil)
+	req := &protocol.Request{Protocol: 2, JobID: "job-env", Command: "poll"}
+	// The script emits non-protocol output, so execute returns a decode error;
+	// only the raw stdout bytes matter here.
+	_, _, _, rawStdout, _, _, _ := executor.execute(
+		context.Background(), "env-probe", script, req, 5*time.Second, slog.Default())
+
+	if bytes.Contains(rawStdout, []byte(secret)) {
+		t.Fatalf("gateway secret leaked into plugin stdout: %q", rawStdout)
+	}
+	if !bytes.Contains(rawStdout, []byte("probe=[]")) {
+		t.Fatalf("expected the secret var to expand empty in the child; got %q", rawStdout)
+	}
+}
+
 // writeRunawayPlugin writes a shell shim that re-execs the test binary as a
 // plugin that genuinely ignores SIGTERM and overruns its timeout.
 func writeRunawayPlugin(t *testing.T) string {
@@ -70,7 +97,7 @@ func TestSubprocessExecutorTimeoutNotReclassifiedByLateOutput(t *testing.T) {
 	// parallel contention inflates that latency.
 	scriptPath := writeRunawayPlugin(t)
 
-	executor := newSubprocessExecutor(nil)
+	executor := newSubprocessExecutor(nil, nil)
 	req := &protocol.Request{Protocol: 2, JobID: "job-runaway", Command: "poll"}
 	resp, _, _, _, _, _, err := executor.execute(
 		context.Background(), "runaway", scriptPath, req, 1500*time.Millisecond, slog.Default())
@@ -89,7 +116,7 @@ func TestSubprocessExecutorReturnsMalformedProtocolResponse(t *testing.T) {
 echo '{not-json'
 `)
 
-	executor := newSubprocessExecutor(nil)
+	executor := newSubprocessExecutor(nil, nil)
 	req := &protocol.Request{Protocol: 2, JobID: "job-malformed", Command: "poll"}
 	resp, _, rawResp, rawStdout, _, _, err := executor.execute(context.Background(), "malformed", scriptPath, req, 5*time.Second, slog.Default())
 	if err == nil {

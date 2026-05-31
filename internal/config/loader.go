@@ -2,6 +2,7 @@ package config
 
 import (
 	"bufio"
+	"bytes"
 	"fmt"
 	"maps"
 	"os"
@@ -13,6 +14,7 @@ import (
 	"time"
 
 	"github.com/mattjoyce/ductile/internal/scheduleexpr"
+	"github.com/mattjoyce/ductile/internal/secrets"
 	"gopkg.in/yaml.v3"
 )
 
@@ -52,16 +54,33 @@ func load(configPath string, verifyScopes bool, validateConfig bool) (*Config, e
 		}
 	}
 
+	// Resolve the age key before the first read. Only the env var and default
+	// locations are available pre-parse — the config's own secrets.age_key_file
+	// lives inside the file, so an encrypted root must use one of those.
+	configDir := filepath.Dir(absPath)
+	kr, err := resolveKeyring(configDir, nil)
+	if err != nil {
+		return nil, err
+	}
+
 	// Load main config file
-	cfg, err := loadConfigFile(absPath, make(map[string]bool))
+	cfg, err := loadConfigFile(absPath, make(map[string]bool), kr)
 	if err != nil {
 		return nil, err
 	}
 	cfg.SourceFiles = make(map[string]*yaml.Node)
 
+	// If the root config names a key file and we didn't already resolve one
+	// (no env var, no default present), honour it for the encrypted includes.
+	if kr.Empty() && cfg.Secrets.AgeKeyFile != "" {
+		kr, err = resolveKeyring(configDir, cfg)
+		if err != nil {
+			return nil, err
+		}
+	}
+
 	// Add root node to SourceFiles (manually since loadConfigFile returns a partial Config)
-	// #nosec G304 -- config paths are operator-controlled local inputs.
-	rootData, _ := os.ReadFile(absPath)
+	rootData, _ := readConfigBytes(kr, absPath)
 	var rootNode yaml.Node
 	if err := yaml.Unmarshal(rootData, &rootNode); err == nil {
 		cfg.SourceFiles[absPath] = &rootNode
@@ -70,7 +89,6 @@ func load(configPath string, verifyScopes bool, validateConfig bool) (*Config, e
 	// If include array exists, load and merge included files
 	var includedPaths []string
 	if len(cfg.Include) > 0 {
-		configDir := filepath.Dir(absPath)
 		visited := make(map[string]bool)
 		// Seed the root config's own path so an include cycle that runs
 		// back through the root is detected at the first back-edge —
@@ -78,7 +96,7 @@ func load(configPath string, verifyScopes bool, validateConfig bool) (*Config, e
 		// the root file (C-FRO-13: cycle/visited sets must include the
 		// origin).
 		visited[absPath] = true
-		if err := loadIncludes(cfg, cfg.Include, configDir, visited); err != nil {
+		if err := loadIncludes(cfg, cfg.Include, configDir, visited, kr); err != nil {
 			return nil, err
 		}
 		for path := range visited {
@@ -177,17 +195,29 @@ func DiscoverScopeDirs(configPath string) ([]string, error) {
 		}
 	}
 
-	cfg, err := loadConfigFile(absPath, make(map[string]bool))
+	configDir := filepath.Dir(absPath)
+	kr, err := resolveKeyring(configDir, nil)
+	if err != nil {
+		return nil, err
+	}
+	cfg, err := loadConfigFile(absPath, make(map[string]bool), kr)
 	if err != nil {
 		return nil, err
 	}
 	cfg.SourceFiles = make(map[string]*yaml.Node)
 
+	if kr.Empty() && cfg.Secrets.AgeKeyFile != "" {
+		kr, err = resolveKeyring(configDir, cfg)
+		if err != nil {
+			return nil, err
+		}
+	}
+
 	scopeDirs := make(map[string]struct{})
 	if len(cfg.Include) > 0 {
 		visited := make(map[string]bool)
 		visited[absPath] = true // see C-FRO-13 note in load()
-		if err := loadIncludes(cfg, cfg.Include, filepath.Dir(absPath), visited); err != nil {
+		if err := loadIncludes(cfg, cfg.Include, filepath.Dir(absPath), visited, kr); err != nil {
 			return nil, err
 		}
 
@@ -215,7 +245,7 @@ func DiscoverScopeDirs(configPath string) ([]string, error) {
 
 // loadIncludes recursively loads and merges files from the include array.
 // visited tracks loaded files to prevent cycles.
-func loadIncludes(cfg *Config, includes []string, baseDir string, visited map[string]bool) error {
+func loadIncludes(cfg *Config, includes []string, baseDir string, visited map[string]bool, kr *secrets.Keyring) error {
 	for i, includePath := range includes {
 		// Apply env var interpolation to path
 		includePath = interpolateEnv(includePath)
@@ -250,14 +280,14 @@ func loadIncludes(cfg *Config, includes []string, baseDir string, visited map[st
 				return fmt.Errorf("include[%d] (%s): failed to read directory: %w", i, includePath, err)
 			}
 			for _, file := range files {
-				if err := loadIncludeFile(cfg, i, includePath, file, visited); err != nil {
+				if err := loadIncludeFile(cfg, i, includePath, file, visited, kr); err != nil {
 					return err
 				}
 			}
 			continue
 		}
 
-		if err := loadIncludeFile(cfg, i, includePath, absPath, visited); err != nil {
+		if err := loadIncludeFile(cfg, i, includePath, absPath, visited, kr); err != nil {
 			return err
 		}
 	}
@@ -265,28 +295,27 @@ func loadIncludes(cfg *Config, includes []string, baseDir string, visited map[st
 	return nil
 }
 
-func loadIncludeFile(cfg *Config, includeIndex int, includePath string, absPath string, visited map[string]bool) error {
+func loadIncludeFile(cfg *Config, includeIndex int, includePath string, absPath string, visited map[string]bool, kr *secrets.Keyring) error {
 	if visited[absPath] {
 		return fmt.Errorf("include[%d]: circular dependency detected: %s", includeIndex, absPath)
 	}
 	visited[absPath] = true
 
-	// Load included file
-	// #nosec G304 -- config include paths are operator-controlled local inputs.
-	includedData, _ := os.ReadFile(absPath)
+	// Load included file (decrypting if age-encrypted) for source tracking.
+	includedData, _ := readConfigBytes(kr, absPath)
 	var includedNode yaml.Node
 	if err := yaml.Unmarshal(includedData, &includedNode); err == nil {
 		cfg.SourceFiles[absPath] = &includedNode
 	}
 
-	includedCfg, err := loadConfigFile(absPath, visited)
+	includedCfg, err := loadConfigFile(absPath, visited, kr)
 	if err != nil {
 		return fmt.Errorf("include[%d] (%s): %w", includeIndex, includePath, err)
 	}
 
 	// Special handling for scope files with non-YAML-serialisable fields
 	if filepath.Base(absPath) == "tokens.yaml" {
-		if err := graftTokens(cfg, absPath); err != nil {
+		if err := graftTokens(cfg, absPath, kr); err != nil {
 			return fmt.Errorf("include[%d] (%s): %w", includeIndex, includePath, err)
 		}
 	}
@@ -299,7 +328,7 @@ func loadIncludeFile(cfg *Config, includeIndex int, includePath string, absPath 
 	// If included file has its own includes, recursively load them
 	if len(includedCfg.Include) > 0 {
 		includedBaseDir := filepath.Dir(absPath)
-		if err := loadIncludes(cfg, includedCfg.Include, includedBaseDir, visited); err != nil {
+		if err := loadIncludes(cfg, includedCfg.Include, includedBaseDir, visited, kr); err != nil {
 			return err
 		}
 	}
@@ -307,7 +336,7 @@ func loadIncludeFile(cfg *Config, includeIndex int, includePath string, absPath 
 	return nil
 }
 
-func loadEnvIncludes(path string, data []byte) error {
+func loadEnvIncludes(path string, data []byte, kr *secrets.Keyring) error {
 	var envCfg struct {
 		EnvironmentVars EnvironmentVarsConfig `yaml:"environment_vars"`
 	}
@@ -331,22 +360,23 @@ func loadEnvIncludes(path string, data []byte) error {
 		if _, err := os.Stat(absPath); err != nil {
 			return fmt.Errorf("environment_vars.include[%d]: file not found: %s", i, absPath)
 		}
-		if err := loadEnvFile(absPath); err != nil {
+		if err := loadEnvFile(absPath, kr); err != nil {
 			return fmt.Errorf("environment_vars.include[%d]: %w", i, err)
 		}
 	}
 	return nil
 }
 
-func loadEnvFile(path string) error {
-	// #nosec G304 -- env include paths are operator-controlled local inputs.
-	file, err := os.Open(path)
+func loadEnvFile(path string, kr *secrets.Keyring) error {
+	// Read through the decrypting reader: a .env that holds secrets may be
+	// stored age-encrypted, and (per CONFIG_REFERENCE) env files are the
+	// recommended home for secrets, so this is exactly what must decrypt.
+	data, err := readConfigBytes(kr, path)
 	if err != nil {
-		return fmt.Errorf("failed to open env file %s: %w", path, err)
+		return fmt.Errorf("failed to read env file %s: %w", path, err)
 	}
-	defer func() { _ = file.Close() }()
 
-	scanner := bufio.NewScanner(file)
+	scanner := bufio.NewScanner(bytes.NewReader(data))
 	lineNo := 0
 	for scanner.Scan() {
 		lineNo++
@@ -385,14 +415,13 @@ func loadEnvFile(path string) error {
 
 // loadConfigFile loads and parses a single config file.
 // visited is used for cycle detection when loading includes (nil for top-level).
-func loadConfigFile(path string, visited map[string]bool) (*Config, error) {
-	// #nosec G304 -- config paths are operator-controlled local inputs.
-	data, err := os.ReadFile(path)
+func loadConfigFile(path string, visited map[string]bool, kr *secrets.Keyring) (*Config, error) {
+	data, err := readConfigBytes(kr, path)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read file: %w", err)
 	}
 
-	if err := loadEnvIncludes(path, data); err != nil {
+	if err := loadEnvIncludes(path, data, kr); err != nil {
 		return nil, err
 	}
 

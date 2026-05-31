@@ -63,6 +63,8 @@ func runCLI(cliArgs []string) int {
 		return runAPINoun(args)
 	case "stopwatch":
 		return runStopwatchNoun(args)
+	case "secrets":
+		return runSecretsNoun(args)
 
 	case "version":
 		return runVersion(args)
@@ -225,6 +227,7 @@ Core Resources (Nouns):
   job       Execution instances and lineage
   plugin    Capability discovery and management (Connectors)
   stopwatch Per-invocation timing ledger (prune retention)
+  secrets   Manage encryption-at-rest keys (keygen/encrypt/rotate)
   api       Directly call the gateway API
 
 System Commands:

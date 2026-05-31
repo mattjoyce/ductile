@@ -602,7 +602,7 @@ func (d *Dispatcher) spawnPlugin(
 	timeout time.Duration,
 	logger *slog.Logger,
 ) (*protocol.Response, protocol.ResponseCompat, json.RawMessage, []byte, string, int, error) {
-	executor := newSubprocessExecutor(d.events)
+	executor := newSubprocessExecutor(d.events, d.cfg.Service.PluginEnvPassthrough)
 	return executor.execute(ctx, pluginName, entrypoint, req, timeout, logger)
 }
 
