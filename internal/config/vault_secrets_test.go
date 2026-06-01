@@ -194,6 +194,81 @@ func TestActiveVaultSecretsExcludesRevoked(t *testing.T) {
 	}
 }
 
+// TestLoadVaultStorePresentAndKeyed — the runtime read-path entry returns the
+// decrypted Store when a keyed vault is present on disk.
+func TestLoadVaultStorePresentAndKeyed(t *testing.T) {
+	dir := t.TempDir()
+	kr := writeTestKey(t, dir)
+
+	vaultPath := filepath.Join(dir, "vault.age")
+	v, _, err := vault.Init(vaultPath, kr, time.Now())
+	if err != nil {
+		t.Fatalf("vault init: %v", err)
+	}
+	if err := v.Store().SetSecret("api", "V", nil, vault.PatternManual, time.Now()); err != nil {
+		t.Fatalf("set: %v", err)
+	}
+	if err := v.Save(); err != nil {
+		t.Fatalf("save: %v", err)
+	}
+
+	cfg := &Config{}
+	cfg.Secrets.AgeKeyFile = "age.key" // deterministic: <dir>/age.key
+
+	store, err := LoadVaultStore(dir, cfg)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if store == nil {
+		t.Fatal("expected a Store, got nil")
+	}
+	if sec, ok := store.Secret("api"); !ok || sec.Value != "V" {
+		t.Errorf("expected secret api=V, got %+v ok=%v", sec, ok)
+	}
+}
+
+// TestLoadVaultStoreNoVaultIsNil — no vault file yet (migration window) yields a
+// nil Store and no error, so the runtime simply delivers no secrets.
+func TestLoadVaultStoreNoVaultIsNil(t *testing.T) {
+	dir := t.TempDir()
+	writeTestKey(t, dir)
+
+	cfg := &Config{}
+	cfg.Secrets.AgeKeyFile = "age.key"
+
+	store, err := LoadVaultStore(dir, cfg) // no vault.age present
+	if err != nil {
+		t.Fatalf("missing vault should be (nil,nil): %v", err)
+	}
+	if store != nil {
+		t.Errorf("expected nil Store, got %v", store)
+	}
+}
+
+// TestVaultStoreKeylessIsNil — a keyless caller cannot decrypt; the shared
+// loader returns a nil Store rather than failing, mirroring the graft.
+func TestVaultStoreKeylessIsNil(t *testing.T) {
+	dir := t.TempDir()
+	kr := writeTestKey(t, dir)
+
+	vaultPath := filepath.Join(dir, "vault.age")
+	v, _, err := vault.Init(vaultPath, kr, time.Now())
+	if err != nil {
+		t.Fatalf("vault init: %v", err)
+	}
+	if err := v.Save(); err != nil {
+		t.Fatalf("save: %v", err)
+	}
+
+	store, err := vaultStore(dir, &Config{}, &secrets.Keyring{})
+	if err != nil {
+		t.Fatalf("keyless should be (nil,nil): %v", err)
+	}
+	if store != nil {
+		t.Errorf("keyless caller must get nil Store, got %v", store)
+	}
+}
+
 // TestVaultBlind — blind only when a vault exists AND we have no key.
 func TestVaultBlind(t *testing.T) {
 	dir := t.TempDir()

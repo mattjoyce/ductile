@@ -556,7 +556,24 @@ func buildRuntime(cfg *config.Config, configPath string, configSource string, re
 	)
 	rt.scheduler = sched
 	admitter := state.NewAdmitter(q, state.DefaultMaxContextBytes)
-	disp := dispatch.New(q, st, contextStore, routerEngine, registry, hub, cfg, dispatch.WithAdmitter(admitter))
+
+	// Load the vault read-path for spawn-time secret delivery. A nil Store (no
+	// vault yet, or keyless) leaves the composer unset so no secrets are
+	// delivered — back-compatible. We assign the interface only for a non-nil
+	// Store to avoid a typed-nil interface that would later panic in Compose.
+	var secretComposer dispatch.SecretComposer
+	vaultStore, err := config.LoadVaultStore(configDir, cfg)
+	if err != nil {
+		logger.Error("failed to load vault for secret delivery", "error", err)
+		return nil, fmt.Errorf("vault: %w", err)
+	}
+	if vaultStore != nil {
+		secretComposer = vaultStore
+		logger.Info("vault secret delivery enabled")
+	}
+
+	disp := dispatch.New(q, st, contextStore, routerEngine, registry, hub, cfg,
+		dispatch.WithAdmitter(admitter), dispatch.WithSecretComposer(secretComposer))
 	rt.dispatcher = disp
 
 	relayReceiver, err := relay.NewReceiver(cfg, q, routerEngine, contextStore, admitter, log.WithComponent("relay"))

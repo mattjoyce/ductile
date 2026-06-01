@@ -33,6 +33,38 @@ import (
 //   - present but broken  -> error (fail-closed: a corrupt/owned vault must not
 //     be silently skipped)
 func graftVaultSecrets(cfg *Config, configDir string, kr *secrets.Keyring) ([]string, error) {
+	store, err := vaultStore(configDir, cfg, kr)
+	if err != nil {
+		return nil, err
+	}
+	if store == nil {
+		return nil, nil // no vault / keyless: resolve against tokens.yaml only
+	}
+
+	merged, warnings := mergeVaultSecrets(cfg.Tokens, activeVaultSecrets(store))
+	cfg.Tokens = merged
+	return warnings, nil
+}
+
+// LoadVaultStore resolves the keyring and loads the decrypted vault Store for
+// the active config, or nil when there is no vault to load. It is the runtime's
+// entry point for obtaining the in-memory vault model — both the load-time
+// secret graft and the spawn-time secret composer resolve through vaultStore.
+//
+// Degradation mirrors graftVaultSecrets: no vault file or a keyless caller
+// yields (nil, nil); a present-but-broken vault is a hard error (fail-closed).
+func LoadVaultStore(configDir string, cfg *Config) (*vault.Store, error) {
+	kr, err := resolveKeyring(configDir, cfg)
+	if err != nil {
+		return nil, err
+	}
+	return vaultStore(configDir, cfg, kr)
+}
+
+// vaultStore loads the decrypted Store given an already-resolved keyring. It is
+// the single home for the vault's load-time degradation rules (see
+// graftVaultSecrets for the rationale), shared by the graft and LoadVaultStore.
+func vaultStore(configDir string, cfg *Config, kr *secrets.Keyring) (*vault.Store, error) {
 	path := resolveVaultPath(configDir, cfg)
 	if path == "" {
 		return nil, nil
@@ -44,17 +76,14 @@ func graftVaultSecrets(cfg *Config, configDir string, kr *secrets.Keyring) ([]st
 		return nil, fmt.Errorf("vault: stat %q: %w", path, err)
 	}
 	if kr == nil || kr.Empty() {
-		return nil, nil // keyless: cannot decrypt; resolve against tokens.yaml only
+		return nil, nil // keyless: cannot decrypt
 	}
 
 	v, err := vault.Load(path, kr)
 	if err != nil {
 		return nil, err // present + keyed but broken: fail-closed
 	}
-
-	merged, warnings := mergeVaultSecrets(cfg.Tokens, activeVaultSecrets(v.Store()))
-	cfg.Tokens = merged
-	return warnings, nil
+	return v.Store(), nil
 }
 
 // mergeVaultSecrets overlays vault secret values onto the legacy token table.

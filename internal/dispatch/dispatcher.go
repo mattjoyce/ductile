@@ -50,6 +50,10 @@ type Dispatcher struct {
 	events   *events.Hub
 	logger   *slog.Logger
 
+	// secretComposer resolves per-plugin vault secrets delivered over stdin at
+	// spawn. Nil when no vault is wired, in which case no secrets are delivered.
+	secretComposer SecretComposer
+
 	// completions tracks jobs being waited on for synchronous execution.
 	// Map key is root job ID. Value is a channel that is closed when the tree is complete.
 	completions    map[string]chan struct{}
@@ -75,6 +79,16 @@ type Option func(*Dispatcher)
 func WithAdmitter(a AdmissionGate) Option {
 	return func(d *Dispatcher) {
 		d.admitter = a
+	}
+}
+
+// WithSecretComposer wires the vault read-path that composes a plugin's
+// authorized secrets for stdin delivery at spawn. When omitted (nil), no
+// secrets are delivered and plugins resolve as before — so this is additive and
+// back-compatible. The production runtime supplies the loaded *vault.Store.
+func WithSecretComposer(c SecretComposer) Option {
+	return func(d *Dispatcher) {
+		d.secretComposer = c
 	}
 }
 
@@ -346,6 +360,18 @@ func (d *Dispatcher) executeJob(ctx context.Context, job *queue.Job) {
 		Context:    requestContext,
 		DeadlineAt: deadline,
 	}
+
+	// Compose the plugin's authorized vault secrets for stdin delivery. A revoked
+	// principal (or any non-opt-out composer error) fails the job closed — the
+	// plugin must not run when an explicit authorization signal is in error.
+	secrets, err := composePluginSecrets(d.secretComposer, job.Plugin, jobLogger)
+	if err != nil {
+		errMsg := fmt.Sprintf("secret composition failed: %v", err)
+		jobLogger.Error(errMsg)
+		d.completeJob(ctx, jobLogger, job.ID, job.Plugin, job.StartedAt, queue.StatusFailed, nil, &errMsg, nil)
+		return
+	}
+	req.Secrets = secrets
 
 	// Include payload if present
 	if len(job.Payload) > 0 {

@@ -4,15 +4,20 @@ import "time"
 
 // Request represents the protocol v2 request envelope sent to plugins via stdin.
 type Request struct {
-	Protocol   int            `json:"protocol"`
-	JobID      string         `json:"job_id"`
-	Command    string         `json:"command"` // poll | handle | health | init | custom
-	Config     map[string]any `json:"config"`
-	State      map[string]any `json:"state"`
-	Payload    map[string]any `json:"payload,omitempty"`
-	Context    map[string]any `json:"context,omitempty"`
-	Event      *Event         `json:"event,omitempty"` // only for handle command
-	DeadlineAt time.Time      `json:"deadline_at"`
+	Protocol int            `json:"protocol"`
+	JobID    string         `json:"job_id"`
+	Command  string         `json:"command"` // poll | handle | health | init | custom
+	Config   map[string]any `json:"config"`
+	// Secrets carries the plugin's composed, authorized secrets, delivered over
+	// stdin at spawn (never env, never argv). Distinct from Config: secrets are
+	// authorization-scoped per principal, not configuration. Empty/absent when
+	// the plugin is not a vault principal.
+	Secrets    map[string]string `json:"secrets,omitempty"`
+	State      map[string]any    `json:"state"`
+	Payload    map[string]any    `json:"payload,omitempty"`
+	Context    map[string]any    `json:"context,omitempty"`
+	Event      *Event            `json:"event,omitempty"` // only for handle command
+	DeadlineAt time.Time         `json:"deadline_at"`
 }
 
 // Response represents the protocol v2 response envelope received from plugins via stdout.
