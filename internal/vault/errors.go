@@ -12,6 +12,7 @@ var (
 	ErrInvalidPattern     = errors.New("vault: invalid secret pattern")
 	ErrDuplicatePrincipal = errors.New("vault: principal already registered")
 	ErrUnknownPrincipal   = errors.New("vault: unknown principal")
+	ErrPrincipalInactive  = errors.New("vault: principal is not active")
 	ErrUnknownSecret      = errors.New("vault: unknown secret")
 	ErrSecretRevoked      = errors.New("vault: secret is revoked")
 )
