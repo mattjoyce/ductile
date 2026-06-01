@@ -1,0 +1,4 @@
+## 2025-02-21 - Fix SQL injection in SQLite schema validation
+**Vulnerability:** SQL injection in `internal/storage/sqlite.go` due to using `fmt.Sprintf` to concatenate the table name into `PRAGMA table_info(%s);` when checking if a schema column exists.
+**Learning:** Even internal toolings or internal schema validation queries against SQLite need strict parameters. While `PRAGMA` statements typically do not support parameterized variables, the table-valued function `pragma_table_info(?)` does, providing a secure alternative for metadata extraction.
+**Prevention:** Avoid string formatting to construct SQL queries, especially for tables or object names. When retrieving metadata in SQLite, prefer parameterized PRAGMA functions like `SELECT * FROM pragma_table_info(?)` over direct string interpolation.
