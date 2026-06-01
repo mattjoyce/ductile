@@ -149,10 +149,10 @@ func (rm *reloadManager) Reload(ctx context.Context) (api.ReloadResponse, error)
 	if err != nil {
 		return api.ReloadResponse{Status: "error", Message: err.Error()}, err
 	}
-	// P2-10: source strict_mode policy from the RUNNING config (oldCfg), not the
-	// proposed newCfg — otherwise an attacker could relax admission by setting
-	// strict_mode: false in the very reload they are trying to push.
-	if err := verifyReloadIntegrity(rm.configPath, oldCfg.Service.StrictMode); err != nil {
+	// P2-10: source the fail_on_drift policy from the RUNNING config (oldCfg),
+	// not the proposed newCfg — otherwise an attacker could relax admission by
+	// disabling it in the very reload they are trying to push.
+	if err := verifyReloadIntegrity(rm.configPath, oldCfg.Service.AdmissionPolicy().FailOnDrift); err != nil {
 		return api.ReloadResponse{Status: "error", Message: err.Error()}, err
 	}
 	if err := validateReloadableFields(oldCfg, newCfg); err != nil {
@@ -230,13 +230,13 @@ func resolveConfigDir(configPath string) string {
 }
 
 // verifyReloadIntegrity validates the on-disk config against the .checksums manifest
-// and plugin fingerprint locks. P2-10: when strict is true, operational tier warnings
+// and plugin fingerprint locks. When failOnDrift is true, operational tier warnings
 // (e.g. config.yaml or routes.yaml drift) are promoted to admission failures so the
-// reload is rejected. When strict is false, operational warnings stay warnings —
+// reload is rejected. When failOnDrift is false, operational warnings stay warnings —
 // only high-security file mismatches and plugin fingerprint mismatches reject. The
-// strict flag should come from the running config's service.strict_mode so that an
+// failOnDrift flag should come from the RUNNING config's admission policy so that an
 // attacker cannot relax policy via the very reload they are trying to push.
-func verifyReloadIntegrity(configPath string, strict bool) error {
+func verifyReloadIntegrity(configPath string, failOnDrift bool) error {
 	configDir := resolveConfigDir(configPath)
 	files, err := config.DiscoverConfigFiles(configDir)
 	if err != nil {
@@ -249,8 +249,8 @@ func verifyReloadIntegrity(configPath string, strict bool) error {
 	if !result.Passed {
 		return fmt.Errorf("config reload rejected: %s", strings.Join(result.Errors, "; "))
 	}
-	if strict && len(result.Warnings) > 0 {
-		return fmt.Errorf("config reload rejected (strict_mode): operational drift: %s", strings.Join(result.Warnings, "; "))
+	if failOnDrift && len(result.Warnings) > 0 {
+		return fmt.Errorf("config reload rejected (admission.fail_on_drift): operational drift: %s", strings.Join(result.Warnings, "; "))
 	}
 	if err := verifyPluginFingerprintsForConfig(configPath); err != nil {
 		return fmt.Errorf("config reload rejected: %v", err)
@@ -417,31 +417,37 @@ func buildRuntime(cfg *config.Config, configPath string, configSource string, re
 		)
 	}
 
-	// Strict mode enforcement. P2-10: route through verifyReloadIntegrity with
-	// strict=true so startup and reload share one admission gate — operational
-	// drift fails both, not just one.
-	if cfg.Service.StrictMode {
-		logger.Info("strict mode enabled, performing pre-flight checks")
+	// Admission-control enforcement. Each policy is independent (decomplected from
+	// the former bundled strict_mode). At reload, fail_on_drift is sourced from the
+	// running config; here at boot every policy reads from cfg directly.
+	if w := cfg.Service.StrictModeDeprecationWarning(); w != "" {
+		logger.Warn(w)
+	}
+	admission := cfg.Service.AdmissionPolicy()
 
-		if err := verifyReloadIntegrity(configPath, true); err != nil {
-			logger.Error("integrity check failed (strict mode)", "error", err)
+	if admission.VerifyIntegrityOnBoot {
+		logger.Info("admission: verifying config integrity at boot", "fail_on_drift", admission.FailOnDrift)
+		if err := verifyReloadIntegrity(configPath, admission.FailOnDrift); err != nil {
+			logger.Error("integrity check failed (admission.verify_integrity_on_boot)", "error", err)
 			return nil, fmt.Errorf("integrity check failed: %w", err)
 		}
+	}
 
+	if admission.ValidateConfigOnBoot {
 		doc := doctor.New(cfg, registry)
 		report := doc.Validate()
 		if !report.Valid {
-			logger.Error("configuration validation failed (strict mode)")
+			logger.Error("configuration validation failed (admission.validate_config_on_boot)")
 			for _, e := range report.Errors {
 				logger.Error("config error", "detail", e)
 			}
 			return nil, fmt.Errorf("configuration validation failed")
 		}
+	}
 
-		if cfg.API.Enabled && len(cfg.API.Auth.Tokens) == 0 {
-			logger.Error("no API tokens configured (strict mode requires at least one token when API is enabled)")
-			return nil, fmt.Errorf("no API tokens configured")
-		}
+	if admission.RequireAPIAuth && cfg.API.Enabled && len(cfg.API.Auth.Tokens) == 0 {
+		logger.Error("no API tokens configured (admission.require_api_auth requires at least one token when API is enabled)")
+		return nil, fmt.Errorf("no API tokens configured")
 	}
 
 	logger.Info("ductile starting", "version", version, "config", configPath)

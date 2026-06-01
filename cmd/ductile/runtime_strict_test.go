@@ -50,9 +50,9 @@ func TestVerifyReloadIntegrityStrictRejectsOperationalMismatch(t *testing.T) {
 		"routes:\n  - name: tampered\n")
 
 	if err := verifyReloadIntegrity(configPath, true); err == nil {
-		t.Fatal("expected strict-mode reload to reject operational mismatch, got nil")
-	} else if !strings.Contains(err.Error(), "strict") {
-		t.Errorf("error should mention strict mode, got: %v", err)
+		t.Fatal("expected fail_on_drift reload to reject operational mismatch, got nil")
+	} else if !strings.Contains(err.Error(), "drift") {
+		t.Errorf("error should mention drift, got: %v", err)
 	}
 }
 

@@ -372,7 +372,7 @@ func sanitizeConfig(cfg *config.Config) (map[string]any, []SecretUse) {
 			"job_log_retention":   durationString(cfg.Service.JobLogRetention),
 			"job_queue_retention": durationString(cfg.Service.JobQueueRetention),
 			"max_workers":         cfg.Service.MaxWorkers,
-			"strict_mode":         cfg.Service.StrictMode,
+			"admission":           renderAdmission(cfg.Service.AdmissionPolicy()),
 			"allow_symlinks":      cfg.Service.AllowSymlinks,
 		},
 		"state": map[string]any{
@@ -548,6 +548,18 @@ func durationString(d time.Duration) string {
 		return ""
 	}
 	return d.String()
+}
+
+// renderAdmission renders the resolved (alias-applied) admission policy so the
+// snapshot reflects what the daemon actually enforces, not the raw strict_mode
+// alias — there is one authoritative admission view, not two.
+func renderAdmission(a config.AdmissionConfig) map[string]any {
+	return map[string]any{
+		"verify_integrity_on_boot": a.VerifyIntegrityOnBoot,
+		"fail_on_drift":            a.FailOnDrift,
+		"validate_config_on_boot":  a.ValidateConfigOnBoot,
+		"require_api_auth":         a.RequireAPIAuth,
+	}
 }
 
 func renderRetry(retry *config.RetryConfig) any {

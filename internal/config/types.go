@@ -61,8 +61,15 @@ type ServiceConfig struct {
 	// children on top of the built-in spawn-hygiene allowlist. Use sparingly:
 	// every name here is one the child sees from the gateway's environment.
 	PluginEnvPassthrough []string `yaml:"plugin_env_passthrough,omitempty"`
-	StrictMode           bool     `yaml:"strict_mode"`
-	AllowSymlinks        bool     `yaml:"allow_symlinks"`
+	// Admission decomplects the four independent admission-control policies that
+	// strict_mode used to bundle. When present it is authoritative; when absent
+	// the deprecated StrictMode alias is consulted (see AdmissionPolicy).
+	Admission *AdmissionConfig `yaml:"admission,omitempty"`
+	// StrictMode is the DEPRECATED bundled switch. strict_mode: true is an alias
+	// that enables all four admission policies; prefer the explicit admission
+	// block. Retained for back-compat (a coexistence window, like tokens.yaml).
+	StrictMode    bool `yaml:"strict_mode"`
+	AllowSymlinks bool `yaml:"allow_symlinks"`
 	// HookMaxDepth caps the on-hook lifecycle chain depth. A root job that fires
 	// a hook produces a depth-1 hook job; if that hook job itself fires a hook
 	// (because its plugin has notify_on_complete: true), the next would-be hook
@@ -70,6 +77,54 @@ type ServiceConfig struct {
 	// Set to 0 to use the default (DefaultHookMaxDepth). Negative is rejected
 	// by config validation. P2-11.
 	HookMaxDepth int `yaml:"hook_max_depth,omitempty"`
+}
+
+// AdmissionConfig is the decomplected set of admission-control policies that the
+// daemon applies when admitting a config — at boot and at reload. Each field is
+// an independent gate; the old strict_mode boolean welded all four together.
+type AdmissionConfig struct {
+	// VerifyIntegrityOnBoot runs the .checksums + plugin-fingerprint preflight at
+	// startup. (Reload always verifies integrity regardless of this flag.)
+	VerifyIntegrityOnBoot bool `yaml:"verify_integrity_on_boot"`
+	// FailOnDrift promotes operational config/routes drift (otherwise warnings)
+	// to admission failures — at both boot and reload.
+	FailOnDrift bool `yaml:"fail_on_drift"`
+	// ValidateConfigOnBoot requires doctor.Validate() to pass at startup.
+	ValidateConfigOnBoot bool `yaml:"validate_config_on_boot"`
+	// RequireAPIAuth rejects an enabled API that has no auth tokens configured.
+	RequireAPIAuth bool `yaml:"require_api_auth"`
+}
+
+// AdmissionPolicy resolves the effective admission policy. An explicit admission
+// block is authoritative. Otherwise the deprecated strict_mode alias maps to
+// all-policies-on; with neither set, every policy is off (today's zero-value
+// default — a permissive deployment).
+func (s ServiceConfig) AdmissionPolicy() AdmissionConfig {
+	if s.Admission != nil {
+		return *s.Admission
+	}
+	if s.StrictMode {
+		return AdmissionConfig{
+			VerifyIntegrityOnBoot: true,
+			FailOnDrift:           true,
+			ValidateConfigOnBoot:  true,
+			RequireAPIAuth:        true,
+		}
+	}
+	return AdmissionConfig{}
+}
+
+// StrictModeDeprecationWarning returns a non-empty operator warning when the
+// deprecated strict_mode field is in use, or "" when it is not. A co-present
+// admission block means strict_mode is being silently superseded — say so.
+func (s ServiceConfig) StrictModeDeprecationWarning() string {
+	if !s.StrictMode {
+		return ""
+	}
+	if s.Admission != nil {
+		return "service.strict_mode is deprecated and ignored because service.admission is set; remove strict_mode"
+	}
+	return "service.strict_mode is deprecated; replace it with an explicit service.admission block"
 }
 
 // StateConfig defines state storage settings.

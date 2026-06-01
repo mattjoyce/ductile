@@ -35,7 +35,7 @@ Before starting, the system verifies all files against a monolithic `.checksums`
 | Tier | Files | Missing/Mismatch Behavior |
 | :--- | :--- | :--- |
 | **High Security** | `tokens.yaml`, `webhooks.yaml`, `scopes/*.json` | **Hard Fail**: System refuses to start (EX_CONFIG). |
-| **Operational** | `config.yaml`, `routes.yaml`, `relay-instances.yaml`, `relay-ingress.yaml` | **Warn & Continue**: Logs a warning but loads the file (Unless `strict_mode: true` is set, in which case it is a **Hard Fail**). |
+| **Operational** | `config.yaml`, `routes.yaml`, `relay-instances.yaml`, `relay-ingress.yaml` | **Warn & Continue**: Logs a warning but loads the file (Unless `service.admission.fail_on_drift: true` is set, in which case it is a **Hard Fail**). |
 
 ### 2.1 The Seal (`.checksums`)
 The `.checksums` file is a YAML manifest containing BLAKE3 hashes indexed by the **absolute path** of every authorized file.
@@ -137,7 +137,14 @@ service:
   job_queue_retention: 24h
   # Omit to use the default: max(1, CPU-1). Set to 1 to force global serial dispatch.
   max_workers: 4
-  strict_mode: true  # Enforce integrity & configuration checks on startup
+  # Admission control: four independent gates the daemon applies at boot/reload.
+  # Each defaults to false (permissive). Enable only what you need.
+  admission:
+    verify_integrity_on_boot: true   # run .checksums + fingerprint preflight at startup
+    fail_on_drift: true              # operational config/routes drift -> reject (boot & reload)
+    validate_config_on_boot: true    # require config validation to pass at startup
+    require_api_auth: true           # reject an enabled API with no auth tokens
+  # strict_mode: true  # DEPRECATED alias — enables all four admission gates above
 
 plugin_roots:
   - /opt/ductile/plugins

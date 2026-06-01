@@ -434,13 +434,15 @@ func printConfigSetHelp() {
 
 func runConfigCheck(args []string) int {
 	var configPath, configDir string
-	var strict, jsonOut bool
+	var strict, strictAlias, jsonOut bool
 	var format string
 
 	fs := flag.NewFlagSet("check", flag.ExitOnError)
 	fs.StringVar(&configPath, "config", "", "Path to configuration")
 	fs.StringVar(&configDir, "config-dir", "", "Path to configuration directory")
-	fs.BoolVar(&strict, "strict", false, "Treat warnings as errors")
+	fs.BoolVar(&strict, "fail-on-warnings", false, "Treat warnings as errors")
+	// --strict is the deprecated alias for --fail-on-warnings, kept for back-compat.
+	fs.BoolVar(&strictAlias, "strict", false, "Deprecated alias for --fail-on-warnings")
 	fs.StringVar(&format, "format", "human", "Output format (human, json)")
 	// Handle -json alias for format=json
 	fs.BoolVar(&jsonOut, "json", false, "Output in JSON")
@@ -448,6 +450,11 @@ func runConfigCheck(args []string) int {
 	if err := fs.Parse(args); err != nil {
 		fmt.Fprintf(os.Stderr, "Flag error: %v\n", err)
 		return 1
+	}
+
+	if strictAlias {
+		fmt.Fprintln(os.Stderr, "Note: --strict is deprecated; use --fail-on-warnings")
+		strict = true
 	}
 
 	if jsonOut {

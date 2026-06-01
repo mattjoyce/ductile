@@ -115,12 +115,15 @@ To prevent unauthorized modifications to sensitive files (like `tokens.yaml` or 
     ductile config check
     ```
 
-### Strict Mode
-For hardened environments, enable `service.strict_mode: true` in your `config.yaml`.
-In strict mode:
-- The system **will not start** if any file fails integrity verification (no warnings).
-- The system **will not start** if any configuration check fails (e.g., missing dependencies).
-- The system **requires** at least one API token to be defined if the API is enabled.
+### Admission Control
+For hardened environments, enable the `service.admission` gates in your `config.yaml`.
+Each is independent — turn on only what you need:
+- `verify_integrity_on_boot: true` — the system **will not start** if any file fails integrity verification at boot.
+- `fail_on_drift: true` — operational config/routes drift becomes a **hard fail** (boot and reload), not just a warning.
+- `validate_config_on_boot: true` — the system **will not start** if any configuration check fails (e.g., missing dependencies).
+- `require_api_auth: true` — the system **requires** at least one API token if the API is enabled.
+
+> **Deprecated:** `service.strict_mode: true` is a back-compat alias that enables all four gates at once. Prefer the explicit `admission` block; the daemon logs a warning when `strict_mode` is used.
 
 ### Managing Scoped Tokens
 Create scoped API tokens by passing scopes directly or by providing a scopes JSON file:
