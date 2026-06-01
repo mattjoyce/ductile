@@ -103,15 +103,24 @@ func (v *Vault) Compose(principal string) (Composition, error) {
 // the on-disk Save fails, the model is rolled back to the last persisted state
 // so memory and disk never diverge.
 func (v *Vault) SetSecret(name, value string, authorizedPrincipals []string, pattern string, now time.Time) error {
+	return v.mutate(func(s *Store) error {
+		return s.SetSecret(name, value, authorizedPrincipals, pattern, now)
+	})
+}
+
+// mutate runs a pure model mutation under the write lock and persists it,
+// atomically: fn either errors before mutating (the pure ops validate first, so
+// the model is untouched) or succeeds, after which the blob is Saved. If the
+// Save fails, the in-memory model is rolled back to the last persisted state so
+// memory and disk never diverge. fn must not perform I/O — only mutate s.
+func (v *Vault) mutate(fn func(*Store) error) error {
 	v.mu.Lock()
 	defer v.mu.Unlock()
 
-	if err := v.store.SetSecret(name, value, authorizedPrincipals, pattern, now); err != nil {
+	if err := fn(v.store); err != nil {
 		return err // validated before mutating: model unchanged
 	}
 	if err := v.Save(); err != nil {
-		// Persist failed: revert the in-memory mutation to the last persisted
-		// baseline. A rollback-parse failure is itself fatal and surfaced.
 		if rbErr := v.restoreFromLastYAML(); rbErr != nil {
 			return fmt.Errorf("%w (rollback also failed: %v)", err, rbErr)
 		}
