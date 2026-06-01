@@ -194,9 +194,9 @@ func TestActiveVaultSecretsExcludesRevoked(t *testing.T) {
 	}
 }
 
-// TestLoadVaultStorePresentAndKeyed — the runtime read-path entry returns the
-// decrypted Store when a keyed vault is present on disk.
-func TestLoadVaultStorePresentAndKeyed(t *testing.T) {
+// TestLoadVaultPresentAndKeyed — the runtime entry returns the vault owner when
+// a keyed vault is present on disk.
+func TestLoadVaultPresentAndKeyed(t *testing.T) {
 	dir := t.TempDir()
 	kr := writeTestKey(t, dir)
 
@@ -215,33 +215,33 @@ func TestLoadVaultStorePresentAndKeyed(t *testing.T) {
 	cfg := &Config{}
 	cfg.Secrets.AgeKeyFile = "age.key" // deterministic: <dir>/age.key
 
-	store, err := LoadVaultStore(dir, cfg)
+	owner, err := LoadVault(dir, cfg)
 	if err != nil {
 		t.Fatalf("load: %v", err)
 	}
-	if store == nil {
-		t.Fatal("expected a Store, got nil")
+	if owner == nil {
+		t.Fatal("expected a Vault owner, got nil")
 	}
-	if sec, ok := store.Secret("api"); !ok || sec.Value != "V" {
+	if sec, ok := owner.Store().Secret("api"); !ok || sec.Value != "V" {
 		t.Errorf("expected secret api=V, got %+v ok=%v", sec, ok)
 	}
 }
 
-// TestLoadVaultStoreNoVaultIsNil — no vault file yet (migration window) yields a
-// nil Store and no error, so the runtime simply delivers no secrets.
-func TestLoadVaultStoreNoVaultIsNil(t *testing.T) {
+// TestLoadVaultNoVaultIsNil — no vault file yet (migration window) yields a nil
+// owner and no error, so the runtime simply delivers no secrets.
+func TestLoadVaultNoVaultIsNil(t *testing.T) {
 	dir := t.TempDir()
 	writeTestKey(t, dir)
 
 	cfg := &Config{}
 	cfg.Secrets.AgeKeyFile = "age.key"
 
-	store, err := LoadVaultStore(dir, cfg) // no vault.age present
+	owner, err := LoadVault(dir, cfg) // no vault.age present
 	if err != nil {
 		t.Fatalf("missing vault should be (nil,nil): %v", err)
 	}
-	if store != nil {
-		t.Errorf("expected nil Store, got %v", store)
+	if owner != nil {
+		t.Errorf("expected nil owner, got %v", owner)
 	}
 }
 

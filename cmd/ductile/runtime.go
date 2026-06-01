@@ -557,18 +557,20 @@ func buildRuntime(cfg *config.Config, configPath string, configSource string, re
 	rt.scheduler = sched
 	admitter := state.NewAdmitter(q, state.DefaultMaxContextBytes)
 
-	// Load the vault read-path for spawn-time secret delivery. A nil Store (no
-	// vault yet, or keyless) leaves the composer unset so no secrets are
-	// delivered — back-compatible. We assign the interface only for a non-nil
-	// Store to avoid a typed-nil interface that would later panic in Compose.
+	// Load the vault owner — the single guarded holder of the decrypted model.
+	// The daemon routes the spawn-time read path (Compose) and management writes
+	// (SetSecret) through this one owner. A nil owner (no vault yet, or keyless)
+	// leaves the composer unset so no secrets are delivered — back-compatible. We
+	// assign the interface only for a non-nil owner to avoid a typed-nil
+	// interface that would later panic in Compose.
 	var secretComposer dispatch.SecretComposer
-	vaultStore, err := config.LoadVaultStore(configDir, cfg)
+	vaultOwner, err := config.LoadVault(configDir, cfg)
 	if err != nil {
-		logger.Error("failed to load vault for secret delivery", "error", err)
+		logger.Error("failed to load vault", "error", err)
 		return nil, fmt.Errorf("vault: %w", err)
 	}
-	if vaultStore != nil {
-		secretComposer = vaultStore
+	if vaultOwner != nil {
+		secretComposer = vaultOwner
 		logger.Info("vault secret delivery enabled")
 	}
 
@@ -631,6 +633,12 @@ func buildRuntime(cfg *config.Config, configPath string, configSource string, re
 			},
 			RelayReceiver:  relayReceiver,
 			AllowedOrigins: cfg.API.AllowedOrigins,
+		}
+		// Expose the vault management API only when a vault owner exists. Assign
+		// the interface field solely for a non-nil owner: a typed-nil *vault.Vault
+		// would make the interface non-nil and register routes that then panic.
+		if vaultOwner != nil {
+			apiConfig.Vault = vaultOwner
 		}
 		apiServer := api.New(apiConfig, q, registry, routerEngine, disp, contextStore, admitter, st, hub, log.WithComponent("api"))
 		rt.apiServer = apiServer

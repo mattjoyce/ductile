@@ -2,9 +2,12 @@ package vault
 
 import (
 	"bytes"
+	"crypto/subtle"
 	"fmt"
 	"os"
 	"path/filepath"
+	"sync"
+	"time"
 
 	"github.com/mattjoyce/ductile/internal/secrets"
 	"gopkg.in/yaml.v3"
@@ -20,6 +23,12 @@ import (
 // *plaintext* form, not ciphertext: age is non-deterministic, so equal models
 // would still produce different ciphertext.
 type Vault struct {
+	// mu makes the Vault the goroutine-safe sole-writer owner of its model:
+	// guarded reads (Compose) take RLock, the writer (SetSecret) takes Lock and
+	// persists under it. The Store stays a pure, lock-free model; concurrency is
+	// the owner's concern. Direct Store() access bypasses the lock and is for
+	// single-threaded contexts only (genesis, import, tests).
+	mu       sync.RWMutex
 	path     string
 	keyring  *secrets.Keyring
 	store    *Store
@@ -71,8 +80,81 @@ func Load(path string, kr *secrets.Keyring) (*Vault, error) {
 }
 
 // Store returns the resident in-memory model. Mutations are not persisted until
-// Save.
+// Save. This bypasses the owner's lock — use only in single-threaded contexts
+// (genesis, import, tests). Concurrent runtime access goes through the guarded
+// methods (Compose, SetSecret).
 func (v *Vault) Store() *Store { return v.store }
+
+// Compose resolves a principal's authorized secrets under a read lock, so it is
+// safe to call concurrently with other reads and with SetSecret. It is the
+// daemon's spawn-time read path (satisfies dispatch.SecretComposer).
+func (v *Vault) Compose(principal string) (Composition, error) {
+	v.mu.RLock()
+	defer v.mu.RUnlock()
+	return v.store.Compose(principal)
+}
+
+// SetSecret is the guarded sole-writer mutation: it upserts a secret and
+// persists the blob as one critical section, so concurrent Compose readers
+// never observe a half-applied or unpersisted change.
+//
+// Atomicity contract: a validation failure leaves the model untouched (the pure
+// SetSecret validates before mutating). If the in-memory mutation succeeds but
+// the on-disk Save fails, the model is rolled back to the last persisted state
+// so memory and disk never diverge.
+func (v *Vault) SetSecret(name, value string, authorizedPrincipals []string, pattern string, now time.Time) error {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+
+	if err := v.store.SetSecret(name, value, authorizedPrincipals, pattern, now); err != nil {
+		return err // validated before mutating: model unchanged
+	}
+	if err := v.Save(); err != nil {
+		// Persist failed: revert the in-memory mutation to the last persisted
+		// baseline. A rollback-parse failure is itself fatal and surfaced.
+		if rbErr := v.restoreFromLastYAML(); rbErr != nil {
+			return fmt.Errorf("%w (rollback also failed: %v)", err, rbErr)
+		}
+		return err
+	}
+	return nil
+}
+
+// AuthenticateAdmin reports whether presented matches the vault's resident
+// admin token (constant-time), under a read lock. This is the management-API
+// credential check: the admin token is minted by genesis (vault init), lives
+// inside the vault, and is rotatable by a normal write — so vault-write
+// authorization never depends on a config-defined token. A revoked admin token
+// authenticates no one.
+func (v *Vault) AuthenticateAdmin(presented string) bool {
+	v.mu.RLock()
+	defer v.mu.RUnlock()
+	sec, ok := v.store.Secrets[AdminTokenSecret]
+	if !ok || sec.Status != StatusActive {
+		return false
+	}
+	return subtle.ConstantTimeCompare([]byte(presented), []byte(sec.Value)) == 1
+}
+
+// restoreFromLastYAML rebuilds the resident model from the last persisted
+// canonical plaintext, reverting an unpersisted mutation. Callers hold v.mu.
+func (v *Vault) restoreFromLastYAML() error {
+	if v.lastYAML == nil {
+		return fmt.Errorf("vault: cannot roll back: no persisted baseline")
+	}
+	var s Store
+	if err := yaml.Unmarshal(v.lastYAML, &s); err != nil {
+		return fmt.Errorf("vault: roll back parse: %w", err)
+	}
+	if s.Secrets == nil {
+		s.Secrets = make(map[string]*Secret)
+	}
+	if s.Principals == nil {
+		s.Principals = make(map[string]*Principal)
+	}
+	v.store = &s
+	return nil
+}
 
 // Path returns the on-disk location of the blob.
 func (v *Vault) Path() string { return v.path }

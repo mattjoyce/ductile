@@ -46,25 +46,26 @@ func graftVaultSecrets(cfg *Config, configDir string, kr *secrets.Keyring) ([]st
 	return warnings, nil
 }
 
-// LoadVaultStore resolves the keyring and loads the decrypted vault Store for
-// the active config, or nil when there is no vault to load. It is the runtime's
-// entry point for obtaining the in-memory vault model — both the load-time
-// secret graft and the spawn-time secret composer resolve through vaultStore.
+// LoadVault resolves the keyring and loads the vault *owner* for the active
+// config, or nil when there is no vault to load. It is the runtime's entry point
+// for the in-memory vault model: the daemon holds this single owner and routes
+// both the spawn-time read path (Compose) and management writes (SetSecret)
+// through it.
 //
 // Degradation mirrors graftVaultSecrets: no vault file or a keyless caller
 // yields (nil, nil); a present-but-broken vault is a hard error (fail-closed).
-func LoadVaultStore(configDir string, cfg *Config) (*vault.Store, error) {
+func LoadVault(configDir string, cfg *Config) (*vault.Vault, error) {
 	kr, err := resolveKeyring(configDir, cfg)
 	if err != nil {
 		return nil, err
 	}
-	return vaultStore(configDir, cfg, kr)
+	return loadVaultOwner(configDir, cfg, kr)
 }
 
-// vaultStore loads the decrypted Store given an already-resolved keyring. It is
+// loadVaultOwner loads the vault owner given an already-resolved keyring. It is
 // the single home for the vault's load-time degradation rules (see
-// graftVaultSecrets for the rationale), shared by the graft and LoadVaultStore.
-func vaultStore(configDir string, cfg *Config, kr *secrets.Keyring) (*vault.Store, error) {
+// graftVaultSecrets for the rationale), shared by the graft and LoadVault.
+func loadVaultOwner(configDir string, cfg *Config, kr *secrets.Keyring) (*vault.Vault, error) {
 	path := resolveVaultPath(configDir, cfg)
 	if path == "" {
 		return nil, nil
@@ -82,6 +83,16 @@ func vaultStore(configDir string, cfg *Config, kr *secrets.Keyring) (*vault.Stor
 	v, err := vault.Load(path, kr)
 	if err != nil {
 		return nil, err // present + keyed but broken: fail-closed
+	}
+	return v, nil
+}
+
+// vaultStore loads the decrypted Store given an already-resolved keyring, for
+// the load-time graft (which needs the pure model, not the guarded owner).
+func vaultStore(configDir string, cfg *Config, kr *secrets.Keyring) (*vault.Store, error) {
+	v, err := loadVaultOwner(configDir, cfg, kr)
+	if err != nil || v == nil {
+		return nil, err
 	}
 	return v.Store(), nil
 }
