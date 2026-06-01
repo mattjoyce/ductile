@@ -21,6 +21,7 @@ import (
 	"github.com/mattjoyce/ductile/internal/doctor"
 	"github.com/mattjoyce/ductile/internal/plugin"
 	"github.com/mattjoyce/ductile/internal/router/dsl"
+	"github.com/mattjoyce/ductile/internal/secrets"
 	"gopkg.in/yaml.v3"
 )
 
@@ -1131,6 +1132,16 @@ func refreshConfigIntegrity(configDir string) error {
 	return config.GenerateChecksumsFromDiscovery(files, false)
 }
 
+// errEncryptedTokens redirects the legacy, non-age-aware config-token path away
+// from an age-encrypted tokens file. The vault owns encrypted secrets now;
+// reading would yield ciphertext and writing would clobber it with plaintext
+// (and drop a decryptable .bak), so we refuse and point at the vault. ADR §7/§8.
+func errEncryptedTokens(path string) error {
+	return fmt.Errorf("tokens file %q is age-encrypted; the legacy 'config token' / 'config set' commands "+
+		"are not age-aware and would clobber it.\n"+
+		"Manage encrypted secrets through the vault instead: 'ductile vault set' / 'ductile vault import'", path)
+}
+
 func loadTokensFile(path string) (*config.TokensFileConfig, error) {
 	// #nosec G304 -- config paths are operator-controlled local inputs.
 	raw, err := os.ReadFile(path)
@@ -1139,6 +1150,9 @@ func loadTokensFile(path string) (*config.TokensFileConfig, error) {
 			return &config.TokensFileConfig{Tokens: []config.TokenEntry{}}, nil
 		}
 		return nil, err
+	}
+	if secrets.IsEncrypted(raw) {
+		return nil, errEncryptedTokens(path)
 	}
 	var out config.TokensFileConfig
 	if err := yaml.Unmarshal(raw, &out); err != nil {
@@ -1151,6 +1165,12 @@ func loadTokensFile(path string) (*config.TokensFileConfig, error) {
 }
 
 func writeTokensFile(path string, cfg *config.TokensFileConfig) error {
+	// Refuse to clobber an encrypted store, even if a caller built the config
+	// without loading first (loadTokensFile already guards the load path).
+	// #nosec G304 -- config paths are operator-controlled local inputs.
+	if existing, err := os.ReadFile(path); err == nil && secrets.IsEncrypted(existing) {
+		return errEncryptedTokens(path)
+	}
 	raw, err := yaml.Marshal(cfg)
 	if err != nil {
 		return err

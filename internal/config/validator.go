@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"log/slog"
 	"strings"
 )
 
@@ -9,6 +10,27 @@ import (
 type ConfigValidator struct {
 	config *Config
 	tokens map[string]string
+	// vaultBlind is true when a vault exists but this validation run is keyless
+	// (e.g. static `config validate` / a CLI tool), so vault-only secrets are not
+	// in tokens. A secret_ref we cannot resolve then becomes a warning, not an
+	// error — authoritative resolution is the daemon's, which holds the key
+	// (ADR §3.5.1; resolves the whole-store-encryption vs static-validate fork).
+	vaultBlind bool
+}
+
+// checkSecretRef verifies a secret_ref resolves. Missing is a hard error in the
+// normal case, but only a warning when vaultBlind (the secret may be vault-only
+// and invisible without the key). where is a human label for attribution.
+func (v *ConfigValidator) checkSecretRef(ref, where string) error {
+	if _, exists := v.tokens[ref]; exists {
+		return nil
+	}
+	if v.vaultBlind {
+		slog.Warn("secret_ref not resolvable without the vault key; assuming it is vault-resident "+
+			"(validate with the key or via the daemon to confirm)", "secret_ref", ref, "at", where)
+		return nil
+	}
+	return fmt.Errorf("%s: secret_ref %q not found in the vault or tokens.yaml", where, ref)
 }
 
 // ValidateCrossReferences checks that all cross-file references are valid.
@@ -77,9 +99,8 @@ func (v *ConfigValidator) validateWebhooks() error {
 				i, endpoint.Path)
 		}
 
-		if _, exists := v.tokens[endpoint.SecretRef]; !exists {
-			return fmt.Errorf("webhook[%d] (%s): secret_ref %q not found in tokens.yaml",
-				i, endpoint.Path, endpoint.SecretRef)
+		if err := v.checkSecretRef(endpoint.SecretRef, fmt.Sprintf("webhook[%d] (%s)", i, endpoint.Path)); err != nil {
+			return err
 		}
 
 		// Validate required fields
@@ -97,8 +118,8 @@ func (v *ConfigValidator) validateRelay() error {
 		if strings.TrimSpace(instance.SecretRef) == "" {
 			return fmt.Errorf("instances[%d] (%s): secret_ref is required", i, instance.Name)
 		}
-		if _, exists := v.tokens[instance.SecretRef]; !exists {
-			return fmt.Errorf("instances[%d] (%s): secret_ref %q not found in tokens.yaml", i, instance.Name, instance.SecretRef)
+		if err := v.checkSecretRef(instance.SecretRef, fmt.Sprintf("instances[%d] (%s)", i, instance.Name)); err != nil {
+			return err
 		}
 	}
 
@@ -109,8 +130,8 @@ func (v *ConfigValidator) validateRelay() error {
 		if strings.TrimSpace(peer.SecretRef) == "" {
 			return fmt.Errorf("remote_ingress.peers[%d] (%s): secret_ref is required", i, peer.Name)
 		}
-		if _, exists := v.tokens[peer.SecretRef]; !exists {
-			return fmt.Errorf("remote_ingress.peers[%d] (%s): secret_ref %q not found in tokens.yaml", i, peer.Name, peer.SecretRef)
+		if err := v.checkSecretRef(peer.SecretRef, fmt.Sprintf("remote_ingress.peers[%d] (%s)", i, peer.Name)); err != nil {
+			return err
 		}
 	}
 
@@ -133,10 +154,9 @@ func (v *ConfigValidator) validatePluginTokenRefs() error {
 						pluginName, key)
 				}
 
-				// Validate token exists
-				if _, exists := v.tokens[strValue]; !exists {
-					return fmt.Errorf("plugin %q: config field %q references token %q not found in tokens.yaml",
-						pluginName, key, strValue)
+				// Validate the referenced secret exists (vault or tokens.yaml).
+				if err := v.checkSecretRef(strValue, fmt.Sprintf("plugin %q config field %q", pluginName, key)); err != nil {
+					return err
 				}
 			}
 		}

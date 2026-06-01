@@ -37,6 +37,10 @@ type Config struct {
 // When unset and no default key file exists, encryption at rest is simply off.
 type SecretsConfig struct {
 	AgeKeyFile string `yaml:"age_key_file,omitempty"`
+	// VaultFile names the age-encrypted vault blob (the owned secret store).
+	// Relative paths resolve against the config dir; empty uses the default
+	// (<configDir>/vault.age). Absent file = no vault yet (coexistence window).
+	VaultFile string `yaml:"vault_file,omitempty"`
 }
 
 // EnvironmentVarsConfig defines env file includes for interpolation.

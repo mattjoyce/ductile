@@ -6,6 +6,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/mattjoyce/ductile/internal/config"
 	"github.com/mattjoyce/ductile/internal/secrets"
 	"github.com/mattjoyce/ductile/internal/vault"
 )
@@ -26,6 +27,8 @@ func runVaultNoun(args []string) int {
 	switch action {
 	case "init":
 		return runVaultInit(actionArgs)
+	case "import":
+		return runVaultImport(actionArgs)
 	case "help":
 		printVaultNounHelp(os.Stdout)
 		return 0
@@ -40,7 +43,70 @@ func runVaultNoun(args []string) int {
 func printVaultNounHelp(w *os.File) {
 	_, _ = fmt.Fprintln(w, "Usage: ductile vault <action>")
 	_, _ = fmt.Fprintln(w, "Actions:")
-	_, _ = fmt.Fprintln(w, "  init   Create a brand-new vault (genesis): seeds core + nonce + admin token")
+	_, _ = fmt.Fprintln(w, "  init     Create a brand-new vault (genesis): seeds core + nonce + admin token")
+	_, _ = fmt.Fprintln(w, "  import   Migrate tokens.yaml entries into an existing vault")
+}
+
+// runVaultImport migrates a legacy tokens.yaml table into an existing vault. It
+// is a local, key-touching operation (it reads the key and rewrites the blob),
+// never over the API — like init. Literal values move in; ${ENV} pointers are
+// flagged unless --resolve-env is given, in which case resolvable ones import
+// their resolved value and the rest are flagged for manual re-provisioning.
+func runVaultImport(args []string) int {
+	fs := flag.NewFlagSet("vault import", flag.ContinueOnError)
+	vaultPath := fs.String("vault", "", "Path to the vault blob to import into")
+	keyPath := fs.String("key", "", "Path to the age identity (private key)")
+	tokensPath := fs.String("tokens", "", "Path to the tokens.yaml to import from")
+	resolveEnv := fs.Bool("resolve-env", false, "Import the resolved value of ${ENV} entries instead of flagging them")
+	if err := fs.Parse(args); err != nil {
+		return 1
+	}
+	if *vaultPath == "" || *keyPath == "" || *tokensPath == "" {
+		fmt.Fprintln(os.Stderr, "vault import: --vault, --key, and --tokens are required")
+		return 1
+	}
+
+	kr, err := secrets.LoadKeyringFromFile(*keyPath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "vault import: %v\n", err)
+		return 1
+	}
+	v, err := vault.Load(*vaultPath, kr)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "vault import: %v\n  (run 'ductile vault init' first)\n", err)
+		return 1
+	}
+
+	entries, err := config.ReadRawTokens(*tokensPath, kr)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "vault import: %v\n", err)
+		return 1
+	}
+
+	plan := config.PlanTokenImport(entries, *resolveEnv, os.LookupEnv)
+
+	now := time.Now()
+	imported := 0
+	for _, s := range plan.Imported {
+		if err := v.Store().SetSecret(s.Name, s.Value, nil, vault.PatternManual, now); err != nil {
+			plan.Flagged = append(plan.Flagged, config.FlaggedSecret{Name: s.Name, Reason: "could not register: " + err.Error()})
+			continue
+		}
+		imported++
+	}
+	if err := v.Save(); err != nil {
+		fmt.Fprintf(os.Stderr, "vault import: save: %v\n", err)
+		return 1
+	}
+
+	fmt.Fprintf(os.Stderr, "Imported %d secret(s) into the vault.\n", imported)
+	if len(plan.Flagged) > 0 {
+		fmt.Fprintf(os.Stderr, "Flagged %d entr(ies) needing attention:\n", len(plan.Flagged))
+		for _, f := range plan.Flagged {
+			fmt.Fprintf(os.Stderr, "  - %s: %s\n", f.Name, f.Reason)
+		}
+	}
+	return 0
 }
 
 // runVaultInit bootstraps a new vault. It is a local, key-touching operation —

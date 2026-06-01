@@ -157,7 +157,7 @@ func TestConfigValidator_ValidateWebhooks(t *testing.T) {
 			},
 			tokens:  map[string]string{},
 			wantErr: true,
-			errMsg:  "webhook[0] (/w1): secret_ref \"ref1\" not found in tokens.yaml",
+			errMsg:  "webhook[0] (/w1): secret_ref \"ref1\" not found in the vault or tokens.yaml",
 		},
 		{
 			name: "Missing signature_header",
@@ -251,7 +251,7 @@ func TestConfigValidator_ValidatePluginTokenRefs(t *testing.T) {
 			},
 			tokens:  map[string]string{},
 			wantErr: true,
-			errMsg:  "plugin \"p1\": config field \"api_key_ref\" references token \"ref1\" not found in tokens.yaml",
+			errMsg:  "plugin \"p1\" config field \"api_key_ref\": secret_ref \"ref1\" not found in the vault or tokens.yaml",
 		},
 		{
 			name: "Non-_ref field",
@@ -400,7 +400,7 @@ func TestConfigValidator_ValidateRelay(t *testing.T) {
 			},
 			tokens:  map[string]string{},
 			wantErr: true,
-			errMsg:  `instances[0] (lab): secret_ref "relay-lab-v1" not found in tokens.yaml`,
+			errMsg:  `instances[0] (lab): secret_ref "relay-lab-v1" not found in the vault or tokens.yaml`,
 		},
 		{
 			name: "missing inbound token",
@@ -411,7 +411,7 @@ func TestConfigValidator_ValidateRelay(t *testing.T) {
 			},
 			tokens:  map[string]string{},
 			wantErr: true,
-			errMsg:  `remote_ingress.peers[0] (home-primary): secret_ref "relay-home-primary-v1" not found in tokens.yaml`,
+			errMsg:  `remote_ingress.peers[0] (home-primary): secret_ref "relay-home-primary-v1" not found in the vault or tokens.yaml`,
 		},
 	}
 

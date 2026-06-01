@@ -108,6 +108,15 @@ func load(configPath string, verifyScopes bool, validateConfig bool) (*Config, e
 	cfg = applyConfigDefaults(cfg)
 	resolveStatePath(cfg, filepath.Dir(absPath))
 
+	// Graft vault secrets into the legacy resolution table before validation, so
+	// a secret_ref to a vault-only secret passes the existence checks. No-ops
+	// when there is no vault or no key (coexistence window / keyless callers).
+	warnings, err := graftVaultSecrets(cfg, configDir, kr)
+	if err != nil {
+		return nil, err
+	}
+	logGraftWarnings(warnings)
+
 	if verifyScopes {
 		// Hash-verify scope files (tokens.yaml, webhooks.yaml)
 		if err := verifyScopeFilesRecursively(includedPaths); err != nil {
@@ -121,8 +130,9 @@ func load(configPath string, verifyScopes bool, validateConfig bool) (*Config, e
 			// Multi-file mode: extract tokens for cross-validation
 			tokens := extractTokensFromConfig(cfg)
 			validator := &ConfigValidator{
-				config: cfg,
-				tokens: tokens,
+				config:     cfg,
+				tokens:     tokens,
+				vaultBlind: vaultBlind(configDir, cfg, kr),
 			}
 			if err := validator.ValidateCrossReferences(); err != nil {
 				return nil, fmt.Errorf("configuration validation failed: %w", err)

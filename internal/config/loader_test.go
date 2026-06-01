@@ -1661,7 +1661,7 @@ webhooks:
 	if err == nil {
 		t.Fatal("Load() succeeded, want missing webhook token error")
 	}
-	if !contains(err.Error(), `secret_ref "github_webhook_secret" not found in tokens.yaml`) {
+	if !contains(err.Error(), `secret_ref "github_webhook_secret" not found in the vault or tokens.yaml`) {
 		t.Fatalf("Load() error = %v, want missing webhook token message", err)
 	}
 }
@@ -1768,7 +1768,7 @@ webhooks:
 	if err == nil {
 		t.Fatal("Load() succeeded, want missing webhook token error")
 	}
-	if !contains(err.Error(), `secret_ref "github_webhook_secret" not found in tokens.yaml`) {
+	if !contains(err.Error(), `secret_ref "github_webhook_secret" not found in the vault or tokens.yaml`) {
 		t.Fatalf("Load() error = %v, want missing webhook token message", err)
 	}
 }
