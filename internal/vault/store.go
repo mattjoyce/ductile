@@ -38,10 +38,15 @@ type Secret struct {
 }
 
 // Principal is a registered deliver-to identity (a plugin, a consumer, or the
-// gateway). Fingerprint binding is added with the registry rung.
+// gateway). Fingerprint binding is by name in Rung 1 (verified against the
+// existing .checksums machinery); the keyed-nonce upgrade is Rung 4.
 type Principal struct {
 	Kind   string `yaml:"kind"`   // plugin | consumer | gateway
 	Status string `yaml:"status"` // active | revoked
+	// Nonce is the gateway's fingerprint nonce, set only on the reserved `core`
+	// principal at genesis. Stored from day one; not used for verification until
+	// the keyed-nonce attestation rung (Rung 4). Omitted for all other principals.
+	Nonce string `yaml:"nonce,omitempty"`
 }
 
 // Store is the whole vault document: the unit that is serialised to YAML and
