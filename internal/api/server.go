@@ -292,6 +292,11 @@ func (s *Server) setupRoutes() *chi.Mux {
 		r.Group(func(r chi.Router) {
 			r.Use(s.authenticateVaultAdmin)
 			r.Post("/vault/secret", s.handleVaultSet)
+			r.Post("/vault/secret/roll", s.handleVaultRoll)
+			r.Post("/vault/secret/revoke", s.handleVaultRevoke)
+			r.Post("/vault/principal/revoke", s.handleVaultRevokePrincipal)
+			r.Post("/vault/principal/purge", s.handleVaultPurgePrincipal)
+			r.Post("/vault/principal/roll", s.handleVaultRollPrincipal)
 		})
 	}
 

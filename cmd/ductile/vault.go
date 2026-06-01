@@ -36,6 +36,16 @@ func runVaultNoun(args []string) int {
 		return runVaultImport(actionArgs)
 	case "set":
 		return runVaultSet(actionArgs)
+	case "roll":
+		return runVaultRoll(actionArgs)
+	case "revoke":
+		return runVaultNameOp("revoke", "/vault/secret/revoke", "Revoked secret", actionArgs)
+	case "revoke-principal":
+		return runVaultNameOp("revoke-principal", "/vault/principal/revoke", "Revoked principal", actionArgs)
+	case "purge-principal":
+		return runVaultNameOp("purge-principal", "/vault/principal/purge", "Purged principal", actionArgs)
+	case "roll-principal":
+		return runVaultRollPrincipal(actionArgs)
 	case "help":
 		printVaultNounHelp(os.Stdout)
 		return 0
@@ -52,7 +62,12 @@ func printVaultNounHelp(w *os.File) {
 	_, _ = fmt.Fprintln(w, "Actions:")
 	_, _ = fmt.Fprintln(w, "  init     Create a brand-new vault (genesis): seeds core + nonce + admin token")
 	_, _ = fmt.Fprintln(w, "  import   Migrate tokens.yaml entries into an existing vault")
-	_, _ = fmt.Fprintln(w, "  set      Set a secret via the daemon's management API (value read from stdin)")
+	_, _ = fmt.Fprintln(w, "  set              Set a secret via the daemon's management API (value from stdin)")
+	_, _ = fmt.Fprintln(w, "  roll             Roll a secret's value (manual: value from stdin; auto: daemon-minted)")
+	_, _ = fmt.Fprintln(w, "  revoke           Revoke a secret (terminal)")
+	_, _ = fmt.Fprintln(w, "  revoke-principal Revoke a principal (its secrets stop being delivered)")
+	_, _ = fmt.Fprintln(w, "  purge-principal  Remove a principal and strip all its grants")
+	_, _ = fmt.Fprintln(w, "  roll-principal   Roll every auto secret a principal holds")
 }
 
 // runVaultSet sets a secret through the daemon's authenticated management API.
@@ -74,10 +89,7 @@ func runVaultSet(args []string) int {
 		return 1
 	}
 
-	tok := *token
-	if tok == "" {
-		tok = strings.TrimSpace(os.Getenv("DUCTILE_VAULT_TOKEN"))
-	}
+	tok := resolveVaultToken(*token)
 
 	// Read the value from stdin so the secret never appears on argv.
 	valueBytes, err := io.ReadAll(os.Stdin)
@@ -102,46 +114,161 @@ func runVaultSet(args []string) int {
 	return 0
 }
 
-// doVaultSet POSTs a secret to the daemon's /vault/secret endpoint with the
-// vault admin token as the Bearer credential. Mutation is API-only by design
-// (the daemon is the sole writer), so both an API URL and a token are required.
+// doVaultSet POSTs a secret to the daemon's /vault/secret endpoint.
 func doVaultSet(apiURL, token, name, value string, principals []string, pattern string) error {
-	if strings.TrimSpace(apiURL) == "" {
-		return fmt.Errorf("--api-url is required (vault writes go through the daemon)")
-	}
-	if strings.TrimSpace(token) == "" {
-		return fmt.Errorf("vault admin token required (--token or DUCTILE_VAULT_TOKEN)")
-	}
-
-	body, err := json.Marshal(map[string]any{
+	_, err := vaultAPIPost(apiURL, token, "/vault/secret", map[string]any{
 		"name":                  name,
 		"value":                 value,
 		"authorized_principals": principals,
 		"pattern":               pattern,
 	})
-	if err != nil {
-		return err
+	return err
+}
+
+// vaultAPIPost POSTs a JSON body to a vault management endpoint with the vault
+// admin token as the Bearer credential, returning the response body on 200.
+// Mutation is API-only by design (the daemon is the sole writer), so both an
+// API URL and a token are required.
+func vaultAPIPost(apiURL, token, path string, body any) ([]byte, error) {
+	if strings.TrimSpace(apiURL) == "" {
+		return nil, fmt.Errorf("--api-url is required (vault writes go through the daemon)")
+	}
+	if strings.TrimSpace(token) == "" {
+		return nil, fmt.Errorf("vault admin token required (--token or DUCTILE_VAULT_TOKEN)")
 	}
 
-	endpoint := strings.TrimRight(apiURL, "/") + "/vault/secret"
-	req, err := http.NewRequest(http.MethodPost, endpoint, bytes.NewReader(body))
+	raw, err := json.Marshal(body)
 	if err != nil {
-		return err
+		return nil, err
+	}
+
+	endpoint := strings.TrimRight(apiURL, "/") + path
+	req, err := http.NewRequest(http.MethodPost, endpoint, bytes.NewReader(raw))
+	if err != nil {
+		return nil, err
 	}
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	defer func() { _ = resp.Body.Close() }()
 
 	respBody, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("vault set failed (%d): %s", resp.StatusCode, strings.TrimSpace(string(respBody)))
+		return nil, fmt.Errorf("%s failed (%d): %s", path, resp.StatusCode, strings.TrimSpace(string(respBody)))
 	}
-	return nil
+	return respBody, nil
+}
+
+// resolveVaultToken prefers the flag, then the DUCTILE_VAULT_TOKEN env var.
+func resolveVaultToken(flagToken string) string {
+	if t := strings.TrimSpace(flagToken); t != "" {
+		return t
+	}
+	return strings.TrimSpace(os.Getenv("DUCTILE_VAULT_TOKEN"))
+}
+
+// readPipedStdin returns trimmed stdin only when it is piped (not a terminal),
+// so a name-only command never blocks waiting for input.
+func readPipedStdin() (string, error) {
+	fi, err := os.Stdin.Stat()
+	if err != nil {
+		return "", err
+	}
+	if fi.Mode()&os.ModeCharDevice != 0 {
+		return "", nil // interactive terminal — no piped value
+	}
+	b, err := io.ReadAll(os.Stdin)
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimRight(string(b), "\r\n"), nil
+}
+
+// runVaultRoll rolls a single secret. For a manual-pattern secret the new value
+// is read from stdin (never argv); for an auto-pattern secret the daemon mints
+// it and any stdin is ignored.
+func runVaultRoll(args []string) int {
+	fs := flag.NewFlagSet("vault roll", flag.ContinueOnError)
+	apiURL := fs.String("api-url", "", "Daemon API base URL")
+	token := fs.String("token", "", "Vault admin token (or DUCTILE_VAULT_TOKEN)")
+	name := fs.String("name", "", "Secret name")
+	if err := fs.Parse(args); err != nil {
+		return 1
+	}
+	if *name == "" {
+		fmt.Fprintln(os.Stderr, "vault roll: --name is required")
+		return 1
+	}
+	value, err := readPipedStdin()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "vault roll: read value from stdin: %v\n", err)
+		return 1
+	}
+	if _, err := vaultAPIPost(*apiURL, resolveVaultToken(*token), "/vault/secret/roll",
+		map[string]any{"name": *name, "value": value}); err != nil {
+		fmt.Fprintf(os.Stderr, "vault roll: %v\n", err)
+		return 1
+	}
+	fmt.Fprintf(os.Stderr, "Rolled secret %q.\n", *name)
+	return 0
+}
+
+// runVaultNameOp drives the name-only lifecycle commands (revoke, revoke-principal,
+// purge-principal) — each POSTs {name} to its endpoint.
+func runVaultNameOp(action, path, pastTense string, args []string) int {
+	fs := flag.NewFlagSet("vault "+action, flag.ContinueOnError)
+	apiURL := fs.String("api-url", "", "Daemon API base URL")
+	token := fs.String("token", "", "Vault admin token (or DUCTILE_VAULT_TOKEN)")
+	name := fs.String("name", "", "Target name")
+	if err := fs.Parse(args); err != nil {
+		return 1
+	}
+	if *name == "" {
+		fmt.Fprintf(os.Stderr, "vault %s: --name is required\n", action)
+		return 1
+	}
+	if _, err := vaultAPIPost(*apiURL, resolveVaultToken(*token), path, map[string]any{"name": *name}); err != nil {
+		fmt.Fprintf(os.Stderr, "vault %s: %v\n", action, err)
+		return 1
+	}
+	fmt.Fprintf(os.Stderr, "%s %q.\n", pastTense, *name)
+	return 0
+}
+
+// runVaultRollPrincipal rolls every auto-pattern secret a principal holds and
+// reports which were rolled and which manual secrets were skipped.
+func runVaultRollPrincipal(args []string) int {
+	fs := flag.NewFlagSet("vault roll-principal", flag.ContinueOnError)
+	apiURL := fs.String("api-url", "", "Daemon API base URL")
+	token := fs.String("token", "", "Vault admin token (or DUCTILE_VAULT_TOKEN)")
+	name := fs.String("name", "", "Principal name")
+	if err := fs.Parse(args); err != nil {
+		return 1
+	}
+	if *name == "" {
+		fmt.Fprintln(os.Stderr, "vault roll-principal: --name is required")
+		return 1
+	}
+	respBody, err := vaultAPIPost(*apiURL, resolveVaultToken(*token), "/vault/principal/roll",
+		map[string]any{"name": *name})
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "vault roll-principal: %v\n", err)
+		return 1
+	}
+	var resp struct {
+		Rolled  []string `json:"rolled"`
+		Skipped []string `json:"skipped"`
+	}
+	_ = json.Unmarshal(respBody, &resp)
+	fmt.Fprintf(os.Stderr, "Rolled %d secret(s) for principal %q.\n", len(resp.Rolled), *name)
+	if len(resp.Skipped) > 0 {
+		fmt.Fprintf(os.Stderr, "Skipped (manual — roll each with `vault roll`): %s\n", strings.Join(resp.Skipped, ", "))
+	}
+	return 0
 }
 
 // runVaultImport migrates a legacy tokens.yaml table into an existing vault. It

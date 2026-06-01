@@ -26,9 +26,13 @@ type fakeVaultSetCall struct {
 }
 
 type fakeVault struct {
-	adminToken string
-	setErr     error
-	calls      []fakeVaultSetCall
+	adminToken       string
+	setErr           error
+	calls            []fakeVaultSetCall
+	rolled           []string
+	revoked          []string
+	rollPrincRolled  []string
+	rollPrincSkipped []string
 }
 
 func (f *fakeVault) AuthenticateAdmin(presented string) bool {
@@ -41,6 +45,23 @@ func (f *fakeVault) SetSecret(name, value string, principals []string, pattern s
 	}
 	f.calls = append(f.calls, fakeVaultSetCall{name, value, principals, pattern})
 	return nil
+}
+
+func (f *fakeVault) Roll(name, _ string, _ time.Time) error {
+	f.rolled = append(f.rolled, name)
+	return nil
+}
+
+func (f *fakeVault) Revoke(name string, _ time.Time) error {
+	f.revoked = append(f.revoked, name)
+	return nil
+}
+
+func (f *fakeVault) RevokePrincipal(string) error { return nil }
+func (f *fakeVault) PurgePrincipal(string) error  { return nil }
+
+func (f *fakeVault) RollPrincipal(string, time.Time) (rolled, skipped []string, err error) {
+	return f.rollPrincRolled, f.rollPrincSkipped, nil
 }
 
 func setupVaultTestServer(t *testing.T, fv VaultManager) *Server {
@@ -139,6 +160,61 @@ func TestVaultSet_ConfigTokenRejected(t *testing.T) {
 
 	if rr.Code != http.StatusUnauthorized {
 		t.Fatalf("config token must not authorize vault writes, got %d", rr.Code)
+	}
+}
+
+func TestVaultRoll_Authorized(t *testing.T) {
+	fv := &fakeVault{adminToken: "admin-tok"}
+	server := setupVaultTestServer(t, fv)
+
+	req := httptest.NewRequest(http.MethodPost, "/vault/secret/roll", strings.NewReader(`{"name":"hmac"}`))
+	req.Header.Set("Authorization", "Bearer admin-tok")
+	rr := httptest.NewRecorder()
+	server.setupRoutes().ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d (%s)", rr.Code, rr.Body.String())
+	}
+	if len(fv.rolled) != 1 || fv.rolled[0] != "hmac" {
+		t.Fatalf("expected Roll(hmac), got %v", fv.rolled)
+	}
+}
+
+func TestVaultRoll_RejectsConfigToken(t *testing.T) {
+	fv := &fakeVault{adminToken: "admin-tok"}
+	server := setupVaultTestServer(t, fv)
+
+	req := httptest.NewRequest(http.MethodPost, "/vault/secret/roll", strings.NewReader(`{"name":"hmac"}`))
+	req.Header.Set("Authorization", "Bearer cfg-token")
+	rr := httptest.NewRecorder()
+	server.setupRoutes().ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusUnauthorized {
+		t.Fatalf("config token must not authorize roll, got %d", rr.Code)
+	}
+	if len(fv.rolled) != 0 {
+		t.Fatal("rejected request must not roll")
+	}
+}
+
+func TestVaultRollPrincipal_ReportsRolledAndSkipped(t *testing.T) {
+	fv := &fakeVault{adminToken: "admin-tok", rollPrincRolled: []string{"a", "b"}, rollPrincSkipped: []string{"m"}}
+	server := setupVaultTestServer(t, fv)
+
+	req := httptest.NewRequest(http.MethodPost, "/vault/principal/roll", strings.NewReader(`{"name":"mailer"}`))
+	req.Header.Set("Authorization", "Bearer admin-tok")
+	rr := httptest.NewRecorder()
+	server.setupRoutes().ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d (%s)", rr.Code, rr.Body.String())
+	}
+	var resp vaultRollPrincipalResponse
+	if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if !strings.Contains(strings.Join(resp.Rolled, ","), "a") || len(resp.Skipped) != 1 || resp.Skipped[0] != "m" {
+		t.Fatalf("unexpected roll-principal response: %+v", resp)
 	}
 }
 

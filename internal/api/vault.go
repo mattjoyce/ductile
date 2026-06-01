@@ -16,6 +16,11 @@ import (
 type VaultManager interface {
 	AuthenticateAdmin(presented string) bool
 	SetSecret(name, value string, authorizedPrincipals []string, pattern string, now time.Time) error
+	Roll(name, operatorValue string, now time.Time) error
+	Revoke(name string, now time.Time) error
+	RevokePrincipal(name string) error
+	PurgePrincipal(name string) error
+	RollPrincipal(name string, now time.Time) (rolled, skipped []string, err error)
 }
 
 // authenticateVaultAdmin gates vault management routes on the vault's resident
@@ -73,4 +78,96 @@ func (s *Server) handleVaultSet(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	respondJSON(w, http.StatusOK, vaultSetResponse{Name: req.Name, Status: "set"})
+}
+
+// vaultRollRequest is the POST /vault/secret/roll body. Value is used only for
+// manual-pattern secrets; auto-pattern secrets are minted by the daemon.
+type vaultRollRequest struct {
+	Name  string `json:"name"`
+	Value string `json:"value,omitempty"`
+}
+
+// vaultNameRequest is the body for ops keyed only by a name (revoke, purge).
+type vaultNameRequest struct {
+	Name string `json:"name"`
+}
+
+// vaultStatusResponse is the value-free success body for lifecycle mutations.
+type vaultStatusResponse struct {
+	Name   string `json:"name"`
+	Status string `json:"status"`
+}
+
+func (s *Server) handleVaultRoll(w http.ResponseWriter, r *http.Request) {
+	var req vaultRollRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		s.writeError(w, http.StatusBadRequest, "invalid JSON body")
+		return
+	}
+	if err := s.vault.Roll(req.Name, req.Value, time.Now()); err != nil {
+		s.writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	respondJSON(w, http.StatusOK, vaultStatusResponse{Name: req.Name, Status: "rolled"})
+}
+
+func (s *Server) handleVaultRevoke(w http.ResponseWriter, r *http.Request) {
+	var req vaultNameRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		s.writeError(w, http.StatusBadRequest, "invalid JSON body")
+		return
+	}
+	if err := s.vault.Revoke(req.Name, time.Now()); err != nil {
+		s.writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	respondJSON(w, http.StatusOK, vaultStatusResponse{Name: req.Name, Status: "revoked"})
+}
+
+func (s *Server) handleVaultRevokePrincipal(w http.ResponseWriter, r *http.Request) {
+	var req vaultNameRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		s.writeError(w, http.StatusBadRequest, "invalid JSON body")
+		return
+	}
+	if err := s.vault.RevokePrincipal(req.Name); err != nil {
+		s.writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	respondJSON(w, http.StatusOK, vaultStatusResponse{Name: req.Name, Status: "principal_revoked"})
+}
+
+func (s *Server) handleVaultPurgePrincipal(w http.ResponseWriter, r *http.Request) {
+	var req vaultNameRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		s.writeError(w, http.StatusBadRequest, "invalid JSON body")
+		return
+	}
+	if err := s.vault.PurgePrincipal(req.Name); err != nil {
+		s.writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	respondJSON(w, http.StatusOK, vaultStatusResponse{Name: req.Name, Status: "principal_purged"})
+}
+
+// vaultRollPrincipalResponse reports which of the principal's secrets were
+// rolled (auto) and which were skipped (manual — they need an operator value).
+type vaultRollPrincipalResponse struct {
+	Name    string   `json:"name"`
+	Rolled  []string `json:"rolled"`
+	Skipped []string `json:"skipped"`
+}
+
+func (s *Server) handleVaultRollPrincipal(w http.ResponseWriter, r *http.Request) {
+	var req vaultNameRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		s.writeError(w, http.StatusBadRequest, "invalid JSON body")
+		return
+	}
+	rolled, skipped, err := s.vault.RollPrincipal(req.Name, time.Now())
+	if err != nil {
+		s.writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	respondJSON(w, http.StatusOK, vaultRollPrincipalResponse{Name: req.Name, Rolled: rolled, Skipped: skipped})
 }

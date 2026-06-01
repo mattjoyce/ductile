@@ -65,3 +65,48 @@ func TestDoVaultSet_RequiresURLAndToken(t *testing.T) {
 		t.Error("expected error when token is missing")
 	}
 }
+
+// TestVaultAPIPost_ForwardsPathAndBody pins that the shared poster hits the
+// exact endpoint path and forwards the JSON body, returning the response.
+func TestVaultAPIPost_ForwardsPathAndBody(t *testing.T) {
+	var gotPath string
+	var gotBody map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		if r.Header.Get("Authorization") != "Bearer tok" {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		body, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(body, &gotBody)
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"name":"p","rolled":["a"],"skipped":["m"]}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	resp, err := vaultAPIPost(srv.URL, "tok", "/vault/principal/roll", map[string]any{"name": "p"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if gotPath != "/vault/principal/roll" {
+		t.Fatalf("expected path /vault/principal/roll, got %q", gotPath)
+	}
+	if gotBody["name"] != "p" {
+		t.Fatalf("expected forwarded body name=p, got %+v", gotBody)
+	}
+	if !strings.Contains(string(resp), `"rolled"`) {
+		t.Fatalf("expected response body returned to caller, got %s", resp)
+	}
+}
+
+func TestVaultAPIPost_NonOKIsError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte(`{"error":"unknown secret"}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	if _, err := vaultAPIPost(srv.URL, "tok", "/vault/secret/revoke", map[string]any{"name": "ghost"}); err == nil {
+		t.Fatal("expected error on 400 response")
+	}
+}
