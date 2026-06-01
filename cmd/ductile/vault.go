@@ -1,9 +1,14 @@
 package main
 
 import (
+	"bytes"
+	"encoding/json"
 	"flag"
 	"fmt"
+	"io"
+	"net/http"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/mattjoyce/ductile/internal/config"
@@ -29,6 +34,8 @@ func runVaultNoun(args []string) int {
 		return runVaultInit(actionArgs)
 	case "import":
 		return runVaultImport(actionArgs)
+	case "set":
+		return runVaultSet(actionArgs)
 	case "help":
 		printVaultNounHelp(os.Stdout)
 		return 0
@@ -45,6 +52,96 @@ func printVaultNounHelp(w *os.File) {
 	_, _ = fmt.Fprintln(w, "Actions:")
 	_, _ = fmt.Fprintln(w, "  init     Create a brand-new vault (genesis): seeds core + nonce + admin token")
 	_, _ = fmt.Fprintln(w, "  import   Migrate tokens.yaml entries into an existing vault")
+	_, _ = fmt.Fprintln(w, "  set      Set a secret via the daemon's management API (value read from stdin)")
+}
+
+// runVaultSet sets a secret through the daemon's authenticated management API.
+// It is a keyless API client: it holds no age key and decrypts nothing — the
+// daemon (the sole writer) owns the key and persists the change. The secret
+// VALUE is read from stdin, never argv, so it cannot leak via /proc.
+func runVaultSet(args []string) int {
+	fs := flag.NewFlagSet("vault set", flag.ContinueOnError)
+	apiURL := fs.String("api-url", "", "Daemon API base URL (e.g. http://127.0.0.1:8080)")
+	token := fs.String("token", "", "Vault admin token (or set DUCTILE_VAULT_TOKEN)")
+	name := fs.String("name", "", "Secret name")
+	pattern := fs.String("pattern", vault.PatternManual, "Provisioning pattern: manual|auto")
+	principalsCSV := fs.String("principal", "", "Comma-separated principals authorized to receive the secret")
+	if err := fs.Parse(args); err != nil {
+		return 1
+	}
+	if *name == "" {
+		fmt.Fprintln(os.Stderr, "vault set: --name is required")
+		return 1
+	}
+
+	tok := *token
+	if tok == "" {
+		tok = strings.TrimSpace(os.Getenv("DUCTILE_VAULT_TOKEN"))
+	}
+
+	// Read the value from stdin so the secret never appears on argv.
+	valueBytes, err := io.ReadAll(os.Stdin)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "vault set: read value from stdin: %v\n", err)
+		return 1
+	}
+	value := strings.TrimRight(string(valueBytes), "\r\n")
+
+	var principals []string
+	for _, p := range strings.Split(*principalsCSV, ",") {
+		if p = strings.TrimSpace(p); p != "" {
+			principals = append(principals, p)
+		}
+	}
+
+	if err := doVaultSet(*apiURL, tok, *name, value, principals, *pattern); err != nil {
+		fmt.Fprintf(os.Stderr, "vault set: %v\n", err)
+		return 1
+	}
+	fmt.Fprintf(os.Stderr, "Set secret %q via the daemon.\n", *name)
+	return 0
+}
+
+// doVaultSet POSTs a secret to the daemon's /vault/secret endpoint with the
+// vault admin token as the Bearer credential. Mutation is API-only by design
+// (the daemon is the sole writer), so both an API URL and a token are required.
+func doVaultSet(apiURL, token, name, value string, principals []string, pattern string) error {
+	if strings.TrimSpace(apiURL) == "" {
+		return fmt.Errorf("--api-url is required (vault writes go through the daemon)")
+	}
+	if strings.TrimSpace(token) == "" {
+		return fmt.Errorf("vault admin token required (--token or DUCTILE_VAULT_TOKEN)")
+	}
+
+	body, err := json.Marshal(map[string]any{
+		"name":                  name,
+		"value":                 value,
+		"authorized_principals": principals,
+		"pattern":               pattern,
+	})
+	if err != nil {
+		return err
+	}
+
+	endpoint := strings.TrimRight(apiURL, "/") + "/vault/secret"
+	req, err := http.NewRequest(http.MethodPost, endpoint, bytes.NewReader(body))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	respBody, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("vault set failed (%d): %s", resp.StatusCode, strings.TrimSpace(string(respBody)))
+	}
+	return nil
 }
 
 // runVaultImport migrates a legacy tokens.yaml table into an existing vault. It
