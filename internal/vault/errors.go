@@ -15,4 +15,5 @@ var (
 	ErrPrincipalInactive  = errors.New("vault: principal is not active")
 	ErrUnknownSecret      = errors.New("vault: unknown secret")
 	ErrSecretRevoked      = errors.New("vault: secret is revoked")
+	ErrReservedEntity     = errors.New("vault: reserved entity cannot be mutated via the data plane")
 )

@@ -17,6 +17,9 @@ import (
 // a fresh name. The pure op applies the value it is given; minting an `auto`
 // value from a CSPRNG is the owner's job, not the model's.
 func (s *Store) RollSecret(name, newValue string, now time.Time) error {
+	if isReservedSecret(name) {
+		return fmt.Errorf("%w: secret %q (use RotateAdminToken)", ErrReservedEntity, name)
+	}
 	sec, ok := s.Secrets[name]
 	if !ok {
 		return fmt.Errorf("%w: %q", ErrUnknownSecret, name)
@@ -33,6 +36,9 @@ func (s *Store) RollSecret(name, newValue string, now time.Time) error {
 // RevokeSecret marks a secret revoked (terminal). Idempotent: revoking an
 // already-revoked secret is a no-op that leaves the original revoked_at intact.
 func (s *Store) RevokeSecret(name string, now time.Time) error {
+	if isReservedSecret(name) {
+		return fmt.Errorf("%w: secret %q", ErrReservedEntity, name)
+	}
 	sec, ok := s.Secrets[name]
 	if !ok {
 		return fmt.Errorf("%w: %q", ErrUnknownSecret, name)
@@ -49,6 +55,9 @@ func (s *Store) RevokeSecret(name string, now time.Time) error {
 // secrets stop being delivered). Idempotent. The principal and its grants remain
 // in the model — use PurgePrincipal to remove them entirely.
 func (s *Store) RevokePrincipal(name string) error {
+	if isReservedPrincipal(name) {
+		return fmt.Errorf("%w: principal %q", ErrReservedEntity, name)
+	}
 	p, ok := s.Principals[name]
 	if !ok {
 		return fmt.Errorf("%w: %q", ErrUnknownPrincipal, name)
@@ -61,6 +70,9 @@ func (s *Store) RevokePrincipal(name string) error {
 // secret's authorized list, atomically (one pass over the in-memory model under
 // the owner's write lock), so no orphan grant is left behind.
 func (s *Store) PurgePrincipal(name string) error {
+	if isReservedPrincipal(name) {
+		return fmt.Errorf("%w: principal %q", ErrReservedEntity, name)
+	}
 	if _, ok := s.Principals[name]; !ok {
 		return fmt.Errorf("%w: %q", ErrUnknownPrincipal, name)
 	}

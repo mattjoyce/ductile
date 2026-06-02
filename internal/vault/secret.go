@@ -27,6 +27,9 @@ func (s *Store) SetSecret(name, value string, authorizedPrincipals []string, pat
 	if !secretNameRE.MatchString(name) {
 		return fmt.Errorf("%w: secret %q", ErrInvalidName, name)
 	}
+	if isReservedSecret(name) {
+		return fmt.Errorf("%w: secret %q (use RotateAdminToken)", ErrReservedEntity, name)
+	}
 	if !validPattern(pattern) {
 		return fmt.Errorf("%w: %q", ErrInvalidPattern, pattern)
 	}

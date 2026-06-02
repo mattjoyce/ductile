@@ -56,8 +56,9 @@ func Init(path string, kr *secrets.Keyring, now time.Time) (*Vault, string, erro
 	}
 	store.Principals[CorePrincipal].Nonce = nonce
 	// No authorized_principals: the admin token is API-internal, never composed
-	// to a principal.
-	if err := store.SetSecret(AdminTokenSecret, adminToken, nil, PatternAuto, now); err != nil {
+	// to a principal. Seeded via the sanctioned RotateAdminToken path because the
+	// data-plane SetSecret now refuses the reserved core-admin-token entry.
+	if err := store.RotateAdminToken(adminToken, now); err != nil {
 		return nil, "", fmt.Errorf("vault: genesis admin token entry: %w", err)
 	}
 
