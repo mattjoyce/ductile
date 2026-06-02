@@ -133,16 +133,46 @@ func mergeVaultSecrets(tokens []TokenEntry, vaultSecrets map[string]string) ([]T
 	return merged, warnings
 }
 
-// activeVaultSecrets projects the store's active secrets into a name->value map.
-// Revoked secrets are excluded — a revoked secret must not resolve.
+// activeVaultSecrets projects the store's active, gateway-visible secrets into a
+// name->value map for the load-time graft. Two exclusions:
+//   - revoked secrets — a revoked secret must not resolve.
+//   - exclusively plugin-scoped secrets — these reach their consumer at *spawn*
+//     via Compose (#14), so grafting them into cfg.Tokens would leak them to
+//     every gateway/load-time consumer. The graft serves only the gateway's own
+//     consumers (webhook/relay HMAC); plugin delivery is the dispatcher's job.
 func activeVaultSecrets(s *vault.Store) map[string]string {
 	out := make(map[string]string)
 	for _, name := range s.SecretNames() {
-		if sec, ok := s.Secret(name); ok && sec.Status == vault.StatusActive {
-			out[name] = sec.Value
+		sec, ok := s.Secret(name)
+		if !ok || sec.Status != vault.StatusActive {
+			continue
 		}
+		if pluginScopedSecret(s, sec) {
+			continue
+		}
+		out[name] = sec.Value
 	}
 	return out
+}
+
+// pluginScopedSecret reports whether a secret is authorized *exclusively* to
+// plugin principals — the case where delivery happens at spawn, not load time.
+// A secret with no principals (e.g. a migrated tokens.yaml value) is NOT
+// plugin-scoped: gateway consumers resolve it via secret_ref. A grant to an
+// unregistered or non-plugin principal also keeps it gateway-visible — we never
+// hide a secret on a grant we cannot confirm is plugin-only (fail toward the
+// load-time consumer).
+func pluginScopedSecret(s *vault.Store, sec *vault.Secret) bool {
+	if len(sec.AuthorizedPrincipals) == 0 {
+		return false
+	}
+	for _, name := range sec.AuthorizedPrincipals {
+		p, ok := s.Principal(name)
+		if !ok || p.Kind != vault.KindPlugin {
+			return false
+		}
+	}
+	return true
 }
 
 // vaultBlind reports whether a vault exists but this run cannot read it (no

@@ -102,10 +102,13 @@ func TestGraftVaultSecretsRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("vault init: %v", err)
 	}
-	if err := v.Store().RegisterPrincipal("withings", vault.KindPlugin); err != nil {
+	// Grant to a consumer principal: the load-time graft serves gateway/consumer
+	// (webhook/relay) consumers. Plugin-scoped secrets are delivered at spawn and
+	// are excluded from the graft — see TestActiveVaultSecretsExcludesPluginScoped.
+	if err := v.Store().RegisterPrincipal("relaysvc", vault.KindConsumer); err != nil {
 		t.Fatalf("register: %v", err)
 	}
-	if err := v.Store().SetSecret("withings_api", "VAULT-VAL", []string{"withings"}, vault.PatternManual, time.Now()); err != nil {
+	if err := v.Store().SetSecret("relay_hmac", "VAULT-VAL", []string{"relaysvc"}, vault.PatternManual, time.Now()); err != nil {
 		t.Fatalf("set: %v", err)
 	}
 	if err := v.Save(); err != nil {
@@ -121,8 +124,8 @@ func TestGraftVaultSecretsRoundTrip(t *testing.T) {
 		t.Errorf("no collision expected, got %v", warnings)
 	}
 	got := tokenKeyMap(cfg.Tokens)
-	if got["withings_api"] != "VAULT-VAL" {
-		t.Errorf("vault secret not grafted, got %q", got["withings_api"])
+	if got["relay_hmac"] != "VAULT-VAL" {
+		t.Errorf("vault secret not grafted, got %q", got["relay_hmac"])
 	}
 	if got["relay_a"] != "ra" {
 		t.Errorf("existing entry clobbered, got %q", got["relay_a"])
@@ -266,6 +269,52 @@ func TestVaultStoreKeylessIsNil(t *testing.T) {
 	}
 	if store != nil {
 		t.Errorf("keyless caller must get nil Store, got %v", store)
+	}
+}
+
+// TestActiveVaultSecretsExcludesPluginScoped — the load-time graft serves
+// gateway/consumer (load-time) consumers; a secret delivered exclusively to
+// plugin principals reaches its consumer at spawn (Compose, #14), so it must NOT
+// be grafted gateway-global. Unscoped (migrated) and gateway/consumer-authorized
+// secrets stay; an unconfirmable (orphan) grant fails toward visibility.
+func TestActiveVaultSecretsExcludesPluginScoped(t *testing.T) {
+	s := vault.NewStore()
+	for name, kind := range map[string]string{
+		"gwsvc": vault.KindGateway, "plug": vault.KindPlugin, "plug2": vault.KindPlugin,
+	} {
+		if err := s.RegisterPrincipal(name, kind); err != nil {
+			t.Fatalf("register %s: %v", name, err)
+		}
+	}
+	now := time.Now()
+	set := func(name, val string, ps []string) {
+		if err := s.SetSecret(name, val, ps, vault.PatternManual, now); err != nil {
+			t.Fatalf("set %s: %v", name, err)
+		}
+	}
+	set("gw_hmac", "G", []string{"gwsvc"})             // gateway-scoped -> graft
+	set("plug_only", "P", []string{"plug"})            // plugin-only -> NOT grafted
+	set("plug_multi", "PM", []string{"plug", "plug2"}) // all plugins -> NOT grafted
+	set("shared", "S", []string{"gwsvc", "plug"})      // mixed -> graft (gateway needs it)
+	set("unscoped", "U", nil)                          // migrated tokens.yaml value -> graft
+
+	got := activeVaultSecrets(s)
+	for _, name := range []string{"gw_hmac", "shared", "unscoped"} {
+		if _, ok := got[name]; !ok {
+			t.Errorf("%q must remain in the gateway graft", name)
+		}
+	}
+	for _, name := range []string{"plug_only", "plug_multi"} {
+		if _, ok := got[name]; ok {
+			t.Errorf("%q is plugin-scoped and must NOT be grafted gateway-global", name)
+		}
+	}
+
+	// Orphan grant (principal no longer registered): we cannot confirm the secret
+	// is plugin-only, so it stays gateway-visible — never silently hidden.
+	s.Secrets["gw_hmac"].AuthorizedPrincipals = []string{"ghost"}
+	if _, ok := activeVaultSecrets(s)["gw_hmac"]; !ok {
+		t.Error("a grant to an unregistered principal must not hide the secret from the graft")
 	}
 }
 
