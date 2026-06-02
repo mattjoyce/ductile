@@ -67,6 +67,28 @@ func TestCORSMiddlewareNoOrigin(t *testing.T) {
 	}
 }
 
+func TestCORSMiddlewareWildcardOrigin(t *testing.T) {
+	called := false
+	handler := corsMiddleware([]string{"*"})(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		called = true
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	req := httptest.NewRequest(http.MethodGet, "/jobs", nil)
+	req.Header.Set("Origin", "https://any-attacker.example")
+	resp := httptest.NewRecorder()
+
+	handler.ServeHTTP(resp, req)
+
+	if !called {
+		t.Fatal("wildcard origin should pass through to next handler")
+	}
+	assertHeader(t, resp, "Access-Control-Allow-Origin", "*")
+	if got := resp.Header().Get("Access-Control-Allow-Credentials"); got != "" {
+		t.Fatalf("Access-Control-Allow-Credentials = %q, want empty for wildcard origin", got)
+	}
+}
+
 // TestCORSMiddlewareDisallowedOrigin verifies that an origin not in the allowed
 // list receives no credentialed CORS headers — the disallowed-origin scenario
 // from the F-003 security finding.
