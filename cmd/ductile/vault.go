@@ -36,6 +36,8 @@ func runVaultNoun(args []string) int {
 		return runVaultImport(actionArgs)
 	case "set":
 		return runVaultSet(actionArgs)
+	case "register-principal":
+		return runVaultRegisterPrincipal(actionArgs)
 	case "roll":
 		return runVaultRoll(actionArgs)
 	case "revoke":
@@ -62,6 +64,7 @@ func printVaultNounHelp(w *os.File) {
 	_, _ = fmt.Fprintln(w, "Actions:")
 	_, _ = fmt.Fprintln(w, "  init     Create a brand-new vault (genesis): seeds core + nonce + admin token")
 	_, _ = fmt.Fprintln(w, "  import   Migrate tokens.yaml entries into an existing vault")
+	_, _ = fmt.Fprintln(w, "  register-principal Register a deliver-to principal (--name --kind plugin|consumer|gateway)")
 	_, _ = fmt.Fprintln(w, "  set              Set a secret via the daemon's management API (value from stdin)")
 	_, _ = fmt.Fprintln(w, "  roll             Roll a secret's value (manual: value from stdin; auto: daemon-minted)")
 	_, _ = fmt.Fprintln(w, "  revoke           Revoke a secret (terminal)")
@@ -186,6 +189,30 @@ func readPipedStdin() (string, error) {
 		return "", err
 	}
 	return strings.TrimRight(string(b), "\r\n"), nil
+}
+
+// runVaultRegisterPrincipal admits a deliver-to identity into the vault over the
+// management API, so secrets can then be granted to it (`vault set --principal`).
+func runVaultRegisterPrincipal(args []string) int {
+	fs := flag.NewFlagSet("vault register-principal", flag.ContinueOnError)
+	apiURL := fs.String("api-url", "", "Daemon API base URL")
+	token := fs.String("token", "", "Vault admin token (or DUCTILE_VAULT_TOKEN)")
+	name := fs.String("name", "", "Principal name")
+	kind := fs.String("kind", "plugin", "Principal kind: plugin|consumer|gateway")
+	if err := fs.Parse(args); err != nil {
+		return 1
+	}
+	if *name == "" {
+		fmt.Fprintln(os.Stderr, "vault register-principal: --name is required")
+		return 1
+	}
+	if _, err := vaultAPIPost(*apiURL, resolveVaultToken(*token), "/vault/principal",
+		map[string]any{"name": *name, "kind": *kind}); err != nil {
+		fmt.Fprintf(os.Stderr, "vault register-principal: %v\n", err)
+		return 1
+	}
+	fmt.Fprintf(os.Stderr, "Registered principal %q (kind %s).\n", *name, *kind)
+	return 0
 }
 
 // runVaultRoll rolls a single secret. For a manual-pattern secret the new value

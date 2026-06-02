@@ -39,6 +39,14 @@ func rolledValue(s *Store, name, operatorValue string) (string, error) {
 	return operatorValue, nil
 }
 
+// RegisterPrincipal adds a new deliver-to principal as a guarded, persisted
+// mutation. Registration is the operator's act of admitting an identity into
+// the secret-authorization model (registration = authorization intent); a
+// secret can only grant to a principal that exists.
+func (v *Vault) RegisterPrincipal(name, kind string) error {
+	return v.mutate(func(s *Store) error { return s.RegisterPrincipal(name, kind) })
+}
+
 // Revoke marks a secret revoked as a guarded, persisted mutation (idempotent).
 func (v *Vault) Revoke(name string, now time.Time) error {
 	return v.mutate(func(s *Store) error { return s.RevokeSecret(name, now) })

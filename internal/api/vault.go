@@ -15,6 +15,7 @@ import (
 // exfiltration (dump) stays a local, key-touching operation, never over HTTP.
 type VaultManager interface {
 	AuthenticateAdmin(presented string) bool
+	RegisterPrincipal(name, kind string) error
 	SetSecret(name, value string, authorizedPrincipals []string, pattern string, now time.Time) error
 	Roll(name, operatorValue string, now time.Time) error
 	Revoke(name string, now time.Time) error
@@ -78,6 +79,25 @@ func (s *Server) handleVaultSet(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	respondJSON(w, http.StatusOK, vaultSetResponse{Name: req.Name, Status: "set"})
+}
+
+// vaultRegisterPrincipalRequest is the POST /vault/principal body.
+type vaultRegisterPrincipalRequest struct {
+	Name string `json:"name"`
+	Kind string `json:"kind"` // plugin | consumer | gateway
+}
+
+func (s *Server) handleVaultRegisterPrincipal(w http.ResponseWriter, r *http.Request) {
+	var req vaultRegisterPrincipalRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		s.writeError(w, http.StatusBadRequest, "invalid JSON body")
+		return
+	}
+	if err := s.vault.RegisterPrincipal(req.Name, req.Kind); err != nil {
+		s.writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	respondJSON(w, http.StatusOK, vaultStatusResponse{Name: req.Name, Status: "principal_registered"})
 }
 
 // vaultRollRequest is the POST /vault/secret/roll body. Value is used only for

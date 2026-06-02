@@ -100,6 +100,35 @@ func TestVaultPurgePrincipalGuardedPersists(t *testing.T) {
 	}
 }
 
+func TestVaultRegisterPrincipalGuardedPersistsThenGrant(t *testing.T) {
+	v := savedVault(t)
+
+	if err := v.RegisterPrincipal("worker", KindPlugin); err != nil {
+		t.Fatalf("register: %v", err)
+	}
+	reloaded, err := Load(v.Path(), v.keyring)
+	if err != nil {
+		t.Fatalf("reload: %v", err)
+	}
+	p, ok := reloaded.Store().Principal("worker")
+	if !ok || p.Kind != KindPlugin || p.Status != StatusActive {
+		t.Fatalf("expected persisted active plugin principal, got %+v ok=%v", p, ok)
+	}
+
+	// Duplicate registration is refused.
+	if err := v.RegisterPrincipal("worker", KindPlugin); err == nil {
+		t.Error("duplicate registration must error")
+	}
+	// An invalid kind is refused.
+	if err := v.RegisterPrincipal("bad", "nonsense"); err == nil {
+		t.Error("invalid kind must error")
+	}
+	// Now a grant to the freshly registered principal succeeds (the gap #19 closes).
+	if err := v.SetSecret("wsecret", "V", []string{"worker"}, PatternManual, testTime); err != nil {
+		t.Errorf("grant after register should succeed, got %v", err)
+	}
+}
+
 func TestVaultRollPrincipalRollsAutoSkipsManual(t *testing.T) {
 	v := savedVault(t)
 	for _, n := range []string{"a", "b"} {

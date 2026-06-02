@@ -291,6 +291,7 @@ func (s *Server) setupRoutes() *chi.Mux {
 	if s.vault != nil {
 		r.Group(func(r chi.Router) {
 			r.Use(s.authenticateVaultAdmin)
+			r.Post("/vault/principal", s.handleVaultRegisterPrincipal)
 			r.Post("/vault/secret", s.handleVaultSet)
 			r.Post("/vault/secret/roll", s.handleVaultRoll)
 			r.Post("/vault/secret/revoke", s.handleVaultRevoke)

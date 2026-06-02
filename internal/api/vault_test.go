@@ -29,6 +29,7 @@ type fakeVault struct {
 	adminToken       string
 	setErr           error
 	calls            []fakeVaultSetCall
+	registered       []string
 	rolled           []string
 	revoked          []string
 	rollPrincRolled  []string
@@ -37,6 +38,11 @@ type fakeVault struct {
 
 func (f *fakeVault) AuthenticateAdmin(presented string) bool {
 	return presented != "" && presented == f.adminToken
+}
+
+func (f *fakeVault) RegisterPrincipal(name, _ string) error {
+	f.registered = append(f.registered, name)
+	return nil
 }
 
 func (f *fakeVault) SetSecret(name, value string, principals []string, pattern string, _ time.Time) error {
@@ -160,6 +166,40 @@ func TestVaultSet_ConfigTokenRejected(t *testing.T) {
 
 	if rr.Code != http.StatusUnauthorized {
 		t.Fatalf("config token must not authorize vault writes, got %d", rr.Code)
+	}
+}
+
+func TestVaultRegisterPrincipal_Authorized(t *testing.T) {
+	fv := &fakeVault{adminToken: "admin-tok"}
+	server := setupVaultTestServer(t, fv)
+
+	req := httptest.NewRequest(http.MethodPost, "/vault/principal", strings.NewReader(`{"name":"worker","kind":"plugin"}`))
+	req.Header.Set("Authorization", "Bearer admin-tok")
+	rr := httptest.NewRecorder()
+	server.setupRoutes().ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d (%s)", rr.Code, rr.Body.String())
+	}
+	if len(fv.registered) != 1 || fv.registered[0] != "worker" {
+		t.Fatalf("expected RegisterPrincipal(worker), got %v", fv.registered)
+	}
+}
+
+func TestVaultRegisterPrincipal_RejectsConfigToken(t *testing.T) {
+	fv := &fakeVault{adminToken: "admin-tok"}
+	server := setupVaultTestServer(t, fv)
+
+	req := httptest.NewRequest(http.MethodPost, "/vault/principal", strings.NewReader(`{"name":"worker","kind":"plugin"}`))
+	req.Header.Set("Authorization", "Bearer cfg-token")
+	rr := httptest.NewRecorder()
+	server.setupRoutes().ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusUnauthorized {
+		t.Fatalf("config token must not authorize register, got %d", rr.Code)
+	}
+	if len(fv.registered) != 0 {
+		t.Fatal("rejected request must not register")
 	}
 }
 
