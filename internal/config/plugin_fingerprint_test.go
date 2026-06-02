@@ -454,7 +454,7 @@ func TestVerifyPluginFingerprintsEnabledManifestMismatchErrors(t *testing.T) {
 		t.Fatalf("want 1 error, got %d: %+v", len(r.Errors), r)
 	}
 	msg := r.Errors[0]
-	for _, want := range []string{"gmail", "manifest", "mismatch", cur.ManifestPath, "ductile config lock"} {
+	for _, want := range []string{"gmail", "manifest", "mismatch", cur.ManifestPath, "ductile plugin lock"} {
 		if !strings.Contains(msg, want) {
 			t.Fatalf("error missing %q: %s", want, msg)
 		}

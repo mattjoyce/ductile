@@ -949,10 +949,11 @@ func discoverRegistry(cfg *config.Config, configPath string) (*plugin.Registry, 
 
 // resolveConfiguredPluginFingerprints enumerates every configured plugin in
 // cfg.Plugins, resolves it through the live plugin registry (honoring aliases),
-// and returns a []config.ResolvedPlugin suitable for config.GenerateChecksumsWithPlugins.
+// and returns a []config.ResolvedPlugin ready for keyed attestation via
+// config.ComputePluginFingerprint (used by `ductile plugin lock`).
 //
 // Configured plugins that do not resolve in any plugin_root produce a hard error:
-// the operator cannot lock what the binary will be unable to load.
+// the operator cannot attest what the binary will be unable to load.
 func resolveConfiguredPluginFingerprints(cfg *config.Config, configPath string) ([]config.ResolvedPlugin, error) {
 	if len(cfg.Plugins) == 0 {
 		return nil, nil
@@ -1017,7 +1018,7 @@ func verifyPluginFingerprintsForConfig(configPath string) error {
 		if len(cfg.Plugins) == 0 {
 			return nil
 		}
-		return fmt.Errorf("plugin fingerprints missing from .checksums; run 'ductile config lock' to authorize configured plugins")
+		return fmt.Errorf("plugin fingerprints missing from .checksums; run 'ductile plugin lock --all' to authorize configured plugins")
 	}
 	pluginRoots, err := resolvePluginRoots(cfg, configPath)
 	if err != nil {

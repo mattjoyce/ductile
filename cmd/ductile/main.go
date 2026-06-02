@@ -243,7 +243,7 @@ System Commands:
   system skills     Export capability registry (Skills) as LLM-readable Markdown
 
 Config Commands:
-  config lock       Authorize current state (update integrity hashes)
+  config lock       Authorize config files (preserves plugin attestations)
   config check      Validate syntax, policy, and integrity
   config show       Show full resolved configuration or a filtered entity node
   config get        Read a single value from the resolved configuration
@@ -264,6 +264,7 @@ Job Commands:
 Plugin Commands:
   plugin list       Show discovered plugins/connectors
   plugin run <name> Manual execution
+  plugin lock <name> Attest a plugin's bytes (or --all to attest every changed one)
 
 Relay Commands:
   relay send <instance> Send one authenticated remote relay event

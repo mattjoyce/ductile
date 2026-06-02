@@ -409,7 +409,9 @@ func printConfigNounHelp(w *os.File) {
 
 func printConfigLockHelp() {
 	fmt.Println("Usage: ductile config lock [--config PATH | --config-dir PATH] [-v|--verbose] [--dry-run]")
-	fmt.Println("Authorize current configuration state by regenerating scope file integrity hashes.")
+	fmt.Println("Authorize the config files by regenerating their integrity hashes. Recorded plugin")
+	fmt.Println("attestations are preserved (de-configured ones pruned); use 'ductile plugin lock' to")
+	fmt.Println("(re-)attest a plugin's bytes.")
 }
 
 func printConfigCheckHelp() {
@@ -590,29 +592,33 @@ func runConfigHashUpdate(args []string) int {
 				fmt.Fprintf(os.Stderr, "Failed to load config for plugin locking in %s: %v\n", dir, err)
 				return 1
 			}
-			resolved, err := resolveConfiguredPluginFingerprints(cfg, configPath)
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "Failed to resolve plugin fingerprints in %s: %v\n", dir, err)
-				return 1
+			// §3.1 (ADR Plugin Attestation): a routine `config lock` re-hashes the
+			// config files only and PRESERVES the recorded plugin_fingerprints for
+			// still-configured plugins (pruning de-configured ones). It never re-
+			// hashes plugin bytes — that closes Threat A (lock-laundering): a lock
+			// done for an unrelated reason can no longer bless a swapped binary.
+			// Attestation is the explicit, per-plugin act of `ductile plugin lock`.
+			// This path needs no vault nonce (nothing keyed is computed here).
+			configured := make(map[string]bool, len(cfg.Plugins))
+			for name, pc := range cfg.Plugins {
+				configured[name] = pc.Enabled
 			}
-			if isVerbose {
-				for _, rp := range resolved {
-					fmt.Printf("  DISCOVER [plugin] %s manifest=%s entrypoint=%s enabled=%t\n",
-						rp.Name, rp.ManifestPath, rp.EntrypointPath, rp.Enabled)
+			var preserved []config.PluginFingerprint
+			if existing, lerr := config.LoadChecksums(dir); lerr == nil {
+				preserved = config.PreservePluginFingerprints(existing.PluginFingerprints, configured)
+				if isVerbose {
+					for _, fp := range preserved {
+						fmt.Printf("  PRESERVE [plugin] %s manifest=%s entrypoint=%s\n",
+							fp.Name, fp.ManifestPath, fp.EntrypointPath)
+					}
+					for _, fp := range existing.PluginFingerprints {
+						if _, ok := configured[fp.Name]; !ok {
+							fmt.Printf("  PRUNE [plugin] %s (no longer configured)\n", fp.Name)
+						}
+					}
 				}
 			}
-			// Keyed attestation (ADR §3.2, vault-held-or-fail): locking plugins
-			// needs the vault nonce. Only required when there are plugins to lock;
-			// a plugin-free lock stays vault-less.
-			var nonce []byte
-			if len(resolved) > 0 {
-				nonce, err = fingerprintNonceForConfig(dir, cfg)
-				if err != nil {
-					fmt.Fprintf(os.Stderr, "Failed to load attestation nonce for %s: %v\n", dir, err)
-					return 1
-				}
-			}
-			if err := config.GenerateChecksumsWithPlugins(files, resolved, nonce, dryRun); err != nil {
+			if err := config.GenerateChecksumsWithFingerprints(files, preserved, dryRun); err != nil {
 				fmt.Fprintf(os.Stderr, "Failed to lock config in %s: %v\n", dir, err)
 				return 1
 			}

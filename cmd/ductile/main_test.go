@@ -70,6 +70,30 @@ func captureRunConfigHashUpdate(t *testing.T, args []string) (int, string, strin
 	})
 }
 
+func captureRunPluginLock(t *testing.T, args []string) (int, string, string) {
+	t.Helper()
+	return captureOutputWithExitCode(t, func() int {
+		return runPluginLock(args)
+	})
+}
+
+// lockConfigAndPlugins performs the §3.1 two-step that replaced the old all-in-one
+// lock: `config lock` authorizes the config files (and preserves/prunes recorded
+// attestations), then `plugin lock <name>` explicitly attests each named plugin's
+// bytes. Most fingerprint wiring tests need a plugin attested before they can
+// exercise verify, tamper, or stale-record behavior.
+func lockConfigAndPlugins(t *testing.T, dir string, names ...string) {
+	t.Helper()
+	if code, _, stderr := captureRunConfigHashUpdate(t, []string{"--config-dir", dir}); code != 0 {
+		t.Fatalf("config lock failed: %s", stderr)
+	}
+	for _, n := range names {
+		if code, _, stderr := captureRunPluginLock(t, []string{"--config-dir", dir, n}); code != 0 {
+			t.Fatalf("plugin lock %s failed: %s", n, stderr)
+		}
+	}
+}
+
 func setVersionMetadataForTest(t *testing.T, v, commit, built string) {
 	t.Helper()
 

@@ -95,6 +95,29 @@ func boolStr(b bool) string {
 	return "false"
 }
 
+// buildAliasFixture extends the gmail fixture with a gmail-work alias (uses: gmail),
+// so attestation of an alias pair can be exercised end to end.
+func buildAliasFixture(t *testing.T) string {
+	t.Helper()
+	tmp := buildFingerprintFixture(t, true)
+	aliasConfig := `
+plugin_roots:
+  - plugins
+service:
+  allow_symlinks: true
+plugins:
+  gmail:
+    enabled: true
+  gmail-work:
+    enabled: true
+    uses: gmail
+`
+	if err := os.WriteFile(filepath.Join(tmp, "config.yaml"), []byte(aliasConfig), 0644); err != nil {
+		t.Fatalf("rewrite config.yaml: %v", err)
+	}
+	return tmp
+}
+
 func TestResolveConfiguredPluginFingerprintsHappyPath(t *testing.T) {
 	tmp := buildFingerprintFixture(t, true)
 	configPath := filepath.Join(tmp, "config.yaml")
@@ -156,26 +179,118 @@ func TestResolveConfiguredPluginFingerprintsDisabledStillIncluded(t *testing.T) 
 	}
 }
 
-func TestRunConfigHashUpdateDefaultLockWritesFingerprints(t *testing.T) {
+// §3.1: a routine `config lock` no longer attests plugins. It writes config-file
+// hashes only and never re-hashes plugin bytes (closing Threat A — a lock done for
+// an unrelated reason cannot bless a swapped binary).
+func TestConfigLockDoesNotAttestPlugins(t *testing.T) {
 	tmp := buildFingerprintFixture(t, true)
 
 	code, stdout, stderr := captureRunConfigHashUpdate(t, []string{"--config-dir", tmp, "-v"})
 	if code != 0 {
 		t.Fatalf("runConfigHashUpdate code=%d stderr=%s", code, stderr)
 	}
-	if !strings.Contains(stdout, "DISCOVER [plugin] gmail") {
-		t.Fatalf("verbose output missing plugin discovery line: %s", stdout)
+	if strings.Contains(stdout, "DISCOVER [plugin]") {
+		t.Fatalf("config lock must not emit plugin-blessing discovery lines: %s", stdout)
 	}
 
 	m, err := config.LoadChecksums(tmp)
 	if err != nil {
 		t.Fatalf("LoadChecksums: %v", err)
 	}
-	if len(m.PluginFingerprints) != 1 {
-		t.Fatalf("want 1 fingerprint in .checksums, got %d", len(m.PluginFingerprints))
+	if len(m.PluginFingerprints) != 0 {
+		t.Fatalf("config lock must not write plugin fingerprints, got %d", len(m.PluginFingerprints))
 	}
-	if m.PluginFingerprints[0].Name != "gmail" {
-		t.Fatalf("wrong fingerprint: %+v", m.PluginFingerprints[0])
+}
+
+// `ductile plugin lock <name>` is the explicit, per-plugin attestation act.
+func TestPluginLockSingleWritesFingerprint(t *testing.T) {
+	tmp := buildFingerprintFixture(t, true)
+
+	if code, _, stderr := captureRunConfigHashUpdate(t, []string{"--config-dir", tmp}); code != 0 {
+		t.Fatalf("config lock failed: %s", stderr)
+	}
+	if code, _, stderr := captureRunPluginLock(t, []string{"--config-dir", tmp, "gmail"}); code != 0 {
+		t.Fatalf("plugin lock gmail failed: %s", stderr)
+	}
+
+	m, err := config.LoadChecksums(tmp)
+	if err != nil {
+		t.Fatalf("LoadChecksums: %v", err)
+	}
+	if len(m.PluginFingerprints) != 1 || m.PluginFingerprints[0].Name != "gmail" {
+		t.Fatalf("want 1 fingerprint named gmail, got %+v", m.PluginFingerprints)
+	}
+	if m.PluginFingerprints[0].EntrypointHash == "" {
+		t.Fatalf("attested fingerprint must carry an entrypoint hash: %+v", m.PluginFingerprints[0])
+	}
+}
+
+// plugin lock <name> must leave every OTHER plugin's recorded entry untouched
+// (ISC-A3): re-attesting A cannot sweep in a swapped B.
+func TestPluginLockSingleLeavesOthersUntouched(t *testing.T) {
+	tmp := buildAliasFixture(t)
+	lockConfigAndPlugins(t, tmp, "gmail", "gmail-work")
+
+	before, err := config.LoadChecksums(tmp)
+	if err != nil {
+		t.Fatalf("LoadChecksums: %v", err)
+	}
+	var workBefore config.PluginFingerprint
+	for _, fp := range before.PluginFingerprints {
+		if fp.Name == "gmail-work" {
+			workBefore = fp
+		}
+	}
+
+	// Re-attest only gmail; gmail-work's entry must be byte-identical afterwards.
+	if code, _, stderr := captureRunPluginLock(t, []string{"--config-dir", tmp, "gmail"}); code != 0 {
+		t.Fatalf("re-lock gmail failed: %s", stderr)
+	}
+	after, err := config.LoadChecksums(tmp)
+	if err != nil {
+		t.Fatalf("LoadChecksums after: %v", err)
+	}
+	var workAfter config.PluginFingerprint
+	for _, fp := range after.PluginFingerprints {
+		if fp.Name == "gmail-work" {
+			workAfter = fp
+		}
+	}
+	if workAfter != workBefore {
+		t.Fatalf("re-attesting gmail must not touch gmail-work: before=%+v after=%+v", workBefore, workAfter)
+	}
+}
+
+// plugin lock <name> errors when the plugin is not configured.
+func TestPluginLockUnconfiguredErrors(t *testing.T) {
+	tmp := buildFingerprintFixture(t, true)
+	if code, _, stderr := captureRunConfigHashUpdate(t, []string{"--config-dir", tmp}); code != 0 {
+		t.Fatalf("config lock failed: %s", stderr)
+	}
+	code, _, stderr := captureRunPluginLock(t, []string{"--config-dir", tmp, "ghost"})
+	if code == 0 {
+		t.Fatal("expected error attesting an unconfigured plugin")
+	}
+	if !strings.Contains(stderr, "ghost") || !strings.Contains(stderr, "not configured") {
+		t.Fatalf("error should name the unconfigured plugin: %s", stderr)
+	}
+}
+
+// plugin lock <name> errors when the plugin is configured but not on disk.
+func TestPluginLockNotDiscoverableErrors(t *testing.T) {
+	tmp := buildFingerprintFixture(t, true)
+	if code, _, stderr := captureRunConfigHashUpdate(t, []string{"--config-dir", tmp}); code != 0 {
+		t.Fatalf("config lock failed: %s", stderr)
+	}
+	if err := os.RemoveAll(filepath.Join(tmp, "plugins", "gmail")); err != nil {
+		t.Fatalf("remove plugin files: %v", err)
+	}
+	code, _, stderr := captureRunPluginLock(t, []string{"--config-dir", tmp, "gmail"})
+	if code == 0 {
+		t.Fatal("expected error attesting a configured-but-missing plugin")
+	}
+	if !strings.Contains(stderr, "gmail") {
+		t.Fatalf("error should name the missing plugin: %s", stderr)
 	}
 }
 
@@ -212,9 +327,7 @@ plugins: {}
 func TestVerifyPluginFingerprintsForConfigHappyPath(t *testing.T) {
 	tmp := buildFingerprintFixture(t, true)
 	// Lock first, including plugins.
-	if code, _, stderr := captureRunConfigHashUpdate(t, []string{"--config-dir", tmp}); code != 0 {
-		t.Fatalf("lock failed: %s", stderr)
-	}
+	lockConfigAndPlugins(t, tmp, "gmail")
 
 	if err := verifyPluginFingerprintsForConfig(filepath.Join(tmp, "config.yaml")); err != nil {
 		t.Fatalf("verify should pass on unchanged bytes: %v", err)
@@ -223,9 +336,7 @@ func TestVerifyPluginFingerprintsForConfigHappyPath(t *testing.T) {
 
 func TestLoadPluginFingerprintRecordsDisabledMissingPlugin(t *testing.T) {
 	tmp := buildFingerprintFixture(t, false)
-	if code, _, stderr := captureRunConfigHashUpdate(t, []string{"--config-dir", tmp}); code != 0 {
-		t.Fatalf("lock failed: %s", stderr)
-	}
+	lockConfigAndPlugins(t, tmp, "gmail")
 	if err := os.RemoveAll(filepath.Join(tmp, "plugins", "gmail")); err != nil {
 		t.Fatalf("remove plugin files: %v", err)
 	}
@@ -272,9 +383,7 @@ func TestLoadPluginFingerprintRecordsDisabledMissingPlugin(t *testing.T) {
 
 func TestVerifyPluginFingerprintsForConfigEntrypointTamperFails(t *testing.T) {
 	tmp := buildFingerprintFixture(t, true)
-	if code, _, stderr := captureRunConfigHashUpdate(t, []string{"--config-dir", tmp}); code != 0 {
-		t.Fatalf("lock failed: %s", stderr)
-	}
+	lockConfigAndPlugins(t, tmp, "gmail")
 	// Tamper with entrypoint.
 	entryPath := filepath.Join(tmp, "plugins", "gmail", "gmail")
 	if err := os.WriteFile(entryPath, []byte("#!/bin/sh\necho tampered\n"), 0755); err != nil {
@@ -288,7 +397,7 @@ func TestVerifyPluginFingerprintsForConfigEntrypointTamperFails(t *testing.T) {
 	if !strings.Contains(err.Error(), "gmail") || !strings.Contains(err.Error(), "entrypoint") {
 		t.Fatalf("error should name plugin and entrypoint kind: %v", err)
 	}
-	if !strings.Contains(err.Error(), "ductile config lock") {
+	if !strings.Contains(err.Error(), "ductile plugin lock") {
 		t.Fatalf("error should include recovery command: %v", err)
 	}
 }
@@ -314,7 +423,7 @@ func TestVerifyPluginFingerprintsForConfigNoPluginSectionWithConfiguredPluginsFa
 	if err == nil {
 		t.Fatal("expected missing plugin_fingerprints to fail when plugins are configured")
 	}
-	if !strings.Contains(err.Error(), "plugin fingerprints missing") || !strings.Contains(err.Error(), "ductile config lock") {
+	if !strings.Contains(err.Error(), "plugin fingerprints missing") || !strings.Contains(err.Error(), "ductile plugin lock") {
 		t.Fatalf("error should tell operator to relock: %v", err)
 	}
 }
@@ -351,9 +460,7 @@ plugins: {}
 // ManifestHash-mismatch branch of VerifyPluginFingerprints end-to-end.
 func TestVerifyPluginFingerprintsForConfigManifestTamperFails(t *testing.T) {
 	tmp := buildFingerprintFixture(t, true)
-	if code, _, stderr := captureRunConfigHashUpdate(t, []string{"--config-dir", tmp}); code != 0 {
-		t.Fatalf("lock failed: %s", stderr)
-	}
+	lockConfigAndPlugins(t, tmp, "gmail")
 	manPath := filepath.Join(tmp, "plugins", "gmail", "manifest.yaml")
 	tampered := `manifest_spec: ductile.plugin
 manifest_version: 1
@@ -376,7 +483,7 @@ commands:
 	if !strings.Contains(err.Error(), "gmail") || !strings.Contains(err.Error(), "manifest") {
 		t.Fatalf("error should name plugin and manifest kind: %v", err)
 	}
-	if !strings.Contains(err.Error(), "ductile config lock") {
+	if !strings.Contains(err.Error(), "ductile plugin lock") {
 		t.Fatalf("error should include recovery command: %v", err)
 	}
 }
@@ -384,28 +491,10 @@ commands:
 // TestRunConfigHashUpdateDefaultLockEmbedsAlias exercises the alias path end
 // to end: a second plugin entry with `uses: gmail` must share the base's
 // paths and hashes, and carry Uses in the manifest.
-func TestRunConfigHashUpdateDefaultLockEmbedsAlias(t *testing.T) {
-	tmp := buildFingerprintFixture(t, true)
-	// Rewrite config.yaml to add gmail-work: uses: gmail alongside gmail.
-	aliasConfig := `
-plugin_roots:
-  - plugins
-service:
-  allow_symlinks: true
-plugins:
-  gmail:
-    enabled: true
-  gmail-work:
-    enabled: true
-    uses: gmail
-`
-	if err := os.WriteFile(filepath.Join(tmp, "config.yaml"), []byte(aliasConfig), 0644); err != nil {
-		t.Fatalf("rewrite config.yaml: %v", err)
-	}
+func TestPluginLockEmbedsAlias(t *testing.T) {
+	tmp := buildAliasFixture(t)
 
-	if code, _, stderr := captureRunConfigHashUpdate(t, []string{"--config-dir", tmp}); code != 0 {
-		t.Fatalf("lock failed: %s", stderr)
-	}
+	lockConfigAndPlugins(t, tmp, "gmail", "gmail-work")
 	m, err := config.LoadChecksums(tmp)
 	if err != nil {
 		t.Fatalf("LoadChecksums: %v", err)
@@ -434,9 +523,7 @@ plugins:
 // reload does NOT reject the config.
 func TestVerifyPluginFingerprintsForConfigDisabledTamperIsNotFatal(t *testing.T) {
 	tmp := buildFingerprintFixture(t, false) // disabled
-	if code, _, stderr := captureRunConfigHashUpdate(t, []string{"--config-dir", tmp}); code != 0 {
-		t.Fatalf("lock failed: %s", stderr)
-	}
+	lockConfigAndPlugins(t, tmp, "gmail")
 	// Tamper disabled plugin's entrypoint.
 	if err := os.WriteFile(filepath.Join(tmp, "plugins", "gmail", "gmail"), []byte("rebuilt\n"), 0755); err != nil {
 		t.Fatalf("tamper: %v", err)
@@ -449,9 +536,7 @@ func TestVerifyPluginFingerprintsForConfigDisabledTamperIsNotFatal(t *testing.T)
 
 func TestVerifyPluginFingerprintsForConfigEnabledAfterDisabledLockTamperFails(t *testing.T) {
 	tmp := buildFingerprintFixture(t, false)
-	if code, _, stderr := captureRunConfigHashUpdate(t, []string{"--config-dir", tmp}); code != 0 {
-		t.Fatalf("lock failed: %s", stderr)
-	}
+	lockConfigAndPlugins(t, tmp, "gmail")
 	enabledConfig := `
 plugin_roots:
   - plugins
@@ -479,9 +564,7 @@ plugins:
 
 func TestVerifyPluginFingerprintsForConfigConfiguredMissingPluginFails(t *testing.T) {
 	tmp := buildFingerprintFixture(t, true)
-	if code, _, stderr := captureRunConfigHashUpdate(t, []string{"--config-dir", tmp}); code != 0 {
-		t.Fatalf("lock failed: %s", stderr)
-	}
+	lockConfigAndPlugins(t, tmp, "gmail")
 	if err := os.RemoveAll(filepath.Join(tmp, "plugins", "gmail")); err != nil {
 		t.Fatalf("remove plugin: %v", err)
 	}
@@ -529,9 +612,7 @@ func TestRunConfigHashUpdatePluginsDryRunLeavesChecksumsUntouched(t *testing.T) 
 // reject the reload.
 func TestVerifyPluginFingerprintsForConfigStaleRecordNotFatal(t *testing.T) {
 	tmp := buildFingerprintFixture(t, true)
-	if code, _, stderr := captureRunConfigHashUpdate(t, []string{"--config-dir", tmp}); code != 0 {
-		t.Fatalf("lock failed: %s", stderr)
-	}
+	lockConfigAndPlugins(t, tmp, "gmail")
 
 	// Rewrite config.yaml removing gmail entirely (but keeping plugin files).
 	cleaned := `
@@ -549,24 +630,21 @@ plugins: {}
 	}
 }
 
-// TestRunConfigHashUpdatePluginsRelockOverwritesCleanly verifies that
-// running the lock twice produces a valid manifest matching the second
-// run (idempotent overwrite via writeChecksumsAtomic), with no stale
-// artifacts left behind.
-func TestRunConfigHashUpdatePluginsRelockOverwritesCleanly(t *testing.T) {
+// TestPluginLockReattestsModifiedBytesCleanly verifies that re-attesting a
+// plugin via `plugin lock <name>` after its bytes change records the NEW hash
+// and overwrites .checksums atomically with no stray temp artifacts.
+func TestPluginLockReattestsModifiedBytesCleanly(t *testing.T) {
 	tmp := buildFingerprintFixture(t, true)
-	if code, _, stderr := captureRunConfigHashUpdate(t, []string{"--config-dir", tmp}); code != 0 {
-		t.Fatalf("first lock failed: %s", stderr)
-	}
+	lockConfigAndPlugins(t, tmp, "gmail")
 	first, _ := config.LoadChecksums(tmp)
 
-	// Modify the plugin entrypoint between locks.
+	// Modify the plugin entrypoint between attestations.
 	if err := os.WriteFile(filepath.Join(tmp, "plugins", "gmail", "gmail"), []byte("v2\n"), 0755); err != nil {
 		t.Fatalf("modify entrypoint: %v", err)
 	}
 
-	if code, _, stderr := captureRunConfigHashUpdate(t, []string{"--config-dir", tmp}); code != 0 {
-		t.Fatalf("relock failed: %s", stderr)
+	if code, _, stderr := captureRunPluginLock(t, []string{"--config-dir", tmp, "gmail"}); code != 0 {
+		t.Fatalf("re-attest failed: %s", stderr)
 	}
 	second, _ := config.LoadChecksums(tmp)
 
