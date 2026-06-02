@@ -384,14 +384,27 @@ func (d *Dispatcher) executeJob(ctx context.Context, job *queue.Job) {
 	secrets, err := composePluginSecrets(d.secretComposer, d.pluginVerifier, job.Plugin, jobLogger)
 	if err != nil {
 		errMsg := fmt.Sprintf("secret composition failed: %v", err)
-		jobLogger.Error(errMsg)
-		// Record the fail-closed denial as a vault audit fact. The error text is
+		// Classify the fail-closed failure. A fingerprint mismatch is a possible
+		// plugin swap — a SECURITY event escalated loudly and distinctly from a
+		// benign denial (#25), via a SECURITY-marked log and a live hub event so
+		// `system watch`/SSE subscribers and any external alerting catch it.
+		op, outcome, security := composeFailureEscalation(err)
+		if security {
+			jobLogger.Error("SECURITY: plugin fingerprint mismatch at spawn — possible plugin swap; secrets withheld and spawn failed closed",
+				"event", eventPluginFingerprintMismatch, "plugin", job.Plugin, "job_id", job.ID, "detail", err.Error())
+			d.events.Publish(eventPluginFingerprintMismatch, map[string]any{
+				"plugin": job.Plugin, "job_id": job.ID, "detail": err.Error(),
+			})
+		} else {
+			jobLogger.Error(errMsg)
+		}
+		// Record the fail-closed outcome as a vault audit fact. The error text is
 		// about principal identity/status, never a secret value. Best-effort: a
 		// lost audit row warn-logs, it does not change the (already failed) job.
 		if auditErr := d.state.AppendVaultAudit(ctx, state.VaultAuditEvent{
-			Op: "compose_denial", Principal: job.Plugin, Actor: "core", Outcome: "denied", Detail: err.Error(),
+			Op: op, Principal: job.Plugin, Actor: "core", Outcome: outcome, Detail: err.Error(),
 		}); auditErr != nil {
-			jobLogger.Error("vault audit write failed", "op", "compose_denial", "error", auditErr)
+			jobLogger.Error("vault audit write failed", "op", op, "error", auditErr)
 		}
 		d.completeJob(ctx, jobLogger, job.ID, job.Plugin, job.StartedAt, queue.StatusFailed, nil, &errMsg, nil)
 		return
