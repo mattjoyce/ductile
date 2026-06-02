@@ -235,6 +235,35 @@ CREATE INDEX IF NOT EXISTS job_stopwatch_job_attempt_idx
 CREATE INDEX IF NOT EXISTS job_stopwatch_pipeline_idx
   ON job_stopwatch(pipeline, pipeline_instance_id);
 
+-- Vault Audit: append-only fact log of vault lifecycle operations
+-- (register / set / roll / revoke / purge / dump-values / compose-denial).
+-- Records the op, the principal, the secret NAME, the actor, and the outcome.
+-- It NEVER records a secret value -- the writer (AppendVaultAudit) has no value
+-- field by construction, and TestVaultAuditNeverStoresSecretValue guards it.
+-- Same hazard discipline as job_stopwatch.subs_json: nothing value-class lands here.
+--
+-- No FK on principal/secret_name: these are append-only facts over the vault's
+-- in-memory age-blob model, which is a different store entirely (no shared txn).
+-- The vault Save (blob) happens first, then the audit append follows best-effort.
+--
+-- Soft introduction: this table is NOT in the validator requiredTables list, so
+-- existing databases continue to start without it. Operators upgrade via
+-- scripts/migrate-add-vault-audit-table.py. Fresh databases get it from
+-- BootstrapSQLite on first start.
+CREATE TABLE IF NOT EXISTS vault_audit (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  op          TEXT NOT NULL,
+  principal   TEXT,
+  secret_name TEXT,
+  actor       TEXT,
+  outcome     TEXT NOT NULL,
+  detail      TEXT,
+  created_at  TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS vault_audit_created_at_idx ON vault_audit(created_at);
+CREATE INDEX IF NOT EXISTS vault_audit_principal_created_idx ON vault_audit(principal, created_at);
+
 -- Schedule Entries: Last fire times and next scheduled runs.
 CREATE TABLE IF NOT EXISTS schedule_entries (
   plugin          TEXT NOT NULL,

@@ -93,6 +93,10 @@ type Config struct {
 	// disables the /vault routes (no vault loaded / keyless). Authenticated by
 	// the vault's own resident admin token, not these config Tokens.
 	Vault VaultManager
+	// VaultAuditor records vault lifecycle facts to the append-only audit log.
+	// nil disables audit emission (ops still succeed — audit is observability,
+	// not a precondition). Runtime wires the state.Store.
+	VaultAuditor VaultAuditor
 	// AllowedOrigins lists the origins that may receive credentialed CORS
 	// headers. An empty list disables cross-origin credential sharing entirely.
 	AllowedOrigins []string
@@ -117,6 +121,7 @@ type Server struct {
 	serveDone     chan struct{}
 	relayReceiver *relay.Receiver
 	vault         VaultManager
+	auditor       VaultAuditor
 }
 
 // New creates a new API server instance. admitter decides whether ingress
@@ -154,6 +159,7 @@ func New(config Config, queue JobQueuer, registry PluginRegistry, router Pipelin
 		serveDone:     make(chan struct{}),
 		relayReceiver: config.RelayReceiver,
 		vault:         config.Vault,
+		auditor:       config.VaultAuditor,
 	}
 }
 

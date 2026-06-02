@@ -639,6 +639,9 @@ func buildRuntime(cfg *config.Config, configPath string, configSource string, re
 		// would make the interface non-nil and register routes that then panic.
 		if vaultOwner != nil {
 			apiConfig.Vault = vaultOwner
+			// The state store is the append-only audit sink for vault lifecycle
+			// facts. Wired only alongside a vault owner; nil leaves audit disabled.
+			apiConfig.VaultAuditor = st
 		}
 		apiServer := api.New(apiConfig, q, registry, routerEngine, disp, contextStore, admitter, st, hub, log.WithComponent("api"))
 		rt.apiServer = apiServer

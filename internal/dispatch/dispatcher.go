@@ -368,6 +368,14 @@ func (d *Dispatcher) executeJob(ctx context.Context, job *queue.Job) {
 	if err != nil {
 		errMsg := fmt.Sprintf("secret composition failed: %v", err)
 		jobLogger.Error(errMsg)
+		// Record the fail-closed denial as a vault audit fact. The error text is
+		// about principal identity/status, never a secret value. Best-effort: a
+		// lost audit row warn-logs, it does not change the (already failed) job.
+		if auditErr := d.state.AppendVaultAudit(ctx, state.VaultAuditEvent{
+			Op: "compose_denial", Principal: job.Plugin, Actor: "core", Outcome: "denied", Detail: err.Error(),
+		}); auditErr != nil {
+			jobLogger.Error("vault audit write failed", "op", "compose_denial", "error", auditErr)
+		}
 		d.completeJob(ctx, jobLogger, job.ID, job.Plugin, job.StartedAt, queue.StatusFailed, nil, &errMsg, nil)
 		return
 	}

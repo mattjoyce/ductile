@@ -1,11 +1,14 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"time"
 
 	"github.com/mattjoyce/ductile/internal/auth"
+	"github.com/mattjoyce/ductile/internal/state"
 	"github.com/mattjoyce/ductile/internal/vault"
 )
 
@@ -22,6 +25,30 @@ type VaultManager interface {
 	RevokePrincipal(name string) error
 	PurgePrincipal(name string) error
 	RollPrincipal(name string, now time.Time) (rolled, skipped []string, err error)
+}
+
+// VaultAuditor records vault lifecycle facts to the append-only audit log. The
+// narrow surface (one append) is defined here, at the point of use; satisfied
+// by *state.Store. nil disables audit (the op still succeeds — audit is
+// observability, never a precondition).
+type VaultAuditor interface {
+	AppendVaultAudit(ctx context.Context, ev state.VaultAuditEvent) error
+}
+
+// vaultAdminActor is the actor recorded for management-API mutations: every
+// authenticated /vault/* write is by the holder of the resident admin token.
+const vaultAdminActor = "core-admin-token"
+
+// auditVault records one vault lifecycle fact, best-effort. A failed audit
+// write never rolls back the op (the blob is already saved and the response is
+// about to be 200) — it is logged loudly so a lost row is visible, not silent.
+func (s *Server) auditVault(ctx context.Context, ev state.VaultAuditEvent) {
+	if s.auditor == nil {
+		return
+	}
+	if err := s.auditor.AppendVaultAudit(ctx, ev); err != nil {
+		s.logger.Error("vault audit write failed", "op", ev.Op, "outcome", ev.Outcome, "error", err)
+	}
 }
 
 // authenticateVaultAdmin gates vault management routes on the vault's resident
@@ -78,6 +105,9 @@ func (s *Server) handleVaultSet(w http.ResponseWriter, r *http.Request) {
 		s.writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	s.auditVault(r.Context(), state.VaultAuditEvent{
+		Op: "set", SecretName: req.Name, Actor: vaultAdminActor, Outcome: "ok", Detail: "pattern=" + pattern,
+	})
 	respondJSON(w, http.StatusOK, vaultSetResponse{Name: req.Name, Status: "set"})
 }
 
@@ -97,6 +127,9 @@ func (s *Server) handleVaultRegisterPrincipal(w http.ResponseWriter, r *http.Req
 		s.writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	s.auditVault(r.Context(), state.VaultAuditEvent{
+		Op: "register", Principal: req.Name, Actor: vaultAdminActor, Outcome: "ok", Detail: "kind=" + req.Kind,
+	})
 	respondJSON(w, http.StatusOK, vaultStatusResponse{Name: req.Name, Status: "principal_registered"})
 }
 
@@ -128,6 +161,9 @@ func (s *Server) handleVaultRoll(w http.ResponseWriter, r *http.Request) {
 		s.writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	s.auditVault(r.Context(), state.VaultAuditEvent{
+		Op: "roll", SecretName: req.Name, Actor: vaultAdminActor, Outcome: "ok",
+	})
 	respondJSON(w, http.StatusOK, vaultStatusResponse{Name: req.Name, Status: "rolled"})
 }
 
@@ -141,6 +177,9 @@ func (s *Server) handleVaultRevoke(w http.ResponseWriter, r *http.Request) {
 		s.writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	s.auditVault(r.Context(), state.VaultAuditEvent{
+		Op: "revoke", SecretName: req.Name, Actor: vaultAdminActor, Outcome: "ok",
+	})
 	respondJSON(w, http.StatusOK, vaultStatusResponse{Name: req.Name, Status: "revoked"})
 }
 
@@ -154,6 +193,9 @@ func (s *Server) handleVaultRevokePrincipal(w http.ResponseWriter, r *http.Reque
 		s.writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	s.auditVault(r.Context(), state.VaultAuditEvent{
+		Op: "revoke_principal", Principal: req.Name, Actor: vaultAdminActor, Outcome: "ok",
+	})
 	respondJSON(w, http.StatusOK, vaultStatusResponse{Name: req.Name, Status: "principal_revoked"})
 }
 
@@ -167,6 +209,9 @@ func (s *Server) handleVaultPurgePrincipal(w http.ResponseWriter, r *http.Reques
 		s.writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	s.auditVault(r.Context(), state.VaultAuditEvent{
+		Op: "purge_principal", Principal: req.Name, Actor: vaultAdminActor, Outcome: "ok",
+	})
 	respondJSON(w, http.StatusOK, vaultStatusResponse{Name: req.Name, Status: "principal_purged"})
 }
 
@@ -189,5 +234,9 @@ func (s *Server) handleVaultRollPrincipal(w http.ResponseWriter, r *http.Request
 		s.writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	s.auditVault(r.Context(), state.VaultAuditEvent{
+		Op: "roll_principal", Principal: req.Name, Actor: vaultAdminActor, Outcome: "ok",
+		Detail: fmt.Sprintf("rolled=%d skipped=%d", len(rolled), len(skipped)),
+	})
 	respondJSON(w, http.StatusOK, vaultRollPrincipalResponse{Name: req.Name, Rolled: rolled, Skipped: skipped})
 }

@@ -258,6 +258,81 @@ func TestVaultRollPrincipal_ReportsRolledAndSkipped(t *testing.T) {
 	}
 }
 
+// setupAuditedVaultServer wires a real state.Store as the audit sink so we can
+// assert that handler success emits an audit fact.
+func setupAuditedVaultServer(t *testing.T, fv VaultManager) (*Server, *state.Store) {
+	t.Helper()
+	db, err := storage.OpenSQLite(context.Background(), ":memory:")
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	st := state.NewStore(db)
+	cfg := Config{
+		Listen:       "localhost:8080",
+		Tokens:       []auth.TokenConfig{{Token: "cfg-token", Scopes: []string{"*"}}},
+		Vault:        fv,
+		VaultAuditor: st,
+	}
+	q := queue.New(db)
+	cs := state.NewContextStore(db)
+	hub := events.NewHub(10)
+	srv := New(cfg, q, &mockRegistry{}, &mockRouter{}, &mockWaiter{}, cs, state.NewAdmitter(q, state.DefaultMaxContextBytes), nil, hub, slog.Default())
+	return srv, st
+}
+
+// A successful management mutation appends exactly one audit fact carrying the
+// op, secret name, and actor — and never the secret value.
+func TestVaultSet_EmitsAuditFactWithoutValue(t *testing.T) {
+	fv := &fakeVault{adminToken: "admin-tok"}
+	server, st := setupAuditedVaultServer(t, fv)
+
+	const secretValue = "shh-do-not-log"
+	body := map[string]any{"name": "api_key", "value": secretValue, "authorized_principals": []string{"mailer"}}
+	rr := httptest.NewRecorder()
+	server.setupRoutes().ServeHTTP(rr, vaultSetRequestJSON(t, body, "admin-tok"))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d (%s)", rr.Code, rr.Body.String())
+	}
+
+	rows, err := st.ListVaultAudit(context.Background(), 10)
+	if err != nil {
+		t.Fatalf("ListVaultAudit: %v", err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("expected exactly one audit fact, got %d", len(rows))
+	}
+	got := rows[0]
+	if got.Op != "set" || got.SecretName != "api_key" || got.Actor != vaultAdminActor || got.Outcome != "ok" {
+		t.Fatalf("unexpected audit fact: %+v", got)
+	}
+	for _, f := range []string{got.Op, got.Principal, got.SecretName, got.Actor, got.Outcome, got.Detail} {
+		if strings.Contains(f, secretValue) {
+			t.Fatalf("secret value leaked into audit fact: %q", f)
+		}
+	}
+}
+
+// A rejected request (wrong token) mutates nothing and emits no audit fact.
+func TestVaultSet_RejectedRequestEmitsNoAudit(t *testing.T) {
+	fv := &fakeVault{adminToken: "admin-tok"}
+	server, st := setupAuditedVaultServer(t, fv)
+
+	body := map[string]any{"name": "api_key", "value": "v"}
+	rr := httptest.NewRecorder()
+	server.setupRoutes().ServeHTTP(rr, vaultSetRequestJSON(t, body, "wrong"))
+	if rr.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401, got %d", rr.Code)
+	}
+	rows, err := st.ListVaultAudit(context.Background(), 10)
+	if err != nil {
+		t.Fatalf("ListVaultAudit: %v", err)
+	}
+	if len(rows) != 0 {
+		t.Fatalf("rejected request must emit no audit fact, got %d", len(rows))
+	}
+}
+
 func TestVaultSet_SetSecretErrorIsBadRequest(t *testing.T) {
 	fv := &fakeVault{adminToken: "admin-tok", setErr: context.DeadlineExceeded}
 	server := setupVaultTestServer(t, fv)
