@@ -54,6 +54,11 @@ type Dispatcher struct {
 	// spawn. Nil when no vault is wired, in which case no secrets are delivered.
 	secretComposer SecretComposer
 
+	// pluginVerifier re-verifies a plugin's live bytes against its recorded keyed
+	// fingerprint right before its secrets are delivered (§3.3). Nil disables the
+	// gate. Only consulted for plugins that ARE vault principals.
+	pluginVerifier PluginVerifier
+
 	// completions tracks jobs being waited on for synchronous execution.
 	// Map key is root job ID. Value is a channel that is closed when the tree is complete.
 	completions    map[string]chan struct{}
@@ -89,6 +94,18 @@ func WithAdmitter(a AdmissionGate) Option {
 func WithSecretComposer(c SecretComposer) Option {
 	return func(d *Dispatcher) {
 		d.secretComposer = c
+	}
+}
+
+// WithPluginVerifier wires compose-time plugin re-verification (§3.3). When set,
+// a plugin that is a vault principal has its live bytes re-checked against its
+// recorded keyed fingerprint right before secrets are delivered; a mismatch fails
+// the spawn closed. Omitted (nil) leaves delivery gated only by authorization, as
+// before. The production runtime supplies an adapter over the registry +
+// .checksums + vault nonce.
+func WithPluginVerifier(v PluginVerifier) Option {
+	return func(d *Dispatcher) {
+		d.pluginVerifier = v
 	}
 }
 
@@ -364,7 +381,7 @@ func (d *Dispatcher) executeJob(ctx context.Context, job *queue.Job) {
 	// Compose the plugin's authorized vault secrets for stdin delivery. A revoked
 	// principal (or any non-opt-out composer error) fails the job closed — the
 	// plugin must not run when an explicit authorization signal is in error.
-	secrets, err := composePluginSecrets(d.secretComposer, job.Plugin, jobLogger)
+	secrets, err := composePluginSecrets(d.secretComposer, d.pluginVerifier, job.Plugin, jobLogger)
 	if err != nil {
 		errMsg := fmt.Sprintf("secret composition failed: %v", err)
 		jobLogger.Error(errMsg)

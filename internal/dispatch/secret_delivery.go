@@ -2,6 +2,7 @@ package dispatch
 
 import (
 	"errors"
+	"fmt"
 	"log/slog"
 
 	"github.com/mattjoyce/ductile/internal/vault"
@@ -13,6 +14,25 @@ import (
 type SecretComposer interface {
 	Compose(principal string) (vault.Composition, error)
 }
+
+// PluginVerifier re-verifies a plugin's live bytes against its recorded keyed
+// fingerprint at spawn (ADR §3.3), closing the runtime-swap window for the secret
+// path: a binary swapped after the last reload is caught before its secrets are
+// delivered. Defined at the point of use; satisfied by a runtime adapter that
+// wraps the plugin registry, .checksums, and the vault nonce. A nil verifier
+// disables the gate (back-compat).
+type PluginVerifier interface {
+	// VerifyIdentity returns nil when the plugin's live bytes match its recorded
+	// attestation, or an error to fail closed (mismatch / no recorded
+	// fingerprint / unreadable bytes / no nonce).
+	VerifyIdentity(plugin string) error
+}
+
+// ErrFingerprintMismatch marks a compose-time attestation failure. composePlugin-
+// Secrets wraps the verifier's error with it so the dispatcher's audit fact carries
+// the fingerprint_mismatch reason and downstream alerting (#25) can branch with
+// errors.Is. Its text IS the vault DenialFingerprintMismatch reason.
+var ErrFingerprintMismatch = errors.New(string(vault.DenialFingerprintMismatch))
 
 // composePluginSecrets resolves the secrets to deliver to a plugin at spawn.
 //
@@ -31,7 +51,7 @@ type SecretComposer interface {
 //
 // Any Compose error other than a benign unknown-principal also fails closed — a
 // composer that cannot answer is never treated as "no secrets."
-func composePluginSecrets(composer SecretComposer, plugin string, logger *slog.Logger) (map[string]string, error) {
+func composePluginSecrets(composer SecretComposer, verifier PluginVerifier, plugin string, logger *slog.Logger) (map[string]string, error) {
 	if composer == nil {
 		return nil, nil
 	}
@@ -42,6 +62,18 @@ func composePluginSecrets(composer SecretComposer, plugin string, logger *slog.L
 			return nil, nil // opt-out: plugin is not a vault principal
 		}
 		return nil, err // revoked principal or any other error: fail closed
+	}
+
+	// The plugin IS a vault principal about to receive secrets. Re-verify its live
+	// bytes against the recorded keyed fingerprint right before delivery (§3.3) —
+	// closing the window where a binary swapped since the last reload would be
+	// handed this principal's secrets. Fail closed; a non-principal never reaches
+	// here, so attestation gates only the secret path. A nil verifier disables the
+	// gate (deployments not wired for attestation behave as before).
+	if verifier != nil {
+		if vErr := verifier.VerifyIdentity(plugin); vErr != nil {
+			return nil, fmt.Errorf("%w: %v", ErrFingerprintMismatch, vErr)
+		}
 	}
 
 	for _, d := range comp.Denials {

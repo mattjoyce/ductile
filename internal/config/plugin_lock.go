@@ -10,6 +10,19 @@ import (
 	"github.com/zeebo/blake3"
 )
 
+// FindPluginFingerprint returns the recorded fingerprint for a plugin by Name.
+// The manifest stores fingerprints as a slice (sorted, append-friendly), so this
+// is the canonical by-name lookup used by callers that need one entry — e.g. the
+// compose-time re-verifier.
+func (m *ChecksumManifest) FindPluginFingerprint(name string) (PluginFingerprint, bool) {
+	for _, fp := range m.PluginFingerprints {
+		if fp.Name == name {
+			return fp, true
+		}
+	}
+	return PluginFingerprint{}, false
+}
+
 // sortPluginFingerprintsByName sorts a fingerprint slice in place by Name — the
 // canonical order recorded in .checksums and hashed by PluginFingerprintsCode.
 func sortPluginFingerprintsByName(fps []PluginFingerprint) {

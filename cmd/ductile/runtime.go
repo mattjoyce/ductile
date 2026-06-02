@@ -564,6 +564,10 @@ func buildRuntime(cfg *config.Config, configPath string, configSource string, re
 	// assign the interface only for a non-nil owner to avoid a typed-nil
 	// interface that would later panic in Compose.
 	var secretComposer dispatch.SecretComposer
+	// pluginVerifier stays a nil interface unless a vault is loaded, so the §3.3
+	// compose-time gate is off for vault-less deployments (and we avoid a typed-nil
+	// interface that would defeat the nil check in composePluginSecrets).
+	var pluginVerifier dispatch.PluginVerifier
 	vaultOwner, err := config.LoadVault(configDir, cfg)
 	if err != nil {
 		logger.Error("failed to load vault", "error", err)
@@ -571,11 +575,16 @@ func buildRuntime(cfg *config.Config, configPath string, configSource string, re
 	}
 	if vaultOwner != nil {
 		secretComposer = vaultOwner
-		logger.Info("vault secret delivery enabled")
+		// §3.3: re-verify a principal's live bytes against its recorded keyed
+		// fingerprint right before delivering its secrets. The nonce comes from the
+		// same loaded vault that holds the secrets.
+		pluginVerifier = newPluginIdentityVerifier(registry, configDir, vaultOwner)
+		logger.Info("vault secret delivery enabled (compose-time attestation on)")
 	}
 
 	disp := dispatch.New(q, st, contextStore, routerEngine, registry, hub, cfg,
-		dispatch.WithAdmitter(admitter), dispatch.WithSecretComposer(secretComposer))
+		dispatch.WithAdmitter(admitter), dispatch.WithSecretComposer(secretComposer),
+		dispatch.WithPluginVerifier(pluginVerifier))
 	rt.dispatcher = disp
 
 	relayReceiver, err := relay.NewReceiver(cfg, q, routerEngine, contextStore, admitter, log.WithComponent("relay"))

@@ -148,13 +148,6 @@ func VerifyPluginFingerprints(fingerprints []PluginFingerprint, configuredPlugin
 		}
 	}
 
-	shortHash := func(h string) string {
-		if len(h) < 12 {
-			return h
-		}
-		return h[:12]
-	}
-
 	locked := make(map[string]PluginFingerprint, len(fingerprints))
 	for _, fp := range fingerprints {
 		locked[fp.Name] = fp
