@@ -24,12 +24,20 @@ type ResolvedPlugin struct {
 }
 
 // ComputePluginFingerprint reads the resolved plugin's manifest and entrypoint
-// files, hashes each with BLAKE3, and returns a PluginFingerprint. Missing or
-// unreadable files produce a hard error — the operator cannot lock a plugin
-// whose bytes cannot be read.
-func ComputePluginFingerprint(rp ResolvedPlugin) (PluginFingerprint, error) {
+// files, hashes each with keyed BLAKE3 (using the vault fingerprint nonce), and
+// returns a PluginFingerprint. Missing or unreadable files produce a hard error
+// — the operator cannot lock a plugin whose bytes cannot be read.
+//
+// Attestation is keyed-or-nothing (operator decision, ADR §3.2 amended): the
+// nonce MUST be the 32-byte vault fingerprint nonce. A missing/short nonce is a
+// hard error, never a silent fall-through to an unkeyed digest — so a fingerprint
+// can never be forged by anyone who cannot read the vault.
+func ComputePluginFingerprint(rp ResolvedPlugin, nonce []byte) (PluginFingerprint, error) {
 	if rp.Name == "" {
 		return PluginFingerprint{}, fmt.Errorf("plugin name is required")
+	}
+	if len(nonce) != 32 {
+		return PluginFingerprint{}, fmt.Errorf("plugin %q: attestation requires the 32-byte vault fingerprint nonce (got %d bytes); ensure the vault is initialized and loaded", rp.Name, len(nonce))
 	}
 	if !filepath.IsAbs(rp.ManifestPath) {
 		return PluginFingerprint{}, fmt.Errorf("plugin %q: manifest path must be absolute, got %q", rp.Name, rp.ManifestPath)
@@ -52,11 +60,11 @@ func ComputePluginFingerprint(rp ResolvedPlugin) (PluginFingerprint, error) {
 		return PluginFingerprint{}, fmt.Errorf("plugin %q: entrypoint is not executable: %s", rp.Name, entrypointResolved)
 	}
 
-	manifestHash, err := ComputeBlake3Hash(manifestResolved)
+	manifestHash, err := ComputeKeyedBlake3Hash(manifestResolved, nonce)
 	if err != nil {
 		return PluginFingerprint{}, fmt.Errorf("plugin %q: hash manifest %s: %w", rp.Name, manifestResolved, err)
 	}
-	entrypointHash, err := ComputeBlake3Hash(entrypointResolved)
+	entrypointHash, err := ComputeKeyedBlake3Hash(entrypointResolved, nonce)
 	if err != nil {
 		return PluginFingerprint{}, fmt.Errorf("plugin %q: hash entrypoint %s: %w", rp.Name, entrypointResolved, err)
 	}
@@ -80,7 +88,7 @@ func ComputePluginFingerprint(rp ResolvedPlugin) (PluginFingerprint, error) {
 //
 // When dryRun is true, no file is written but all hashing still runs so the
 // caller can surface hash-time errors before commit.
-func GenerateChecksumsWithPlugins(files *ConfigFiles, plugins []ResolvedPlugin, dryRun bool) error {
+func GenerateChecksumsWithPlugins(files *ConfigFiles, plugins []ResolvedPlugin, nonce []byte, dryRun bool) error {
 	manifest := ChecksumManifest{
 		Version:     2,
 		GeneratedAt: time.Now().UTC().Format(time.RFC3339),
@@ -97,7 +105,7 @@ func GenerateChecksumsWithPlugins(files *ConfigFiles, plugins []ResolvedPlugin, 
 
 	fingerprints := make([]PluginFingerprint, 0, len(plugins))
 	for _, rp := range plugins {
-		fp, err := ComputePluginFingerprint(rp)
+		fp, err := ComputePluginFingerprint(rp, nonce)
 		if err != nil {
 			return err
 		}
@@ -139,9 +147,21 @@ func GenerateChecksumsWithPlugins(files *ConfigFiles, plugins []ResolvedPlugin, 
 //
 // Every diagnostic message names the plugin, the path, short hash prefixes,
 // and the literal recovery command so operators can always recover.
-func VerifyPluginFingerprints(fingerprints []PluginFingerprint, configuredPlugins map[string]bool, currentPlugins map[string]ResolvedPlugin) *IntegrityResult {
+func VerifyPluginFingerprints(fingerprints []PluginFingerprint, configuredPlugins map[string]bool, currentPlugins map[string]ResolvedPlugin, nonce []byte) *IntegrityResult {
 	result := &IntegrityResult{Passed: true}
 	if len(fingerprints) == 0 {
+		// Not attesting at all: a deployment with no recorded fingerprints opts
+		// out and runs (vault-less is fine here — there is nothing to verify).
+		return result
+	}
+	// Fail closed (Armstrong): recorded fingerprints are keyed, so verification
+	// REQUIRES the vault nonce. A missing/short nonce must not silently pass —
+	// that would be the downgrade attack (delete the vault, verify unkeyed).
+	if len(nonce) != 32 {
+		result.Passed = false
+		result.Errors = append(result.Errors, fmt.Sprintf(
+			"plugin attestation requires the 32-byte vault fingerprint nonce (got %d bytes); ensure the vault is initialized and loaded before verification",
+			len(nonce)))
 		return result
 	}
 
@@ -190,7 +210,7 @@ func VerifyPluginFingerprints(fingerprints []PluginFingerprint, configuredPlugin
 				fp.Name, fp.Uses, current.Uses))
 		}
 
-		currentFP, err := ComputePluginFingerprint(current)
+		currentFP, err := ComputePluginFingerprint(current, nonce)
 		if err != nil {
 			addFinding(fmt.Sprintf(
 				"plugin %q: failed to fingerprint current plugin: %v; run 'ductile config lock' after investigating",

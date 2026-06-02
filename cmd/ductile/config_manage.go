@@ -1050,11 +1050,35 @@ func verifyPluginFingerprintsForConfig(configPath string) error {
 			EntrypointPath: p.Entrypoint,
 		}
 	}
-	result := config.VerifyPluginFingerprints(manifest.PluginFingerprints, configured, current)
+	// Recorded fingerprints are keyed (ADR §3.2, vault-held-or-fail): verification
+	// needs the vault nonce. fingerprintNonceForConfig fails closed if no vault is
+	// loaded — a present fingerprint set can never be verified unkeyed.
+	nonce, err := fingerprintNonceForConfig(configDir, cfg)
+	if err != nil {
+		return fmt.Errorf("plugin verify: %w", err)
+	}
+	result := config.VerifyPluginFingerprints(manifest.PluginFingerprints, configured, current, nonce)
 	if !result.Passed {
 		return fmt.Errorf("plugin fingerprint mismatch: %s", strings.Join(result.Errors, "; "))
 	}
 	return nil
+}
+
+// fingerprintNonceForConfig loads the vault for configDir and returns the
+// 32-byte plugin-attestation nonce. Fail-closed (Armstrong): if there is no
+// vault to source the nonce from, that is a hard error — attestation is
+// keyed-or-nothing, never a silent downgrade to an unkeyed digest. Call this
+// only when there are plugins to attest/verify; a zero-fingerprint deployment
+// must not reach here (it opts out of attestation and runs vault-less).
+func fingerprintNonceForConfig(configDir string, cfg *config.Config) ([]byte, error) {
+	v, err := config.LoadVault(configDir, cfg)
+	if err != nil {
+		return nil, err
+	}
+	if v == nil {
+		return nil, fmt.Errorf("plugin attestation requires the vault, but none is loaded for %q (run 'ductile vault init'); attestation is keyed-or-nothing", configDir)
+	}
+	return v.FingerprintNonce()
 }
 
 func resolvePluginRoots(cfg *config.Config, configPath string) ([]string, error) {

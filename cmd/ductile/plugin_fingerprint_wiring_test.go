@@ -6,11 +6,40 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/mattjoyce/ductile/internal/config"
 	"github.com/mattjoyce/ductile/internal/configsnapshot"
 	"github.com/mattjoyce/ductile/internal/plugin"
+	"github.com/mattjoyce/ductile/internal/secrets"
+	"github.com/mattjoyce/ductile/internal/vault"
 )
+
+// seedVault writes an age key to <configDir>/age.key and initializes a vault at
+// <configDir>/vault.age (seeding the core fingerprint nonce). Keyed plugin
+// attestation requires this nonce: lock and verify of configured plugins now
+// fail closed without a loadable vault, so any happy-path lock/verify fixture
+// must seed one. The default resolution paths (resolveKeyring →
+// <configDir>/age.key, resolveVaultPath → <configDir>/vault.age) mean no config
+// fields are needed to wire it up.
+func seedVault(t *testing.T, configDir string) {
+	t.Helper()
+	id, err := secrets.GenerateIdentity()
+	if err != nil {
+		t.Fatalf("generate age identity: %v", err)
+	}
+	keyPath := filepath.Join(configDir, "age.key")
+	if err := os.WriteFile(keyPath, []byte(id.String()+"\n"), 0o600); err != nil {
+		t.Fatalf("write age key: %v", err)
+	}
+	kr, err := secrets.LoadKeyringFromFile(keyPath)
+	if err != nil {
+		t.Fatalf("load keyring: %v", err)
+	}
+	if _, _, err := vault.Init(filepath.Join(configDir, "vault.age"), kr, time.Now()); err != nil {
+		t.Fatalf("vault init: %v", err)
+	}
+}
 
 // buildFingerprintFixture writes a minimal config directory with service.allow_symlinks=true
 // (so macOS /var/folders/ → /private/var/folders/ does not trip the symlink refusal)
@@ -53,6 +82,9 @@ commands:
 	if err := os.WriteFile(filepath.Join(pluginDir, "gmail"), []byte("#!/bin/sh\necho gmail\n"), 0755); err != nil {
 		t.Fatalf("write entrypoint: %v", err)
 	}
+	// Keyed attestation needs the vault nonce for lock + verify of configured
+	// plugins. Seed a loadable vault so the happy-path wiring tests succeed.
+	seedVault(t, tmp)
 	return tmp
 }
 

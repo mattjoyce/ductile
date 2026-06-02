@@ -601,7 +601,18 @@ func runConfigHashUpdate(args []string) int {
 						rp.Name, rp.ManifestPath, rp.EntrypointPath, rp.Enabled)
 				}
 			}
-			if err := config.GenerateChecksumsWithPlugins(files, resolved, dryRun); err != nil {
+			// Keyed attestation (ADR §3.2, vault-held-or-fail): locking plugins
+			// needs the vault nonce. Only required when there are plugins to lock;
+			// a plugin-free lock stays vault-less.
+			var nonce []byte
+			if len(resolved) > 0 {
+				nonce, err = fingerprintNonceForConfig(dir, cfg)
+				if err != nil {
+					fmt.Fprintf(os.Stderr, "Failed to load attestation nonce for %s: %v\n", dir, err)
+					return 1
+				}
+			}
+			if err := config.GenerateChecksumsWithPlugins(files, resolved, nonce, dryRun); err != nil {
 				fmt.Fprintf(os.Stderr, "Failed to lock config in %s: %v\n", dir, err)
 				return 1
 			}
