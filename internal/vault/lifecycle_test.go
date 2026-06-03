@@ -92,6 +92,32 @@ func TestRevokeSecretIsIdempotent(t *testing.T) {
 	}
 }
 
+func TestRevokeSecretClearsValue(t *testing.T) {
+	s := lifecycleFixture(t)
+
+	// Roll to a known plaintext so the assertion can't pass vacuously.
+	if err := s.RollSecret("api", "SUPERSECRET", testTime); err != nil {
+		t.Fatalf("roll: %v", err)
+	}
+
+	if err := s.RevokeSecret("api", testTime); err != nil {
+		t.Fatalf("revoke: %v", err)
+	}
+
+	sec, _ := s.Secret("api")
+	// ADR §3.3: revoke clears the value and tombstones the entry — no plaintext
+	// must linger at rest in the (encrypted) blob after revocation.
+	if sec.Value != "" {
+		t.Errorf("revoke must clear the value, got %q", sec.Value)
+	}
+	if sec.Status != StatusRevoked {
+		t.Errorf("expected revoked status, got %q", sec.Status)
+	}
+	if sec.RevokedAt == "" {
+		t.Error("expected revoked_at tombstone timestamp")
+	}
+}
+
 func TestRevokePrincipalMarksRevoked(t *testing.T) {
 	s := lifecycleFixture(t)
 

@@ -33,8 +33,10 @@ func (s *Store) RollSecret(name, newValue string, now time.Time) error {
 	return nil
 }
 
-// RevokeSecret marks a secret revoked (terminal). Idempotent: revoking an
-// already-revoked secret is a no-op that leaves the original revoked_at intact.
+// RevokeSecret marks a secret revoked (terminal) and tombstones the entry by
+// clearing its value, so no plaintext lingers at rest in the (encrypted) blob
+// after revocation (ADR §3.3). Idempotent: revoking an already-revoked secret is
+// a no-op that leaves the original revoked_at intact.
 func (s *Store) RevokeSecret(name string, now time.Time) error {
 	if isReservedSecret(name) {
 		return fmt.Errorf("%w: secret %q", ErrReservedEntity, name)
@@ -47,6 +49,7 @@ func (s *Store) RevokeSecret(name string, now time.Time) error {
 		return nil // idempotent
 	}
 	sec.Status = StatusRevoked
+	sec.Value = "" // tombstone: drop the last plaintext (ADR §3.3)
 	sec.RevokedAt = now.UTC().Format(time.RFC3339)
 	return nil
 }
