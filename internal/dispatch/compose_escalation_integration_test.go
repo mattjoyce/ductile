@@ -53,7 +53,7 @@ func hubHasEvent(disp *Dispatcher, eventType string) bool {
 
 func latestAudit(t *testing.T, disp *Dispatcher) (op, outcome string) {
 	t.Helper()
-	rows, err := disp.state.ListVaultAudit(context.Background(), 20)
+	rows, err := disp.state.ListVaultAudit(context.Background(), "", 20)
 	if err != nil {
 		t.Fatalf("ListVaultAudit: %v", err)
 	}

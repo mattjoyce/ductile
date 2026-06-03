@@ -494,6 +494,120 @@ func renderSystemPluginFactsHuman(report systemPluginFactsReport) {
 	}
 }
 
+type systemVaultAuditRow struct {
+	ID         int64  `json:"id"`
+	Op         string `json:"op"`
+	Principal  string `json:"principal,omitempty"`
+	SecretName string `json:"secret_name,omitempty"`
+	Actor      string `json:"actor,omitempty"`
+	Outcome    string `json:"outcome"`
+	Detail     string `json:"detail,omitempty"`
+	CreatedAt  string `json:"created_at"`
+}
+
+type systemVaultAuditReport struct {
+	Principal string                `json:"principal,omitempty"`
+	Rows      []systemVaultAuditRow `json:"rows"`
+}
+
+// runSystemVaultAudit prints the append-only vault_audit fact log
+// (registrations, sets, rolls, revokes, purges, and fail-closed compose
+// denials), newest first. It is the read-only inspector for the vault_audit
+// table, mirroring `system plugin-facts` — values are never stored or shown.
+func runSystemVaultAudit(actionArgs []string) int {
+	fs := flag.NewFlagSet("vault-audit", flag.ContinueOnError)
+	configPath := fs.String("config", "", "Path to configuration file or directory")
+	principal := fs.String("principal", "", "Filter to one principal")
+	jsonOut := fs.Bool("json", false, "Output audit facts as JSON")
+	limit := fs.Int("limit", 50, "Maximum audit rows to show")
+	if err := fs.Parse(actionArgs); err != nil {
+		fmt.Fprintf(os.Stderr, "Flag error: %v\n", err)
+		return 1
+	}
+	if *limit <= 0 {
+		fmt.Fprintln(os.Stderr, "limit must be greater than zero")
+		return 1
+	}
+
+	cfg, err := loadConfigForTool(*configPath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to load config: %v\n", err)
+		return 1
+	}
+
+	db, err := storage.OpenSQLite(context.Background(), cfg.State.Path)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to open database: %v\n", err)
+		return 1
+	}
+	defer func() { _ = db.Close() }()
+
+	st := state.NewStore(db)
+	rows, err := st.ListVaultAudit(context.Background(), strings.TrimSpace(*principal), *limit)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to load vault audit facts: %v\n", err)
+		return 1
+	}
+
+	report := buildSystemVaultAuditReport(strings.TrimSpace(*principal), rows)
+	if *jsonOut {
+		data, err := json.MarshalIndent(report, "", "  ")
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Failed to render JSON vault audit: %v\n", err)
+			return 1
+		}
+		fmt.Println(string(data))
+		return 0
+	}
+
+	renderSystemVaultAuditHuman(report)
+	return 0
+}
+
+func buildSystemVaultAuditReport(principal string, rows []state.VaultAuditRow) systemVaultAuditReport {
+	report := systemVaultAuditReport{
+		Principal: principal,
+		Rows:      make([]systemVaultAuditRow, 0, len(rows)),
+	}
+	for _, r := range rows {
+		report.Rows = append(report.Rows, systemVaultAuditRow{
+			ID:         r.ID,
+			Op:         r.Op,
+			Principal:  r.Principal,
+			SecretName: r.SecretName,
+			Actor:      r.Actor,
+			Outcome:    r.Outcome,
+			Detail:     r.Detail,
+			CreatedAt:  r.CreatedAt,
+		})
+	}
+	return report
+}
+
+func renderSystemVaultAuditHuman(report systemVaultAuditReport) {
+	fmt.Println("Vault audit facts (newest first)")
+	if report.Principal != "" {
+		fmt.Printf("Principal filter: %s\n", report.Principal)
+	}
+	if len(report.Rows) == 0 {
+		fmt.Println("No audit facts found.")
+		return
+	}
+	for _, r := range report.Rows {
+		target := r.Principal
+		if r.SecretName != "" {
+			if target != "" {
+				target += " "
+			}
+			target += "secret=" + r.SecretName
+		}
+		fmt.Printf("\n%s  %s  %s  actor=%s  -> %s\n", r.CreatedAt, r.Op, target, r.Actor, r.Outcome)
+		if r.Detail != "" {
+			fmt.Printf("  %s\n", r.Detail)
+		}
+	}
+}
+
 func runSystemReload(actionArgs []string) int {
 	fs := flag.NewFlagSet("reload", flag.ContinueOnError)
 	configPath := fs.String("config", "", "Path to configuration file or directory")

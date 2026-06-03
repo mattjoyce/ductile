@@ -39,7 +39,7 @@ func TestAppendVaultAuditRoundTrips(t *testing.T) {
 		t.Fatalf("AppendVaultAudit: %v", err)
 	}
 
-	rows, err := s.ListVaultAudit(ctx, 10)
+	rows, err := s.ListVaultAudit(ctx, "", 10)
 	if err != nil {
 		t.Fatalf("ListVaultAudit: %v", err)
 	}
@@ -109,7 +109,7 @@ func TestListVaultAuditOrdersNewestFirstAndLimits(t *testing.T) {
 			t.Fatalf("AppendVaultAudit(%s): %v", op, err)
 		}
 	}
-	rows, err := s.ListVaultAudit(ctx, 2)
+	rows, err := s.ListVaultAudit(ctx, "", 2)
 	if err != nil {
 		t.Fatalf("ListVaultAudit: %v", err)
 	}
@@ -118,5 +118,30 @@ func TestListVaultAuditOrdersNewestFirstAndLimits(t *testing.T) {
 	}
 	if rows[0].Op != "revoke" {
 		t.Fatalf("expected newest-first (revoke), got %q", rows[0].Op)
+	}
+}
+
+// ListVaultAudit with a principal returns only that principal's facts.
+func TestListVaultAuditFiltersByPrincipal(t *testing.T) {
+	t.Parallel()
+	s := newAuditTestStore(t)
+	ctx := context.Background()
+
+	for _, p := range []string{"alpha", "beta", "alpha"} {
+		if err := s.AppendVaultAudit(ctx, VaultAuditEvent{Op: "set", Principal: p, Outcome: "ok"}); err != nil {
+			t.Fatalf("AppendVaultAudit(%s): %v", p, err)
+		}
+	}
+	rows, err := s.ListVaultAudit(ctx, "alpha", 100)
+	if err != nil {
+		t.Fatalf("ListVaultAudit: %v", err)
+	}
+	if len(rows) != 2 {
+		t.Fatalf("expected 2 alpha rows, got %d", len(rows))
+	}
+	for _, r := range rows {
+		if r.Principal != "alpha" {
+			t.Errorf("principal filter leaked a %q row", r.Principal)
+		}
 	}
 }

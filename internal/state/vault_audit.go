@@ -64,18 +64,24 @@ func (s *Store) AppendVaultAudit(ctx context.Context, ev VaultAuditEvent) error 
 }
 
 // ListVaultAudit returns the most recent audit facts, newest first, capped at
-// limit (limit <= 0 means a default of 100).
-func (s *Store) ListVaultAudit(ctx context.Context, limit int) ([]VaultAuditRow, error) {
+// limit (limit <= 0 means a default of 100). A non-empty principal filters to
+// that principal's facts (served by the vault_audit_principal_created index).
+func (s *Store) ListVaultAudit(ctx context.Context, principal string, limit int) ([]VaultAuditRow, error) {
 	if limit <= 0 {
 		limit = 100
 	}
-	const q = `
+	q := `
 		SELECT id, op, principal, secret_name, actor, outcome, detail, created_at
-		FROM vault_audit
-		ORDER BY id DESC
-		LIMIT ?
-	`
-	rows, err := s.db.QueryContext(ctx, q, limit)
+		FROM vault_audit`
+	args := make([]any, 0, 2)
+	if principal != "" {
+		q += "\n\t\tWHERE principal = ?"
+		args = append(args, principal)
+	}
+	q += "\n\t\tORDER BY id DESC\n\t\tLIMIT ?"
+	args = append(args, limit)
+
+	rows, err := s.db.QueryContext(ctx, q, args...)
 	if err != nil {
 		return nil, fmt.Errorf("ListVaultAudit: query: %w", err)
 	}

@@ -295,7 +295,7 @@ func TestVaultSet_EmitsAuditFactWithoutValue(t *testing.T) {
 		t.Fatalf("expected 200, got %d (%s)", rr.Code, rr.Body.String())
 	}
 
-	rows, err := st.ListVaultAudit(context.Background(), 10)
+	rows, err := st.ListVaultAudit(context.Background(), "", 10)
 	if err != nil {
 		t.Fatalf("ListVaultAudit: %v", err)
 	}
@@ -324,7 +324,7 @@ func TestVaultSet_RejectedRequestEmitsNoAudit(t *testing.T) {
 	if rr.Code != http.StatusUnauthorized {
 		t.Fatalf("expected 401, got %d", rr.Code)
 	}
-	rows, err := st.ListVaultAudit(context.Background(), 10)
+	rows, err := st.ListVaultAudit(context.Background(), "", 10)
 	if err != nil {
 		t.Fatalf("ListVaultAudit: %v", err)
 	}

@@ -237,6 +237,7 @@ System Commands:
   system start      Start the integration gateway in foreground
   system status     Show global gateway health
   system plugin-facts Show recent append-only plugin facts
+  system vault-audit  Show the append-only vault audit log (names + outcomes, never values)
   system scheduler  Show scheduler-submitted polls currently in flight
   system reset      Reset a plugin/connector circuit breaker
   system breaker    Show circuit-breaker state and transition history
