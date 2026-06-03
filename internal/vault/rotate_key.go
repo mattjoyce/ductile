@@ -2,6 +2,7 @@ package vault
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"fmt"
 	"os"
 	"slices"
@@ -62,13 +63,24 @@ func (v *Vault) RotateKey(keyFilePath string) (string, error) {
 		return "", fmt.Errorf("vault: rotate: %w", err)
 	}
 
-	// Phase 3 — commit the new identity to the boot key path (atomic, 0600, no
-	// backup). The blob is still {old, new}, so a crash here leaves the new key
-	// able to read it.
+	// Phase 3 — stage the new identity beside the boot key path, then PROVE the
+	// PERSISTED bytes (not just the in-memory mint) decrypt the on-disk blob
+	// before promoting it. A corrupt persist is caught here with the boot key
+	// path still holding the OLD key and the blob still {old, new}: the old key
+	// keeps working, so there is nothing to roll back and no brick. Only after the
+	// staged key verifies does it atomically replace the boot key (0600, no backup).
 	keyText := fmt.Sprintf("# created by ductile vault rotate-key\n# public key: %s\n%s\n",
 		newRecipient.String(), newID.String())
-	if err := writeFileAtomic(keyFilePath, []byte(keyText)); err != nil {
-		return "", fmt.Errorf("vault: rotate: write new key %q: %w", keyFilePath, err)
+	stagedKeyPath := keyFilePath + ".rotate-new"
+	if err := writeFileAtomic(stagedKeyPath, []byte(keyText)); err != nil {
+		return "", fmt.Errorf("vault: rotate: stage new key: %w", err)
+	}
+	defer func() { _ = os.Remove(stagedKeyPath) }()
+	if err := verifyKeyFileDecrypts(stagedKeyPath, v.path, plaintext); err != nil {
+		return "", fmt.Errorf("vault: rotate: %w (old key still live at %q — re-run)", err, keyFilePath)
+	}
+	if err := os.Rename(stagedKeyPath, keyFilePath); err != nil {
+		return "", fmt.Errorf("vault: rotate: promote new key %q: %w", keyFilePath, err)
 	}
 
 	// Phase 4 — finalise: retire the old recipient so the blob is readable only
@@ -78,14 +90,45 @@ func (v *Vault) RotateKey(keyFilePath string) (string, error) {
 	}
 
 	// Adopt the new identity as the resident keyring + baseline, so any later
-	// Save persists under the new key (never silently re-encrypting to the old).
+	// Save persists under the new key (never silently re-encrypting to the old)
+	// and rebase the external-modification backstop on the just-written blob so
+	// the next Save does not mistake this rotation for an out-of-band write.
 	newKR, err := secrets.NewKeyring(newID)
 	if err != nil {
 		return "", fmt.Errorf("vault: rotate: adopt keyring: %w", err)
 	}
 	v.keyring = newKR
 	v.lastYAML = plaintext
+	// #nosec G304 -- vault path is operator-controlled local input.
+	if finalBlob, rerr := os.ReadFile(v.path); rerr == nil {
+		sum := sha256.Sum256(finalBlob)
+		v.lastDiskHash = sum[:]
+	}
 	return newRecipient.String(), nil
+}
+
+// verifyKeyFileDecrypts loads the age identity persisted at keyPath and asserts
+// it decrypts the blob at blobPath back to want — proving the bytes that landed
+// on disk (not just the in-memory mint) can read the vault, before the old key
+// is retired.
+func verifyKeyFileDecrypts(keyPath, blobPath string, want []byte) error {
+	kr, err := secrets.LoadKeyringFromFile(keyPath)
+	if err != nil {
+		return fmt.Errorf("re-read staged key %q: %w", keyPath, err)
+	}
+	// #nosec G304 -- vault path is operator-controlled local input.
+	ciphertext, err := os.ReadFile(blobPath)
+	if err != nil {
+		return fmt.Errorf("read back blob %q: %w", blobPath, err)
+	}
+	got, err := kr.Decrypt(ciphertext)
+	if err != nil {
+		return fmt.Errorf("staged key cannot decrypt the blob: %w", err)
+	}
+	if !bytes.Equal(got, want) {
+		return fmt.Errorf("blob decrypted with the staged key does not match the model")
+	}
+	return nil
 }
 
 // reencryptTo encrypts plaintext to recipients and atomically writes it to the

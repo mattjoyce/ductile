@@ -16,4 +16,10 @@ var (
 	ErrUnknownSecret      = errors.New("vault: unknown secret")
 	ErrSecretRevoked      = errors.New("vault: secret is revoked")
 	ErrReservedEntity     = errors.New("vault: reserved entity cannot be mutated via the data plane")
+
+	// ErrVaultModifiedExternally signals that the on-disk blob changed underneath
+	// the owner since it last wrote or loaded it — an out-of-band writer the
+	// sole-writer guarantee does not cover. Save fails loud with this rather than
+	// silently clobbering the other writer's bytes.
+	ErrVaultModifiedExternally = errors.New("vault: blob was modified externally")
 )

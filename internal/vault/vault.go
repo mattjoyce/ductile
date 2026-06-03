@@ -2,6 +2,7 @@ package vault
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"crypto/subtle"
 	"fmt"
 	"os"
@@ -39,6 +40,12 @@ type Vault struct {
 	keyring  *secrets.Keyring
 	store    *Store
 	lastYAML []byte
+	// lastDiskHash is the SHA-256 of the ciphertext this owner last wrote to or
+	// loaded from disk. Before overwriting, Save re-reads the file and refuses if
+	// the hash no longer matches — catching an out-of-band writer. nil means no
+	// baseline yet (a fresh New that never loaded or wrote), in which case the
+	// backstop is skipped.
+	lastDiskHash []byte
 }
 
 // New wraps an in-memory store with a path and keyring. It performs no I/O — call
@@ -82,7 +89,8 @@ func Load(path string, kr *secrets.Keyring) (*Vault, error) {
 	if err != nil {
 		return nil, fmt.Errorf("vault: canonicalise %q: %w", path, err)
 	}
-	return &Vault{path: path, keyring: kr, store: &s, lastYAML: canonical}, nil
+	sum := sha256.Sum256(ciphertext)
+	return &Vault{path: path, keyring: kr, store: &s, lastYAML: canonical, lastDiskHash: sum[:]}, nil
 }
 
 // Store returns the resident in-memory model directly, aliasing the live
@@ -257,6 +265,12 @@ func (v *Vault) Save() error {
 	if v.lastYAML != nil && bytes.Equal(current, v.lastYAML) {
 		return nil // write-on-change: nothing to do
 	}
+	// External-modification backstop: refuse to clobber a blob that changed
+	// underneath us since we last wrote or loaded it. This is checked only on a
+	// real write (a no-op above overwrites nothing).
+	if err := v.checkDiskUnchanged(); err != nil {
+		return err
+	}
 	recipients, err := v.keyring.Recipients()
 	if err != nil {
 		return fmt.Errorf("vault: %w", err)
@@ -269,6 +283,39 @@ func (v *Vault) Save() error {
 		return fmt.Errorf("vault: write %q: %w", v.path, err)
 	}
 	v.lastYAML = current
+	sum := sha256.Sum256(ciphertext)
+	v.lastDiskHash = sum[:]
+	return nil
+}
+
+// checkDiskUnchanged re-reads the on-disk blob and fails loud if it differs from
+// what this owner last wrote or loaded — catching any out-of-band writer (a stray
+// `secrets rotate`, a manual edit, a botched restore) instead of silently
+// reverting it. Callers hold v.mu.
+//
+// A nil baseline (a fresh New that never loaded or wrote, e.g. genesis) has
+// nothing to protect, so the check is skipped. A missing file is allowed too: the
+// daemon is the authoritative model and re-creates the blob it owns. The residual
+// sub-ms TOCTOU between this read and the rename is accepted — it shrinks the
+// silent-revert window to a hair without a cross-process lock, which is the
+// operator-footgun threat this guards.
+func (v *Vault) checkDiskUnchanged() error {
+	if v.lastDiskHash == nil {
+		return nil
+	}
+	// #nosec G304 -- vault path is operator-controlled local input.
+	onDisk, err := os.ReadFile(v.path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return fmt.Errorf("vault: re-read %q before save: %w", v.path, err)
+	}
+	sum := sha256.Sum256(onDisk)
+	if !bytes.Equal(sum[:], v.lastDiskHash) {
+		return fmt.Errorf("%w: %q changed underneath the daemon; restart or reload to adopt the on-disk blob",
+			ErrVaultModifiedExternally, v.path)
+	}
 	return nil
 }
 
