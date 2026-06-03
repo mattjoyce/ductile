@@ -230,7 +230,7 @@ Core Resources (Nouns):
   plugin    Capability discovery and management (Connectors)
   stopwatch Per-invocation timing ledger (prune retention)
   secrets   Manage encryption-at-rest keys (keygen/encrypt/rotate)
-  vault     Owned secret store (init genesis)
+  vault     Owned secret store (genesis, principals, secrets, key rotation)
   api       Directly call the gateway API
 
 System Commands:
@@ -239,7 +239,10 @@ System Commands:
   system plugin-facts Show recent append-only plugin facts
   system scheduler  Show scheduler-submitted polls currently in flight
   system reset      Reset a plugin/connector circuit breaker
+  system breaker    Show circuit-breaker state and transition history
   system reload     Reload configuration in a running gateway
+  system selfcheck  Run read-only pre-deploy/post-migration state invariants
+  system backup     Write a scoped snapshot archive of ductile state
   system skills     Export capability registry (Skills) as LLM-readable Markdown
 
 Config Commands:
@@ -265,6 +268,18 @@ Plugin Commands:
   plugin list       Show discovered plugins/connectors
   plugin run <name> Manual execution
   plugin lock <name> Attest a plugin's bytes (or --all to attest every changed one)
+
+Vault Commands:
+  vault init             Genesis: create a new vault (core principal, nonce, admin token) — local, key-touching
+  vault import           Migrate tokens.yaml entries into an existing vault — local, key-touching
+  vault rotate-key       Rotate the vault's age identity — local, key-touching, daemon must be down
+  vault register-principal Register a deliver-to principal (--name --kind plugin|consumer|gateway)
+  vault set              Set a secret's value (value from stdin) — keyless API client
+  vault roll             Roll a secret's value (manual: stdin; auto: daemon-minted) — keyless API client
+  vault revoke           Revoke a secret (terminal; clears the value) — keyless API client
+  vault revoke-principal Revoke a principal (its secrets stop being delivered) — keyless API client
+  vault purge-principal  Remove a principal and strip all its grants — keyless API client
+  vault roll-principal   Roll every auto secret a principal holds — keyless API client
 
 Relay Commands:
   relay send <instance> Send one authenticated remote relay event

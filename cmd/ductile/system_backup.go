@@ -638,6 +638,10 @@ Scopes (nested ladder; each level adds to the previous):
 Each invocation prints its INCLUDED / EXCLUDED list before doing the work
 and embeds a BACKUP_MANIFEST.txt inside the archive documenting the same.
 
+NOTE: the vault blob (vault.age) and its age key are NOT yet in any scope.
+Back up the vault blob separately and custody the key out-of-band (e.g. a
+password manager); a vault backup is restorable only with its matching key.
+
 Refuses if --to file already exists. Operator owns naming and retention.
 
 Example cron pattern:

@@ -48,6 +48,9 @@ func printSecretsNounHelp(w *os.File) {
 	_, _ = fmt.Fprintln(w, "  keygen   Generate an age identity (private key) and its recipient (public key)")
 	_, _ = fmt.Fprintln(w, "  encrypt  Encrypt a plaintext file to one or more recipients")
 	_, _ = fmt.Fprintln(w, "  rotate   Re-encrypt an encrypted file under a new recipient set")
+	_, _ = fmt.Fprintln(w, "")
+	_, _ = fmt.Fprintln(w, "These commands operate on config bundles (e.g. tokens.yaml), NOT the vault.")
+	_, _ = fmt.Fprintln(w, "To rotate the vault's own key use 'ductile vault rotate-key'.")
 }
 
 // runSecretsKeygen generates a new age identity. The private identity is written

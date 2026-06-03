@@ -63,18 +63,24 @@ func runVaultNoun(args []string) int {
 }
 
 func printVaultNounHelp(w *os.File) {
-	_, _ = fmt.Fprintln(w, "Usage: ductile vault <action>")
-	_, _ = fmt.Fprintln(w, "Actions:")
-	_, _ = fmt.Fprintln(w, "  init     Create a brand-new vault (genesis): seeds core + nonce + admin token")
-	_, _ = fmt.Fprintln(w, "  import   Migrate tokens.yaml entries into an existing vault")
-	_, _ = fmt.Fprintln(w, "  register-principal Register a deliver-to principal (--name --kind plugin|consumer|gateway)")
-	_, _ = fmt.Fprintln(w, "  set              Set a secret via the daemon's management API (value from stdin)")
-	_, _ = fmt.Fprintln(w, "  roll             Roll a secret's value (manual: value from stdin; auto: daemon-minted)")
-	_, _ = fmt.Fprintln(w, "  revoke           Revoke a secret (terminal)")
-	_, _ = fmt.Fprintln(w, "  revoke-principal Revoke a principal (its secrets stop being delivered)")
-	_, _ = fmt.Fprintln(w, "  purge-principal  Remove a principal and strip all its grants")
-	_, _ = fmt.Fprintln(w, "  roll-principal   Roll every auto secret a principal holds")
-	_, _ = fmt.Fprintln(w, "  rotate-key       Rotate the vault's age key (local; daemon must be stopped)")
+	_, _ = fmt.Fprintln(w, "Usage: ductile vault <action> [flags]")
+	_, _ = fmt.Fprintln(w, "")
+	_, _ = fmt.Fprintln(w, "Vault writes have two classes. Run 'ductile vault <action> --help' for full flags.")
+	_, _ = fmt.Fprintln(w, "")
+	_, _ = fmt.Fprintln(w, "Local, key-touching (hold the age key; the daemon must be STOPPED):")
+	_, _ = fmt.Fprintln(w, "  init        Genesis: create a new vault (core + nonce + admin token)   [--vault --key]")
+	_, _ = fmt.Fprintln(w, "  import      Migrate tokens.yaml entries into an existing vault         [--vault --key --tokens --resolve-env]")
+	_, _ = fmt.Fprintln(w, "  rotate-key  Rotate the vault's age identity (mints + re-encrypts)       [--config]")
+	_, _ = fmt.Fprintln(w, "")
+	_, _ = fmt.Fprintln(w, "Keyless API clients (no age key; POST to the running daemon, the sole writer):")
+	_, _ = fmt.Fprintln(w, "  Common flags: --api-url, --token (or DUCTILE_VAULT_TOKEN), --name")
+	_, _ = fmt.Fprintln(w, "  register-principal Register a deliver-to principal                     [--kind plugin|consumer|gateway]")
+	_, _ = fmt.Fprintln(w, "  set                Set a secret (value from stdin, never argv)         [--pattern manual|auto --principal a,b]")
+	_, _ = fmt.Fprintln(w, "  roll               Roll a secret's value (manual: stdin; auto: minted)")
+	_, _ = fmt.Fprintln(w, "  revoke             Revoke a secret (terminal; clears the value)")
+	_, _ = fmt.Fprintln(w, "  revoke-principal   Revoke a principal (its secrets stop being delivered)")
+	_, _ = fmt.Fprintln(w, "  purge-principal    Remove a principal and strip all its grants")
+	_, _ = fmt.Fprintln(w, "  roll-principal     Roll every auto secret a principal holds")
 }
 
 // runVaultRotateKey rotates the vault's age identity LOCALLY. Rotation is
