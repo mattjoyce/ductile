@@ -445,6 +445,16 @@ func buildRuntime(cfg *config.Config, configPath string, configSource string, re
 		}
 	}
 
+	// Unknown-key visibility (#26): the load-time YAML decode is lenient, so a
+	// typo'd or unsupported key is silently dropped — the operator believes it is
+	// active when it is not. Surface each dropped key as a warning. This is
+	// warn-only: it never blocks boot (the daemon already accepts this config),
+	// it just makes the gap visible. A strict gate awaits the config/schema-drift
+	// cleanup (the embedded examples themselves still carry dropped keys).
+	for _, w := range config.StrictDecodeWarnings(cfg) {
+		logger.Warn("config: key ignored (not a known field)", "detail", w)
+	}
+
 	if admission.RequireAPIAuth && cfg.API.Enabled && len(cfg.API.Auth.Tokens) == 0 {
 		logger.Error("no API tokens configured (admission.require_api_auth requires at least one token when API is enabled)")
 		return nil, fmt.Errorf("no API tokens configured")
