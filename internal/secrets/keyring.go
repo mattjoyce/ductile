@@ -15,6 +15,16 @@ type Keyring struct {
 	identities []age.Identity
 }
 
+// NewKeyring builds a keyring from in-memory identities. It is the constructor
+// for keys not loaded from a file — e.g. a freshly minted identity adopted after
+// a key rotation. At least one identity must be supplied.
+func NewKeyring(identities ...age.Identity) (*Keyring, error) {
+	if len(identities) == 0 {
+		return nil, fmt.Errorf("keyring: no identities supplied")
+	}
+	return &Keyring{identities: identities}, nil
+}
+
 // Empty reports whether the keyring holds no identities.
 func (k *Keyring) Empty() bool {
 	return k == nil || len(k.identities) == 0

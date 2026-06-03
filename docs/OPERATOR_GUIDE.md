@@ -45,6 +45,38 @@ The command refuses to overwrite an existing destination — operator owns the
 naming pattern and retention. For a scheduled-backup setup (systemd timer or
 launchd), see `docs/DEPLOYMENT.md` §10.
 
+### Rotating the vault key
+`ductile vault rotate-key` rotates the daemon's age identity: it mints a fresh
+key, re-encrypts the vault to it, and retires the old key — so the blob at rest
+is readable only by the new key.
+
+It is a **local, key-touching** operation and the daemon must be **stopped**
+(it refuses while the daemon holds the PID lock). Stop the service, rotate, start:
+
+```bash
+ductile system stop
+ductile vault rotate-key --config /path/to/config
+ductile system start
+```
+
+The rotation is atomic and crash-safe (a dual-recipient bridge keeps the on-disk
+key and blob decryptable at every step, and the new key is verified to decrypt the
+new blob before the old key is retired).
+
+**Back up the new key immediately.** The new identity is written to the configured
+age key file (mode `0600`); the previous key is destroyed (no `.bak`). Copy the key
+into your password manager. The vault blob and its key are a **pair**:
+
+- `vault.age` is restorable only with the key that was current when the backup was
+  taken. After a rotation the old key is gone, so any **pre-rotation** backup needs
+  the old key you saved while it was current.
+- Do **not** point `ductile secrets rotate` at `vault.age` — that command is for
+  config bundles (e.g. `tokens.yaml`); `vault rotate-key` is the only safe path for
+  the vault.
+
+> The `system backup` archive does not (yet) contain `vault.age` or the age key —
+> back up the blob and custody the key out-of-band until that lands.
+
 ### Self-check
 `ductile system selfcheck` runs four read-only invariants against the local
 state DB:

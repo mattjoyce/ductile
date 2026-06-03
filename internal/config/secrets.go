@@ -23,32 +23,39 @@ const ageKeyEnvVar = "DUCTILE_AGE_KEY_FILE"
 // ignored. A default location that simply does not exist yields an empty keyring
 // (encryption at rest is off), which is the unconfigured default.
 func resolveKeyring(configDir string, cfg *Config) (*secrets.Keyring, error) {
-	if path := os.Getenv(ageKeyEnvVar); path != "" {
-		kr, err := secrets.LoadKeyringFromFile(path)
-		if err != nil {
-			return nil, fmt.Errorf("%s: %w", ageKeyEnvVar, err)
-		}
-		return kr, nil
+	path := ResolveAgeKeyPath(configDir, cfg)
+	if path == "" {
+		// No key configured and no default present: encryption at rest is off.
+		return &secrets.Keyring{}, nil
 	}
+	// An explicitly-named key (env or config) resolves to a non-empty path even
+	// when the file is missing, so a load failure here is the intended hard error.
+	return secrets.LoadKeyringFromFile(path)
+}
 
+// ResolveAgeKeyPath returns the age key file path the daemon resolves to, using
+// the same precedence as resolveKeyring (env > config field > default
+// locations). It is exported for local key-touching ops (e.g. `vault rotate-key`)
+// that must write the rotated identity to the EXACT path the daemon boots from —
+// otherwise the next boot loads a stale key. An empty result means no key file
+// was found.
+func ResolveAgeKeyPath(configDir string, cfg *Config) string {
+	if path := os.Getenv(ageKeyEnvVar); path != "" {
+		return path
+	}
 	if cfg != nil && cfg.Secrets.AgeKeyFile != "" {
 		path := interpolateEnv(cfg.Secrets.AgeKeyFile)
 		if !filepath.IsAbs(path) {
 			path = filepath.Join(configDir, path)
 		}
-		kr, err := secrets.LoadKeyringFromFile(path)
-		if err != nil {
-			return nil, fmt.Errorf("secrets.age_key_file: %w", err)
-		}
-		return kr, nil
+		return path
 	}
-
 	for _, candidate := range defaultKeyPaths(configDir) {
 		if _, err := os.Stat(candidate); err == nil {
-			return secrets.LoadKeyringFromFile(candidate)
+			return candidate
 		}
 	}
-	return &secrets.Keyring{}, nil
+	return ""
 }
 
 // defaultKeyPaths returns the conventional key file locations checked when no

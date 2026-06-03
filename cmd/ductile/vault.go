@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/mattjoyce/ductile/internal/config"
+	"github.com/mattjoyce/ductile/internal/lock"
 	"github.com/mattjoyce/ductile/internal/secrets"
 	"github.com/mattjoyce/ductile/internal/vault"
 )
@@ -48,6 +49,8 @@ func runVaultNoun(args []string) int {
 		return runVaultNameOp("purge-principal", "/vault/principal/purge", "Purged principal", actionArgs)
 	case "roll-principal":
 		return runVaultRollPrincipal(actionArgs)
+	case "rotate-key":
+		return runVaultRotateKey(actionArgs)
 	case "help":
 		printVaultNounHelp(os.Stdout)
 		return 0
@@ -71,6 +74,70 @@ func printVaultNounHelp(w *os.File) {
 	_, _ = fmt.Fprintln(w, "  revoke-principal Revoke a principal (its secrets stop being delivered)")
 	_, _ = fmt.Fprintln(w, "  purge-principal  Remove a principal and strip all its grants")
 	_, _ = fmt.Fprintln(w, "  roll-principal   Roll every auto secret a principal holds")
+	_, _ = fmt.Fprintln(w, "  rotate-key       Rotate the vault's age key (local; daemon must be stopped)")
+}
+
+// runVaultRotateKey rotates the vault's age identity LOCALLY. Rotation is
+// key-touching, so per #8 it never goes over the management API; instead it
+// requires the daemon to be down, enforced by acquiring the daemon's PID lock
+// (refuse if held). It resolves the daemon's EXACT vault + key paths so the new
+// key lands where the daemon next boots from, then delegates the atomic
+// dual-recipient bridge + verify-before-retire to vault.RotateKey.
+func runVaultRotateKey(args []string) int {
+	fs := flag.NewFlagSet("vault rotate-key", flag.ContinueOnError)
+	configPath := fs.String("config", "", "Path to the ductile config dir (default: discover)")
+	if err := fs.Parse(args); err != nil {
+		return 1
+	}
+
+	cfg, configDir, err := loadBackupConfig(*configPath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "vault rotate-key: %v\n", err)
+		return 1
+	}
+
+	// Sole-writer: the daemon is the only writer of the vault. Rotation is local
+	// and key-touching, so refuse if the daemon holds the PID lock; holding it for
+	// the op also stops a daemon starting mid-rotation.
+	pidLock, err := lock.AcquirePIDLock(getPIDLockPath(cfg))
+	if err != nil {
+		fmt.Fprintf(os.Stderr,
+			"vault rotate-key: the daemon appears to be running (could not take the lock): %v\n"+
+				"Stop the daemon before rotating the vault key — key-touching ops are local.\n", err)
+		return 1
+	}
+	defer func() { _ = pidLock.Release() }()
+
+	vaultPath := config.ResolveVaultPath(configDir, cfg)
+	keyPath := config.ResolveAgeKeyPath(configDir, cfg)
+	if keyPath == "" {
+		fmt.Fprintln(os.Stderr,
+			"vault rotate-key: no age key file resolved (set secrets.age_key_file or DUCTILE_AGE_KEY_FILE)")
+		return 1
+	}
+
+	kr, err := secrets.LoadKeyringFromFile(keyPath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "vault rotate-key: load current key: %v\n", err)
+		return 1
+	}
+	v, err := vault.Load(vaultPath, kr)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "vault rotate-key: load vault: %v\n", err)
+		return 1
+	}
+
+	newRecipient, err := v.RotateKey(keyPath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "vault rotate-key: %v\n", err)
+		return 1
+	}
+
+	fmt.Fprintf(os.Stderr, "Rotated the vault key; the previous key is retired.\n")
+	fmt.Fprintf(os.Stderr, "New key written to %s (mode 0600) — BACK IT UP NOW "+
+		"(e.g. to your password manager). It is the only key that can decrypt the vault.\n", keyPath)
+	fmt.Fprintf(os.Stderr, "New public recipient: %s\n", newRecipient)
+	return 0
 }
 
 // runVaultSet sets a secret through the daemon's authenticated management API.

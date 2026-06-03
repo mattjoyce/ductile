@@ -192,6 +192,13 @@ func vaultBlind(configDir string, cfg *Config, kr *secrets.Keyring) bool {
 
 // resolveVaultPath resolves the vault blob location: the configured path
 // (interpolated, relative to configDir) or the default <configDir>/vault.age.
+// ResolveVaultPath exposes the resolved vault blob path for local key-touching
+// ops (e.g. `vault rotate-key`) that operate on the blob directly rather than
+// through the loaded owner.
+func ResolveVaultPath(configDir string, cfg *Config) string {
+	return resolveVaultPath(configDir, cfg)
+}
+
 func resolveVaultPath(configDir string, cfg *Config) string {
 	if cfg != nil && cfg.Secrets.VaultFile != "" {
 		p := interpolateEnv(cfg.Secrets.VaultFile)
