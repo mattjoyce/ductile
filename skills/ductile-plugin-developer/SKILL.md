@@ -138,6 +138,12 @@ be `plugin lock`-ed before it receives any secret (see Step 10); (2) do not echo
 secret to stdout/stderr — the core stores your output verbatim and will not scrub
 it.
 
+**Spawn hygiene — you do not inherit the gateway's environment.** Your process
+gets a *minimal allowlisted* env (`PATH`, `HOME`, `TZ`, `LANG`, …), not the
+gateway's. If your plugin genuinely needs an extra env var, the operator adds its
+name to `service.plugin_env_passthrough` — but reach for that sparingly; a secret
+belongs in the `secrets` envelope above, not in the environment.
+
 ## Step 4 — Effects at the edges, pure core
 
 Hickey: I/O at the boundary, logic in the middle. Even in a 50-line bash plugin
@@ -273,3 +279,5 @@ mismatch after an edit, the usual cause is a forgotten `plugin lock` — hand of
 - In-repo: `docs/PLUGIN_DEVELOPMENT.md`, `docs/PLUGIN_FACTS.md`,
   `docs/PIPELINES.md`, `docs/ROUTING_SPEC.md`, `docs/8_IDIOMS_OF_DUCTILE.md`,
   `AGENTS.md` (contributor contract; already half-Hickey)
+- `docs/SECRETS.md` — the vault + attestation model: how `secrets` reach your
+  plugin and why `plugin lock` gates them
