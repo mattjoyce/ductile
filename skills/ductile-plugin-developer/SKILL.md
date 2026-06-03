@@ -119,13 +119,24 @@ Core → Plugin (stdin, single JSON)         Plugin → Core (stdout, single JSO
   state,          # compatibility view row    retry: true|false,
   context,        # baggage, immutable        events: [],
   event,          # only for `handle`         state_updates: {},
-  deadline_at                                 logs: []
-}                                           }
+  secrets,        # name→value, authorized    logs: []
+  deadline_at                                 }
+}
 ```
 
 Read everything you need from this envelope. **Do not reach for ambient state.**
 The `context` baggage is your only memory of the upstream lineage; respect
 `origin_*` keys — the core will refuse to let you overwrite them.
+
+**Secrets arrive here, over stdin — nowhere else.** `secrets` is a name→value map
+the core *composes* for your plugin and delivers in this envelope (present only
+when you are an attested principal with active grants). They are **not** in your
+environment (the core strips it) and never on argv. You **consume** secrets —
+`secrets["GITHUB_TOKEN"]` — you never register, roll, or revoke them; that is the
+operator's `ductile vault` surface. Two consequences for you: (1) your plugin must
+be `plugin lock`-ed before it receives any secret (see Step 10); (2) do not echo a
+secret to stdout/stderr — the core stores your output verbatim and will not scrub
+it.
 
 ## Step 4 — Effects at the edges, pure core
 
@@ -235,18 +246,24 @@ ones, in their canonical order:
 If your example needs a real-looking value, invent one. The repo is read by
 people who do not have your guardrails.
 
-## Step 10 — The `config lock` handoff
+## Step 10 — The lock handoff (`plugin lock`, not just `config lock`)
 
-You produced a manifest change. You are now done in this skill.
-**Hand off to `ductile`:**
+You changed a manifest or entrypoint. Those **bytes are attested**, so the
+handoff is `plugin lock` — *not* `config lock`. `config lock` re-hashes config
+files and preserves existing plugin fingerprints; it does **not** re-attest your
+changed bytes. Skip `plugin lock` and your plugin fails its spawn-time fingerprint
+check and is **refused its secrets** (fail closed) — silently, until re-attested.
 
 ```bash
 ductile config check        # in plugin-developer terms: did my manifest parse?
-ductile config lock         # operator's authorization step
+ductile plugin lock <name>  # re-attest YOUR changed bytes (the step that matters here)
+ductile config lock         # only if you also touched config files
 ductile system reload       # apply without restart
 ```
 
-If symptoms appear after lock+reload, hand off to `ductile-rca`.
+If your plugin runs but its `secrets` are empty, or jobs fail with a fingerprint
+mismatch after an edit, the usual cause is a forgotten `plugin lock` — hand off to
+`ductile-rca`.
 
 ## References
 

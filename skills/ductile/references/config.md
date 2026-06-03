@@ -134,10 +134,18 @@ Existing process env vars are NOT overridden.
 ## Integrity Workflow
 
 ```bash
-# After any config file change:
+# After a config FILE change (config.yaml, api.yaml, pipelines, webhooks):
 ductile config check          # Validate first (catches YAML errors, policy violations)
-ductile config lock           # Update .checksums to authorize new state
+ductile config lock           # Update .checksums to authorize the new file state
+
+# After a PLUGIN manifest/entrypoint change (separate, decoupled act):
+ductile plugin lock <name>    # Re-attest the plugin's bytes (re-records its fingerprint)
 ```
 
-The `.checksums` file contains BLAKE3 hashes keyed by absolute path.
-Moving the config directory breaks the seal — re-lock after moving.
+The `.checksums` file holds BLAKE3 hashes keyed by absolute path **and** the
+recorded plugin fingerprints. `config lock` re-hashes the config files and
+*preserves* the plugin fingerprints; it does **not** re-attest plugin bytes — that
+is the separate `ductile plugin lock`. A plugin whose bytes changed without a
+re-`plugin lock` is refused its vault secrets at spawn (fail closed), and a routine
+`config lock` will not fix it. Moving the config directory breaks the seal —
+re-lock after moving.

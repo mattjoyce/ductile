@@ -152,19 +152,31 @@ ductile version           # Version + commit + build time
 | `--dry-run` | Preview mutations without committing |
 | `--config <dir>` | Override config directory |
 
-## The `config lock` ritual
+## The lock rituals (`config lock` ≠ `plugin lock`)
 
-Every config or plugin manifest edit goes through:
+Locking is **two decoupled acts**, by design. `config lock` re-hashes the config
+*files*; `plugin lock` attests a plugin's *bytes* (manifest + entrypoint). A
+`config lock` taken for an unrelated edit no longer re-blesses plugin bytes — that
+closes "lock-laundering" (a lock for one reason silently approving a swapped
+binary). Pick the ritual by what changed:
 
 ```bash
+# Config file edit (config.yaml / api.yaml / pipelines / webhooks):
 ductile config check          # validate
-ductile config lock           # authorize new state (updates .checksums)
+ductile config lock           # authorize new config state (updates .checksums)
 ductile system reload         # apply without restart
+
+# Plugin manifest or entrypoint edit:
+ductile plugin lock <name>    # re-attest the plugin's bytes (re-records its fingerprint)
+ductile system reload
 ```
 
-**This is the cross-skill ritual.** Plugin authors (`ductile-plugin-developer`)
-hand off here. Incident responders (`ductile-rca`) often discover the
-forgotten-to-lock root cause. Owning this ritual is owning the seam.
+A plugin whose bytes changed but was **not** re-`plugin lock`-ed fails its
+spawn-time fingerprint check and is **refused its vault secrets** (fail closed) —
+a routine `config lock` will not fix this. Plugin authors
+(`ductile-plugin-developer`) hand off at `plugin lock`; incident responders
+(`ductile-rca`) see "forgot to `plugin lock` after a manifest change" as a
+recurring root cause.
 
 ### Config integrity (tiered)
 
