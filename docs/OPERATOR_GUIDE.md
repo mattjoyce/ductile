@@ -82,8 +82,9 @@ into your password manager. The vault blob and its key are a **pair**:
   config bundles (e.g. `tokens.yaml`); `vault rotate-key` is the only safe path for
   the vault.
 
-> The `system backup` archive does not (yet) contain `vault.age` or the age key —
-> back up the blob and custody the key out-of-band until that lands.
+`system backup` (scope `config` or higher) now bundles the encrypted `vault.age`;
+the age key stays out-of-band (see the Backups section above and `docs/SECRETS.md`
+§3).
 
 ### Self-check
 `ductile system selfcheck` runs four read-only invariants against the local
