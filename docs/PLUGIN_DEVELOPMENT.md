@@ -50,6 +50,7 @@ through the request envelope's `state` field on the next invocation.
   "state": {},
   "context": {},
   "event": {},
+  "secrets": {},
   "deadline_at": "ISO8601"
 }
 ```
@@ -63,7 +64,18 @@ through the request envelope's `state` field on the next invocation.
 | `state` | The plugin's current compatibility-view row — i.e. the latest fact's snapshot for plugins that declare `fact_outputs`, or the direct-write `plugin_state` row for plugins that have not yet migrated. Treat it as *"what I knew last time."* |
 | `context` | Shared baggage carried across the pipeline chain. Operator-declared, immutable in the receiving plugin. |
 | `event` | Present only for `handle`. The triggering event envelope from upstream. |
+| `secrets` | A name→value map of the secrets the core composed for your plugin (present only when you are an attested principal with active grants). Read-only — distinct from `config`. |
 | `deadline_at` | Informational ISO8601 timestamp. Plugins may abandon long work early; core enforces the real deadline externally. |
+
+**Secrets reach your plugin here — over stdin, nowhere else.** They are *not* in
+your environment (the core strips it) and never on argv. Three rules: (1) you
+**consume** secrets (`secrets["GITHUB_TOKEN"]`); you never register, roll, or
+revoke them — that is the operator's `ductile vault` surface. (2) Your plugin must
+be attested with `ductile plugin lock <name>` before it receives *any* secret;
+editing the manifest or entrypoint breaks the fingerprint and requires re-`plugin
+lock`, or delivery fails closed at spawn. (3) Do **not** echo a secret to
+stdout/stderr — the core stores your output verbatim and will not scrub it. Full
+model: `docs/SECRETS.md`.
 
 ### 2.2 Response Envelope (Plugin → Core)
 
