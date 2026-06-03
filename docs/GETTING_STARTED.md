@@ -103,6 +103,15 @@ You will see logs indicating the scheduler has started. After 5 minutes (or howe
 ### Step 4: Graceful Shutdown
 Press `Ctrl+C` to stop the gateway. It will wait for any in-flight jobs to finish before releasing the process lock.
 
+### Step 5: (Optional) Initialize the vault for plugin secrets
+The echo demo needs no secrets. But when you add a plugin that needs an API token, the credential comes from the **vault** — not an env var, not config. Stand it up once, with the gateway stopped:
+```bash
+ductile secrets keygen --out ~/.config/ductile/age.key    # an age key — back this up
+ductile vault init --vault ~/.config/ductile/vault.age --key ~/.config/ductile/age.key
+# prints a one-time admin token — store it; it authorizes vault writes
+```
+Then start the gateway and grant a plugin its secret. The full lifecycle (register → set → roll → revoke, and the `plugin lock` attestation that gates delivery) is in the [Secrets & Vault guide](SECRETS.md).
+
 ---
 
 ## 3. CLI Principles
@@ -121,3 +130,4 @@ Ductile is designed to be operated by both humans and LLMs. All commands follow 
 -   **Operators:** Read the [Operator Guide](OPERATOR_GUIDE.md) to learn about monitoring and system maintenance.
 -   **Developers:** Visit the [Plugin Development Guide](PLUGIN_DEVELOPMENT.md) to start building your own skills.
 -   **Architects:** Deep dive into the [Architecture](ARCHITECTURE.md) and [Pipelines](PIPELINES.md) model.
+-   **Secrets:** See [Secrets & Vault](SECRETS.md) for delivering credentials to plugins (the vault, principals, and attestation).

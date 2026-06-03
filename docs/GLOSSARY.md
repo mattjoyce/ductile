@@ -125,3 +125,49 @@ path manage it themselves.
 ## Execution Ledger
 
 The persistent history of all jobs, pipeline steps, and event transitions. Used for the TUI "Overwatch" and audit logging.
+
+---
+
+## Vault
+
+Ductile's owned secret store: an age-encrypted blob (`vault.age`) held in memory at runtime. The daemon is its **sole writer and reader** (the sole-writer owner). Distinct from encryption-at-rest of config files — the vault has a *lifecycle* (register, set, roll, revoke). See `docs/SECRETS.md`.
+
+## Principal
+
+A registered deliver-to identity in the vault — a plugin, a consumer, or the gateway. Secrets are granted *to* principals; at spawn the core delivers a principal's authorized secrets to the matching plugin. Registering a principal is authorization only; identity/attestation is separate (see Plugin lock).
+
+## authorized_principals
+
+The list on a secret naming the principals allowed to receive it. An empty list means no principal receives it via delivery. A grant to an unregistered principal is refused at write time (no orphan grants).
+
+## Compose
+
+The pure, read-locked query that resolves a principal's deliverable secrets at spawn time. An **unknown** principal composes to empty (the plugin runs with no secrets); a **revoked** principal composes fail-closed (the job fails rather than run secret-less).
+
+## secret_ref
+
+A config reference (e.g. on a webhook/relay HMAC) that resolves to a secret value. Resolvable against the vault as the source of truth (and, during migration, the legacy `tokens.yaml` table).
+
+## Attestation
+
+Binding a secret-receiving plugin to its exact bytes. A plugin must be attested (`plugin lock`) before it receives any secret; the core re-verifies at spawn and fails closed on a mismatch.
+
+## Fingerprint
+
+The keyed hash (keyed-BLAKE3 over a plugin's manifest + entrypoint bytes, keyed by the `core` nonce) that `plugin lock` records and the core re-checks at spawn. Editing manifest or entrypoint changes the fingerprint and requires re-attestation.
+
+## Nonce
+
+A 32-byte secret seeded on the reserved `core` principal at vault genesis. It *keys* the plugin fingerprints, so a fingerprint cannot be recomputed without the vault — binding attestation to this gateway's vault.
+
+## Plugin lock
+
+The explicit act (`ductile plugin lock <name>`) that attests a plugin's bytes by recording its fingerprint. **Decoupled** from Config lock: it is the only thing that re-blesses changed plugin bytes, and it gates secret delivery.
+
+## Config lock
+
+The act (`ductile config lock`) that re-hashes the config *files* into `.checksums`. It **preserves** existing plugin fingerprints but does **not** re-attest plugin bytes — that is Plugin lock. The decoupling closes "lock-laundering" (a lock taken for one reason silently approving a swapped binary).
+
+## Reserved entity
+
+A vault entity the data plane cannot mutate: the `core` principal (holds the nonce) and the `core-admin-token` secret (the management-API credential). Guarded against ordinary set/roll/revoke; the admin token rotates through a dedicated path.

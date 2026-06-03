@@ -15,6 +15,8 @@ Authorization: Bearer <your_token>
 
 Ductile uses scoped tokens configured in `api.auth.tokens`, with explicit scopes (e.g., `plugin:rw`, `jobs:ro`, `events:ro`).
 
+**Two credential domains.** The scoped `api.auth.tokens` above authorize the *general* API. The vault management routes (`POST /vault/*`, §13) are a **separate domain**: they authenticate against the **vault-resident admin token** (minted by `ductile vault init`, presented as `Authorization: Bearer <admin-token>` / `DUCTILE_VAULT_TOKEN`). The config `api.auth.tokens` — even a `*` token — are **rejected** on `/vault/*`, and vice-versa. The admin token lives inside the encrypted vault, never in config, and is rotatable by a normal vault write.
+
 ---
 
 ## Endpoints
@@ -592,6 +594,24 @@ Redaction rules:
 - Plugin config keys containing `secret`, `key`, `token`, `password`, etc., are replaced with `[REDACTED]`.
 - API token values are omitted (only scopes are shown).
 - High-security token keys are omitted.
+
+---
+
+### 13. Vault Management
+
+Manage the owned secret store (principals and secrets). **Auth:** the vault-resident admin token only (see Authentication, above) — *not* `api.auth.tokens`. All routes are `POST` with a JSON body. Responses never contain secret **values** — the API is write/lifecycle only; there is no read-back-value endpoint by design. Returns `503` if no vault is loaded, `401` on a bad admin token, `400` on a policy violation (e.g. an orphan grant, a reserved entity, a revoked secret).
+
+| Endpoint | Body | Response | Notes |
+|---|---|---|---|
+| `POST /vault/principal` | `{"name","kind"}` | `{"name","status"}` | Register a deliver-to identity. `kind` is `plugin`, `consumer`, or `gateway`. |
+| `POST /vault/secret` | `{"name","value","authorized_principals":[],"pattern"}` | `{"name","status"}` | Upsert a secret. `pattern` is `manual` (default) or `auto`. `authorized_principals` lists the principals allowed to receive it (each must already be registered). |
+| `POST /vault/secret/roll` | `{"name","value"}` | `{"name","status"}` | Supersede the value. Manual secrets take the new value from the body; auto secrets are minted by the daemon (any `value` ignored). |
+| `POST /vault/secret/revoke` | `{"name"}` | `{"name","status"}` | Terminal: marks the secret revoked and clears its value. |
+| `POST /vault/principal/revoke` | `{"name"}` | `{"name","status"}` | Revoke a principal; its secrets stop being delivered (fail closed). |
+| `POST /vault/principal/purge` | `{"name"}` | `{"name","status"}` | Remove a principal and strip its grants from every secret. |
+| `POST /vault/principal/roll` | `{"name"}` | `{"name","rolled":[],"skipped":[]}` | Roll every auto-pattern secret the principal holds; `skipped` names the manual ones (roll each with `/vault/secret/roll`). |
+
+The matching CLI clients are `ductile vault set` / `roll` / `revoke` / `register-principal` / `revoke-principal` / `purge-principal` / `roll-principal` (keyless — they POST here). The audit trail for every call is the `vault_audit` log (`ductile system vault-audit`). See `docs/SECRETS.md` for the model.
 
 ---
 

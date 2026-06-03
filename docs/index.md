@@ -44,6 +44,14 @@ See the [Constitution](https://github.com/mattjoyce/ductile/blob/main/CONSTITUTI
 
     [:octicons-arrow-right-24: Plugin Development](PLUGIN_DEVELOPMENT.md)
 
+-   :material-key:{ .lg .middle } **Deliver secrets**
+
+    ---
+
+    The vault delivers credentials to attested plugins — never via env or config.
+
+    [:octicons-arrow-right-24: Secrets & Vault](SECRETS.md)
+
 </div>
 
 ---

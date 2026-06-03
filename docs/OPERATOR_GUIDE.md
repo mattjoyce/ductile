@@ -53,6 +53,37 @@ The command refuses to overwrite an existing destination — operator owns the
 naming pattern and retention. For a scheduled-backup setup (systemd timer or
 launchd), see `docs/DEPLOYMENT.md` §10.
 
+### Vault operations
+The vault holds the secrets the core delivers to plugins (the `ductile vault`
+command family; the full model is in `docs/SECRETS.md`). Writes split into two
+classes by whether they touch the age key:
+
+- **Local, key-touching — daemon STOPPED** (`init`, `import`, `rotate-key`): they
+  hold the age key and rewrite the blob, so they take the daemon's PID lock and
+  refuse while it is running.
+- **Keyless API clients — daemon RUNNING** (everything else): they POST to the
+  daemon (the sole writer) authenticated by the **vault admin token** (`--token`
+  or `DUCTILE_VAULT_TOKEN`), not the config API tokens.
+
+```bash
+# Genesis (once, daemon down): seeds the core principal, the fingerprint nonce,
+# and a one-time admin token — printed once, store it; it is the API credential.
+ductile vault init --vault vault.age --key age.key
+
+# Lifecycle (daemon up, admin token in DUCTILE_VAULT_TOKEN, --api-url omitted for brevity):
+ductile vault register-principal --name mailer --kind plugin
+printf '%s' "$SMTP_PW" | ductile vault set --name smtp_pw --principal mailer
+ductile vault roll   --name smtp_pw          # supersede the value (manual: stdin; auto: minted)
+ductile vault revoke --name smtp_pw          # terminal; clears the value
+ductile vault revoke-principal --name mailer # stop delivery (fail closed)
+ductile vault purge-principal  --name mailer # remove + strip its grants
+```
+
+`--pattern manual` (default) takes the value from stdin; `--pattern auto` has the
+daemon mint it. A plugin must be `plugin lock`-ed before it receives any secret.
+Audit every change with **`ductile system vault-audit [--principal NAME]`**.
+Rotating the at-rest key is below.
+
 ### Rotating the vault key
 `ductile vault rotate-key` rotates the daemon's age identity: it mints a fresh
 key, re-encrypts the vault to it, and retires the old key — so the blob at rest

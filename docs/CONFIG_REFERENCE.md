@@ -145,6 +145,11 @@ service:
     validate_config_on_boot: true    # require config validation to pass at startup
     require_api_auth: true           # reject an enabled API with no auth tokens
   # strict_mode: true  # DEPRECATED alias — enables all four admission gates above
+  # Spawn-hygiene allowlist: extra env var NAMES passed through to plugin child
+  # processes, on top of the built-in minimal set (PATH, HOME, TZ, LANG, ...).
+  # Secrets do NOT go here — they reach plugins via the vault `secrets` envelope
+  # over stdin, never the environment.
+  plugin_env_passthrough: [MY_PLUGIN_FLAG]
 
 plugin_roots:
   - /opt/ductile/plugins
@@ -156,6 +161,11 @@ api:
 
 state:
   path: ./data/state.db
+
+# Encryption at rest + the owned secret vault (see docs/SECRETS.md).
+secrets:
+  age_key_file: ./age.key      # age identity that decrypts encrypted config and the vault
+  vault_file: ./vault.age      # the encrypted vault blob (default: <configDir>/vault.age)
 
 # macOS-only. Each path is stat()-ed once on cold start (after PID lock,
 # before "ductile running" log). Triggers any pending TCC popup for the
@@ -180,6 +190,10 @@ must be at least as long as `dedupe_ttl`. The defaults are both 24h.
 > **Note:** the core does not provision per-job filesystem workspaces;
 > the `workspace:` config section has been removed. Plugins that need a
 > scratch path manage it themselves — see `docs/PLUGIN_DEVELOPMENT.md` §9.
+
+**`service.plugin_env_passthrough`** is a list of env var *names* (not values) granted to plugin child processes on top of the built-in spawn-hygiene allowlist (`PATH`, `HOME`, `TZ`, `LANG`, …). Use it sparingly. Secrets must **not** travel this way — they are withheld from the plugin environment and delivered only through the vault `secrets` envelope over stdin (`docs/ARCHITECTURE.md` §5.5/§6.1).
+
+**`secrets.age_key_file`** names the age identity (private key, mode 0600) used to decrypt encrypted config includes *and* the vault blob. Resolution order: `DUCTILE_AGE_KEY_FILE` env var → `secrets.age_key_file` (relative to configDir) → built-in default locations. **`secrets.vault_file`** names the encrypted vault blob; relative to configDir, defaulting to `<configDir>/vault.age`. An absent vault file means "no vault yet" (the migration/coexistence window) — not an error. The vault holds the owned secret store; see `docs/SECRETS.md` for the principal/secret model and the `ductile vault` lifecycle.
 
 `plugin_roots` is the multi-root setting.
 
