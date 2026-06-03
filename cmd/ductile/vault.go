@@ -69,7 +69,7 @@ func printVaultNounHelp(w *os.File) {
 	_, _ = fmt.Fprintln(w, "")
 	_, _ = fmt.Fprintln(w, "Local, key-touching (hold the age key; the daemon must be STOPPED):")
 	_, _ = fmt.Fprintln(w, "  init        Genesis: create a new vault (core + nonce + admin token)   [--vault --key]")
-	_, _ = fmt.Fprintln(w, "  import      Migrate tokens.yaml entries into an existing vault         [--vault --key --tokens --resolve-env]")
+	_, _ = fmt.Fprintln(w, "  import      Migrate tokens.yaml entries into an existing vault         [--config --tokens --resolve-env]")
 	_, _ = fmt.Fprintln(w, "  rotate-key  Rotate the vault's age identity (mints + re-encrypts)       [--config]")
 	_, _ = fmt.Fprintln(w, "")
 	_, _ = fmt.Fprintln(w, "Keyless API clients (no age key; POST to the running daemon, the sole writer):")
@@ -373,29 +373,59 @@ func runVaultRollPrincipal(args []string) int {
 
 // runVaultImport migrates a legacy tokens.yaml table into an existing vault. It
 // is a local, key-touching operation (it reads the key and rewrites the blob),
-// never over the API — like init. Literal values move in; ${ENV} pointers are
-// flagged unless --resolve-env is given, in which case resolvable ones import
+// never over the API — like init and rotate-key. Because it is a second process
+// loading and re-saving the blob, it would lost-update a running daemon, so it
+// follows rotate-key's safety envelope: it resolves the daemon's EXACT vault +
+// key paths from config and holds the daemon PID lock for the op, refusing if the
+// daemon is up. The actual upsert goes through the guarded SetManualBatch (one
+// lock + one Save), not the live Store(). Literal values move in; ${ENV} pointers
+// are flagged unless --resolve-env is given, in which case resolvable ones import
 // their resolved value and the rest are flagged for manual re-provisioning.
 func runVaultImport(args []string) int {
 	fs := flag.NewFlagSet("vault import", flag.ContinueOnError)
-	vaultPath := fs.String("vault", "", "Path to the vault blob to import into")
-	keyPath := fs.String("key", "", "Path to the age identity (private key)")
+	configPath := fs.String("config", "", "Path to the ductile config dir (default: discover)")
 	tokensPath := fs.String("tokens", "", "Path to the tokens.yaml to import from")
 	resolveEnv := fs.Bool("resolve-env", false, "Import the resolved value of ${ENV} entries instead of flagging them")
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
-	if *vaultPath == "" || *keyPath == "" || *tokensPath == "" {
-		fmt.Fprintln(os.Stderr, "vault import: --vault, --key, and --tokens are required")
+	if *tokensPath == "" {
+		fmt.Fprintln(os.Stderr, "vault import: --tokens is required")
 		return 1
 	}
 
-	kr, err := secrets.LoadKeyringFromFile(*keyPath)
+	cfg, configDir, err := loadBackupConfig(*configPath)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "vault import: %v\n", err)
 		return 1
 	}
-	v, err := vault.Load(*vaultPath, kr)
+
+	// Sole-writer: the daemon is the only writer of the vault. Import is local and
+	// key-touching, so refuse if the daemon holds the PID lock; holding it for the
+	// op also stops a daemon starting mid-import.
+	pidLock, err := lock.AcquirePIDLock(getPIDLockPath(cfg))
+	if err != nil {
+		fmt.Fprintf(os.Stderr,
+			"vault import: the daemon appears to be running (could not take the lock): %v\n"+
+				"Stop the daemon before importing — key-touching ops are local.\n", err)
+		return 1
+	}
+	defer func() { _ = pidLock.Release() }()
+
+	vaultPath := config.ResolveVaultPath(configDir, cfg)
+	keyPath := config.ResolveAgeKeyPath(configDir, cfg)
+	if keyPath == "" {
+		fmt.Fprintln(os.Stderr,
+			"vault import: no age key file resolved (set secrets.age_key_file or DUCTILE_AGE_KEY_FILE)")
+		return 1
+	}
+
+	kr, err := secrets.LoadKeyringFromFile(keyPath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "vault import: %v\n", err)
+		return 1
+	}
+	v, err := vault.Load(vaultPath, kr)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "vault import: %v\n  (run 'ductile vault init' first)\n", err)
 		return 1
@@ -409,19 +439,19 @@ func runVaultImport(args []string) int {
 
 	plan := config.PlanTokenImport(entries, *resolveEnv, os.LookupEnv)
 
-	now := time.Now()
-	imported := 0
+	batch := make([]vault.ManualSecret, 0, len(plan.Imported))
 	for _, s := range plan.Imported {
-		if err := v.Store().SetSecret(s.Name, s.Value, nil, vault.PatternManual, now); err != nil {
-			plan.Flagged = append(plan.Flagged, config.FlaggedSecret{Name: s.Name, Reason: "could not register: " + err.Error()})
-			continue
-		}
-		imported++
+		batch = append(batch, vault.ManualSecret{Name: s.Name, Value: s.Value})
 	}
-	if err := v.Save(); err != nil {
+	failures, err := v.SetManualBatch(batch, time.Now())
+	if err != nil {
 		fmt.Fprintf(os.Stderr, "vault import: save: %v\n", err)
 		return 1
 	}
+	for _, f := range failures {
+		plan.Flagged = append(plan.Flagged, config.FlaggedSecret{Name: f.Name, Reason: "could not register: " + f.Reason})
+	}
+	imported := len(batch) - len(failures)
 
 	fmt.Fprintf(os.Stderr, "Imported %d secret(s) into the vault.\n", imported)
 	if len(plan.Flagged) > 0 {

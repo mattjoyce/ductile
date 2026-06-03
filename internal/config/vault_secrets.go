@@ -88,13 +88,15 @@ func loadVaultOwner(configDir string, cfg *Config, kr *secrets.Keyring) (*vault.
 }
 
 // vaultStore loads the decrypted Store given an already-resolved keyring, for
-// the load-time graft (which needs the pure model, not the guarded owner).
+// the load-time graft (which needs the pure model, not the guarded owner). It
+// returns a Snapshot — an independent deep copy — rather than the live model, so
+// the graft never aliases the owner's Store past the read lock.
 func vaultStore(configDir string, cfg *Config, kr *secrets.Keyring) (*vault.Store, error) {
 	v, err := loadVaultOwner(configDir, cfg, kr)
 	if err != nil || v == nil {
 		return nil, err
 	}
-	return v.Store(), nil
+	return v.Snapshot()
 }
 
 // mergeVaultSecrets overlays vault secret values onto the legacy token table.

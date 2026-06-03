@@ -27,7 +27,13 @@ type Vault struct {
 	// guarded reads (Compose) take RLock, the writer (SetSecret) takes Lock and
 	// persists under it. The Store stays a pure, lock-free model; concurrency is
 	// the owner's concern. Direct Store() access bypasses the lock and is for
-	// single-threaded contexts only (genesis, import, tests).
+	// single-threaded genesis and tests only — it never escapes into the running
+	// daemon: runtime read consumers take a Snapshot (a deep copy under RLock) and
+	// writers go through the guarded methods (SetSecret, SetManualBatch, and the
+	// lifecycle ops). The remaining cross-process writer hole — a second process
+	// loading and re-saving the blob while the daemon serves — is closed outside
+	// the mutex by requiring those local key-touching CLIs (vault init/import/
+	// rotate-key) to hold the daemon PID lock, i.e. run only while it is stopped.
 	mu       sync.RWMutex
 	path     string
 	keyring  *secrets.Keyring
@@ -79,11 +85,83 @@ func Load(path string, kr *secrets.Keyring) (*Vault, error) {
 	return &Vault{path: path, keyring: kr, store: &s, lastYAML: canonical}, nil
 }
 
-// Store returns the resident in-memory model. Mutations are not persisted until
-// Save. This bypasses the owner's lock — use only in single-threaded contexts
-// (genesis, import, tests). Concurrent runtime access goes through the guarded
-// methods (Compose, SetSecret).
+// Store returns the resident in-memory model directly, aliasing the live
+// pointer. Mutations are not persisted until Save. This bypasses the owner's
+// lock, so it is for single-threaded genesis and tests ONLY. Runtime read
+// consumers must take a Snapshot (an independent deep copy) and writers must use
+// the guarded methods (SetSecret, SetManualBatch, the lifecycle ops) — never
+// reach the live model through Store() while the daemon may be serving.
 func (v *Vault) Store() *Store { return v.store }
+
+// Snapshot returns an independent deep copy of the resident model, taken under a
+// read lock. It is the safe read path for callers that need the pure Store shape
+// (e.g. the load-time secret graft) without aliasing the live model: mutating
+// the returned copy never touches the vault, and holding it past the lock is
+// harmless because it is no longer shared.
+func (v *Vault) Snapshot() (*Store, error) {
+	v.mu.RLock()
+	defer v.mu.RUnlock()
+	return cloneStore(v.store)
+}
+
+// cloneStore deep-copies a Store via a YAML round-trip — the same canonical
+// serialisation the vault persists, so the copy is structurally identical and
+// independent (maps, the *Secret/*Principal values, and their slices are all
+// fresh). Using the marshal path means the clone never rots as the model gains
+// fields.
+func cloneStore(s *Store) (*Store, error) {
+	data, err := yaml.Marshal(s)
+	if err != nil {
+		return nil, fmt.Errorf("vault: snapshot serialise: %w", err)
+	}
+	var c Store
+	if err := yaml.Unmarshal(data, &c); err != nil {
+		return nil, fmt.Errorf("vault: snapshot parse: %w", err)
+	}
+	if c.Secrets == nil {
+		c.Secrets = make(map[string]*Secret)
+	}
+	if c.Principals == nil {
+		c.Principals = make(map[string]*Principal)
+	}
+	return &c, nil
+}
+
+// ManualSecret is one (name, value) pair for a batched manual import.
+type ManualSecret struct {
+	Name  string
+	Value string
+}
+
+// ImportFailure reports a single entry SetManualBatch could not upsert, with the
+// reason, so the caller can flag it without aborting the rest of the batch.
+type ImportFailure struct {
+	Name   string
+	Reason string
+}
+
+// SetManualBatch upserts a batch of manual-pattern secrets (operator-supplied
+// values, no grants) as ONE guarded critical section followed by a single Save,
+// so a `vault import` is atomic with respect to concurrent readers and writes
+// the blob exactly once. Per-entry validation failures are returned (name +
+// reason) without aborting the batch; a Save failure rolls the whole batch back
+// to the last persisted state. now stamps each upsert. It is the guarded
+// replacement for reaching the live model through Store().
+func (v *Vault) SetManualBatch(entries []ManualSecret, now time.Time) ([]ImportFailure, error) {
+	var failures []ImportFailure
+	err := v.mutate(func(s *Store) error {
+		for _, e := range entries {
+			if setErr := s.SetSecret(e.Name, e.Value, nil, PatternManual, now); setErr != nil {
+				failures = append(failures, ImportFailure{Name: e.Name, Reason: setErr.Error()})
+			}
+		}
+		return nil // per-entry failures are reported, not fatal to the batch
+	})
+	if err != nil {
+		return nil, err
+	}
+	return failures, nil
+}
 
 // Compose resolves a principal's authorized secrets under a read lock, so it is
 // safe to call concurrently with other reads and with SetSecret. It is the
