@@ -10,6 +10,8 @@ Authorization: Bearer <token>
 
 Unauthenticated endpoints: `/healthz`, `/plugins`, `/skills`, `/openapi.json`, `/.well-known/ai-plugin.json`
 
+**Vault routes use a separate credential.** `POST /vault/*` (below) authenticate against the **vault-resident admin token** (`DUCTILE_VAULT_TOKEN`, minted by `vault init`), NOT the `api.auth.tokens` above — config tokens (even `*`) are rejected there, and vice-versa.
+
 ## Endpoints
 
 ### Trigger Plugin Directly (bypasses routing)
@@ -104,6 +106,18 @@ Returns both plugin commands and named pipelines with endpoints, tiers, and sche
 ```
 GET /.well-known/ai-plugin.json  # No auth — OpenAI-style discovery
 ```
+
+### Vault Management (admin-token auth; values never returned)
+```
+POST /vault/principal          # {name, kind: plugin|consumer|gateway}   register a deliver-to identity
+POST /vault/secret             # {name, value, authorized_principals[], pattern: manual|auto}  upsert
+POST /vault/secret/roll        # {name, value?}   supersede value (auto: minted)
+POST /vault/secret/revoke      # {name}           terminal; clears the value
+POST /vault/principal/revoke   # {name}           stop delivery (fail closed)
+POST /vault/principal/purge    # {name}           remove + strip grants
+POST /vault/principal/roll     # {name} -> {rolled[], skipped[]}   roll its auto secrets
+```
+All return `{name, status}` (or the roll-principal shape) — never a secret value. `503` if no vault loaded, `401` on a bad admin token. CLI clients: `ductile vault set|roll|revoke|register-principal|...`. Audit: `ductile system vault-audit`.
 
 ## Error Codes
 - `401` — Missing or invalid token

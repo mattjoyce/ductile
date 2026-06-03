@@ -29,6 +29,7 @@ service:
   dedupe_ttl: 24h
   job_log_retention: 30d
   strict_mode: true            # Hard-fail on any integrity mismatch
+  plugin_env_passthrough: [MY_PLUGIN_FLAG]  # extra env var NAMES for plugin children (allowlist; NOT for secrets)
 
 plugin_roots:
   - /opt/ductile/plugins       # Scanned in order; first match wins
@@ -40,12 +41,25 @@ api:
 state:
   path: ./data/state.db        # Relative to config.yaml location
 
+secrets:
+  age_key_file: ./age.key      # age identity decrypting config + vault (env DUCTILE_AGE_KEY_FILE overrides)
+  vault_file: ./vault.age      # encrypted vault blob (default: <configDir>/vault.age)
+
 include:
   - api.yaml
   - plugins.yaml
   - pipelines.yaml
   - webhooks.yaml
 ```
+
+**Secrets & encryption at rest.** `secrets.age_key_file` is the age private key
+(mode 0600) that decrypts both encrypted config includes and the vault blob
+(`secrets.vault_file`). Key resolution: `DUCTILE_AGE_KEY_FILE` → `age_key_file` →
+default locations. The vault is the owned secret store; legacy `tokens.yaml`
+entries migrate into it via `ductile vault import --config <dir> --tokens
+tokens.yaml`. `service.plugin_env_passthrough` allowlists extra env var *names*
+for plugin children — secrets do **not** travel via env (they reach plugins over
+stdin). Full model: `docs/SECRETS.md`.
 
 ## Modular Grafting (Merge Strategy)
 

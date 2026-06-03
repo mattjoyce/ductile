@@ -82,7 +82,9 @@ Live state is in `~/.config/ductile/state/`, `/app/state/`, etc.
 | **Unraid (prod)** | inside container at `/app/ductile` | `/mnt/user/appdata/ductile/config` (host) → `/app/config` (container) | `/mnt/user/appdata/ductile/data/ductile.db` | `192.168.20.4:8888` | `docker compose` at `/mnt/user/appdata/ductile/` |
 
 Auth token shorthand: Mac / Thinkpad use `$DUCTILE_LOCAL_TOKEN`; Unraid dev
-token is `Ductilian`.
+token is `Ductilian`. **Vault ops use a different credential** — the vault admin
+token (`DUCTILE_VAULT_TOKEN`, minted by `vault init`), not the API token above; the
+two are rejected on each other's routes.
 
 ## CLI command reference
 
@@ -125,6 +127,25 @@ ductile job logs [--json]                 # Query stored job logs
 ```bash
 ductile plugin list [--api-url URL] [--json]   # Discover loaded plugins
 ductile plugin run <name>                      # Manual execution
+ductile plugin lock <name>                     # Attest plugin bytes — REQUIRED before it receives vault secrets
+```
+
+### Vault & Secrets
+The daemon is the vault's **sole writer and key-holder**. Two op classes (model: `docs/SECRETS.md`):
+```bash
+# Local, key-touching — daemon STOPPED (PID-lock guarded):
+ductile vault init   --vault vault.age --key age.key      # genesis: core principal + nonce + one-time admin token
+ductile vault import --config <dir> --tokens tokens.yaml  # migrate tokens.yaml into the vault
+ductile vault rotate-key --config <dir>                   # rotate the at-rest age key
+
+# Keyless API clients — daemon RUNNING (admin token: --token / DUCTILE_VAULT_TOKEN):
+ductile vault register-principal --name <p> --kind plugin|consumer|gateway
+ductile vault set    --name <s> --principal <p>   # value from stdin (--pattern manual|auto)
+ductile vault roll|revoke --name <s>              # supersede value | terminal (clears value)
+ductile vault revoke-principal|purge-principal|roll-principal --name <p>
+
+ductile secrets keygen|encrypt|rotate            # age-at-rest tooling for config bundles (NOT the vault)
+ductile system vault-audit [--principal <p>]     # the append-only audit log (names + outcomes, never values)
 ```
 
 ### API (direct gateway calls)
@@ -325,7 +346,8 @@ that is the incident handoff.
 
 In-skill references:
 - `references/config.md` — config structure & grafting
-- `references/api.md` — REST API endpoints
+- `references/api.md` — REST API endpoints (incl. the `/vault/*` management routes)
+- `docs/SECRETS.md` (in-repo) — the canonical secrets + vault + attestation model
 - `references/pipelines.md` — pipeline DSL & orchestration (for **operator-level
   inspection and triggering**, not authoring — authoring lives in
   `ductile-plugin-developer`)
