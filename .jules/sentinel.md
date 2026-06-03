@@ -1,0 +1,4 @@
+## 2024-05-18 - Fix silent failures from unhandled json.Marshal errors
+**Vulnerability:** Errors returned by `json.Marshal` were ignored via the blank identifier (`_`), which could lead to silent failures, unexpected behavior, and potentially unlogged or nil payloads being enqueued to the pipeline without any indication to the client.
+**Learning:** The previous implementation failed to account for serialization errors on event payloads in `internal/api/handlers.go`. Ignoring errors from security-sensitive or reliability-critical operations like payload serialization violates the "Fail securely" principle.
+**Prevention:** Always verify the return error from serialization operations like `json.Marshal`. If an error occurs, explicitly check for `err != nil`, securely log the event without leaking internal details, and safely return an `http.StatusInternalServerError` back to the caller.
