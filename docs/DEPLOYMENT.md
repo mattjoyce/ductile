@@ -286,7 +286,7 @@ The four scopes are a nested ladder; each level adds to the previous:
 | Scope | Contents |
 |---|---|
 | `db` | `VACUUM INTO` snapshot of the state DB only |
-| `config` (default) | `db` + ductile config dir (`config.yaml`, `api.yaml`, `plugins.yaml`, `pipelines.yaml`, `webhooks.yaml`, `.checksums`) |
+| `config` (default) | `db` + ductile config dir (`config.yaml`, `api.yaml`, `plugins.yaml`, `pipelines.yaml`, `webhooks.yaml`, `.checksums`) + the encrypted vault blob `vault.age` (the age key is **excluded** — out-of-band custody; restore needs both) |
 | `plugins` | `config` + every directory under `plugin_roots` (excludes `.git`, `node_modules`, `.venv`, `venv`, `__pycache__`, `.DS_Store`, `*.pyc`, `*.pyo`) |
 | `all` | `plugins` + every file referenced under `environment_vars.include` |
 

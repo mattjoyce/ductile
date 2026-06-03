@@ -251,13 +251,15 @@ func loadBackupConfig(configPath string) (*config.Config, string, error) {
 // backupPlan captures everything a backup invocation will do, ahead of
 // execution. Built once, printed for operator awareness, then executed.
 type backupPlan struct {
-	scope       backupScope
-	dest        string
-	srcDB       string
-	configDir   string
-	pluginRoots []manifestPluginRoot
-	envFiles    []manifestEnvFile
-	manifest    backupManifest
+	scope            backupScope
+	dest             string
+	srcDB            string
+	configDir        string
+	vaultBlobSrc     string // resolved vault.age path, "" if no vault present
+	vaultBlobArchive string // its path inside the archive
+	pluginRoots      []manifestPluginRoot
+	envFiles         []manifestEnvFile
+	manifest         backupManifest
 }
 
 func buildBackupPlan(
@@ -299,6 +301,36 @@ func buildBackupPlan(
 		})
 		plan.manifest.Warnings = append(plan.manifest.Warnings,
 			"archive contains api.yaml bearer token; treat as secret")
+
+		// Vault blob: include the encrypted vault.age so a restore is not
+		// secret-less. The age key that decrypts it is DELIBERATELY excluded —
+		// the archive and the key must not travel together, or the archive is a
+		// single-file compromise. Restore needs BOTH: unpack the archive, then
+		// write the age key back from out-of-band custody.
+		if vaultPath := config.ResolveVaultPath(configDir, cfg); vaultPath != "" {
+			if _, err := os.Stat(vaultPath); err == nil {
+				plan.vaultBlobSrc = vaultPath
+				plan.vaultBlobArchive = "config/" + filepath.Base(vaultPath)
+				plan.manifest.Included = append(plan.manifest.Included, plan.vaultBlobArchive)
+
+				keyItem := config.ResolveAgeKeyPath(configDir, cfg)
+				if keyItem == "" {
+					keyItem = "the age key (secrets.age_key_file / DUCTILE_AGE_KEY_FILE) — unresolved here"
+				}
+				plan.manifest.Excluded = append(plan.manifest.Excluded, manifestExcluded{
+					Reason: "vault age key — out-of-band by design: store it separately " +
+						"(e.g. a password manager); restore needs BOTH the archive and the key",
+					Items: []string{keyItem},
+				})
+				plan.manifest.Warnings = append(plan.manifest.Warnings,
+					"archive contains "+plan.vaultBlobArchive+" (encrypted vault); its age key is "+
+						"EXCLUDED by design — store it out-of-band, restore needs both",
+					"after `vault rotate-key` the previous key is destroyed, so a vault.age backup is "+
+						"only restorable with the key that was current when the backup was taken")
+			} else if !errors.Is(err, os.ErrNotExist) {
+				return nil, fmt.Errorf("stat vault %s: %w", vaultPath, err)
+			}
+		}
 	}
 
 	if scope >= scopePlugins {
@@ -441,6 +473,12 @@ func writeBackupArchive(dest string, plan *backupPlan) error {
 				return fmt.Errorf("stat %s: %w", path, err)
 			}
 			if err := tarAddFile(tw, path, "config/"+f); err != nil {
+				return err
+			}
+		}
+		// The encrypted vault blob (the age key is never added — out-of-band).
+		if plan.vaultBlobSrc != "" {
+			if err := tarAddFile(tw, plan.vaultBlobSrc, plan.vaultBlobArchive); err != nil {
 				return err
 			}
 		}

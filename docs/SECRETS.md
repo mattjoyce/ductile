@@ -224,13 +224,32 @@ tampered plugin cannot receive secrets. Attestation is decoupled from `config lo
 (which seals config files only). See [OPERATOR_GUIDE.md](OPERATOR_GUIDE.md) and
 `ductile plugin lock --help`.
 
-### Backup
+### Backup and restore
 
-The Vault blob (`vault.age`) and its age key are **not yet** captured by `ductile
-system backup`. Back up the blob separately, and custody the key out-of-band (e.g. a
-password manager). The two are a **pair**: a vault backup is restorable only with the
-key that was current when it was taken — and `rotate-key` destroys the old key, so save
-the new key immediately after each rotation.
+`ductile system backup` (scope `config` or higher) includes the encrypted vault blob
+(`vault.age`) in the archive, so a restore is not secret-less. The age key that decrypts
+it is **deliberately excluded** — the archive already carries the `api.yaml` bearer token
+and env secrets, so shipping the key alongside it would make the archive a single-file
+compromise. The blob and its key are a **pair**, custodied apart:
+
+- **`vault.age` → in the archive** (an opaque encrypted file).
+- **the age key → out-of-band**, saved by you (e.g. a password manager). The
+  `BACKUP_MANIFEST.txt` records the key as excluded with this pairing note.
+
+Restore:
+
+```bash
+# 1. Unpack the archive (vault.age lands back in the config dir).
+tar -xzf ductile-backup.tar.gz -C /path/to/restore
+# 2. Write the age key file back from out-of-band custody (mode 0600), to the
+#    path secrets.age_key_file / DUCTILE_AGE_KEY_FILE resolves to.
+install -m600 /dev/stdin "$DUCTILE_AGE_KEY_FILE" <<< "AGE-SECRET-KEY-1..."
+# 3. Start the daemon. It finds the key, decrypts vault.age in memory, and serves.
+```
+
+A vault backup is restorable **only** with the key that was current when it was taken —
+and `rotate-key` destroys the old key, so save the freshly minted key immediately after
+each rotation, or a pre-rotation backup becomes unreadable.
 
 ---
 

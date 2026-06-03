@@ -41,6 +41,14 @@ reasons, plugin-root mappings, and any boundary warnings (e.g. `api.yaml`
 appearing at scope `config`, env files appearing at scope `all`). Inspect with
 `tar -xzOf <archive> BACKUP_MANIFEST.txt` without re-extracting the rest.
 
+At scope `config` or higher the archive includes the encrypted vault blob
+(`vault.age`) so a restore is not secret-less, but the age key that decrypts it
+is **deliberately excluded** — custody it out-of-band (e.g. a password manager)
+and restore needs both. The manifest records the key as excluded with this
+pairing note. Restore = unpack the archive, write the age key file back from
+custody (mode 0600), then start. See `docs/SECRETS.md` §3 "Backup and restore"
+for the full steps and the `rotate-key`-destroys-the-old-key discipline.
+
 The command refuses to overwrite an existing destination — operator owns the
 naming pattern and retention. For a scheduled-backup setup (systemd timer or
 launchd), see `docs/DEPLOYMENT.md` §10.
