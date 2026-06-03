@@ -49,7 +49,7 @@ webhooks:
 ```
 
 Notes:
-- `secret_ref` is required and must reference tokens.yaml.
+- `secret_ref` is required; it resolves against the vault (preferred — `ductile vault set`) or a legacy `tokens.yaml` entry.
 - `signature_header` is mandatory.
 - `max_body_size` defaults to 1MB.
 
@@ -83,7 +83,7 @@ Response returns a `job_id` when accepted.
 
 - `webhooks.yaml` is **high security** and must be sealed with `ductile config lock`.
 - In `strict_mode: true`, tampering will prevent startup.
-- Use `secret_ref` + `tokens.yaml` for secret management in production.
+- Use `secret_ref` for secret management in production; hold the secret in the vault (`ductile vault set`) — `tokens.yaml` is the migrating-out legacy. See `docs/SECRETS.md`.
 
 ## Operational Checks
 

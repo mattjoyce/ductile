@@ -41,7 +41,7 @@ Recommended files:
 └── pipelines.yaml
 ```
 
-`tokens.yaml` carries the shared HMAC secrets referenced by `secret_ref`.
+The shared HMAC secrets referenced by `secret_ref` resolve against the **vault** (the source of truth — `ductile vault set`), or a legacy `tokens.yaml` entry during migration. See `docs/SECRETS.md`.
 
 ---
 
@@ -235,7 +235,7 @@ The signature covers:
 - Operator-facing instance and peer names should be lower-case hyphenated, for example `home-primary` or `vps-backup`.
 - Event types remain lower-case dotted, for example `backup.ready`.
 - `remote_ingress.listen_path` is mounted on the main HTTP server and therefore uses `api.listen`.
-- `secret_ref` must resolve to a `tokens.yaml` entry on both sides.
+- `secret_ref` must resolve to a secret on both sides — held in the vault (preferred) or a legacy `tokens.yaml` entry.
 - `peers[].accept` and `instances[].allow` are optional policy filters, not distributed routing rules.
 - Remote baggage is not trusted wholesale. Only keys listed in `peers[].baggage.allow` may seed new local root context.
 
