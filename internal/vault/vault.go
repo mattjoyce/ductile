@@ -217,6 +217,34 @@ func (v *Vault) mutate(fn func(*Store) error) error {
 	return nil
 }
 
+// mutateR is mutate for a batch op that mutates the model INCREMENTALLY and may
+// fail partway (e.g. RollPrincipal rolling many secrets). Unlike mutate — whose
+// fn validates before touching the model, so an fn error leaves it unchanged —
+// mutateR restores the model from the last persisted state on ANY error (fn OR
+// Save), so a mid-batch failure can't leave uncommitted partial changes resident
+// in memory (Lamport F6). Returns fn's result on success.
+func mutateR[T any](v *Vault, fn func(*Store) (T, error)) (T, error) {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+
+	var zero T
+	res, err := fn(v.store)
+	if err != nil {
+		// fn may have partially mutated before failing — restore to last persisted.
+		if rbErr := v.restoreFromLastYAML(); rbErr != nil {
+			return zero, fmt.Errorf("%w (rollback also failed: %v)", err, rbErr)
+		}
+		return zero, err
+	}
+	if err := v.Save(); err != nil {
+		if rbErr := v.restoreFromLastYAML(); rbErr != nil {
+			return zero, fmt.Errorf("%w (rollback also failed: %v)", err, rbErr)
+		}
+		return zero, err
+	}
+	return res, nil
+}
+
 // AuthenticateAdmin reports whether presented matches the vault's resident
 // admin token (constant-time), under a read lock. This is the management-API
 // credential check: the admin token is minted by genesis (vault init), lives

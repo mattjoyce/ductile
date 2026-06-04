@@ -108,6 +108,13 @@ func (s *Store) SecretNames() []string {
 
 // Issue is one integrity problem found by Check. Structured so a caller (or an
 // AI operator) can act on it, not just print it.
+//
+// WIRE CONTRACT (#27, Ousterhout §2.5): the json field names below are a STABLE,
+// machine-readable contract for any operator/AI consuming Check output — treat
+// them as frozen. `kind` is a closed enum ("secret" | "principal"); new fields
+// may be ADDED (additive, optional) but existing names/meanings must not change
+// or be removed without a versioning decision. Same rule applies to any future
+// `dump --values` output schema.
 type Issue struct {
 	Kind   string `json:"kind"`   // "secret" | "principal"
 	Target string `json:"target"` // the offending name

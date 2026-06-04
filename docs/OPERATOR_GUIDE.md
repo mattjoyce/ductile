@@ -84,6 +84,11 @@ daemon mint it. A plugin must be `plugin lock`-ed before it receives any secret.
 Audit every change with **`ductile system vault-audit [--principal NAME]`**.
 Rotating the at-rest key is below.
 
+**When a roll takes effect (freshness):** a **plugin** secret picks up a `roll` at
+its **next spawn** (re-resolved per job). A **webhook/relay** secret_ref is resolved
+at config **load**, so rolling it only takes effect on the running servers after a
+**`ductile system reload`** — roll, then reload.
+
 ### Rotating the vault key
 `ductile vault rotate-key` rotates the daemon's age identity: it mints a fresh
 key, re-encrypts the vault to it, and retires the old key — so the blob at rest

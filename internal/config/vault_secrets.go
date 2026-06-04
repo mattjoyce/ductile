@@ -26,6 +26,13 @@ import (
 // Compose with live fingerprint re-verification — that is #14's path, not this
 // one, so plugin-scoped delivery must not be folded into this graft.
 //
+// FRESHNESS ASYMMETRY (#27, Ousterhout §2.2): because this graft runs at
+// load/reload, a rolled webhook/relay secret_ref only takes effect on the running
+// servers after the daemon RELOADS — the graft is frozen at boot. Plugin secrets
+// differ: they re-resolve at the next spawn, so a roll is visible on the next job.
+// So after rolling a webhook/relay secret, reload to make it live. (See
+// OPERATOR_GUIDE.md "Rolling a webhook/relay secret".)
+//
 // Degradation is deliberate and fail-open *only for visibility, not for secrecy*:
 //   - no vault file yet  -> no-op (early in the migration window)
 //   - keyless caller     -> no-op (static `config validate` / CLI tools cannot

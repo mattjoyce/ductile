@@ -69,37 +69,33 @@ func (v *Vault) PurgePrincipal(name string) error {
 // skipped rather than silently ignored (Armstrong: name what was not done).
 // Revoked secrets are not part of the live set and are left untouched.
 func (v *Vault) RollPrincipal(name string, now time.Time) (rolled, skipped []string, err error) {
-	v.mu.Lock()
-	defer v.mu.Unlock()
-
-	if _, ok := v.store.Principals[name]; !ok {
-		return nil, nil, fmt.Errorf("%w: %q", ErrUnknownPrincipal, name)
-	}
-
-	for _, secName := range v.store.SecretNames() {
-		sec := v.store.Secrets[secName]
-		if !slices.Contains(sec.AuthorizedPrincipals, name) || sec.Status == StatusRevoked {
-			continue
+	type result struct{ rolled, skipped []string }
+	// mutateR makes the whole batch atomic: a mint/roll failure partway through
+	// restores the model, so a partial roll can't be left resident in memory (F6).
+	res, err := mutateR(v, func(s *Store) (result, error) {
+		if _, ok := s.Principals[name]; !ok {
+			return result{}, fmt.Errorf("%w: %q", ErrUnknownPrincipal, name)
 		}
-		if sec.Pattern != PatternAuto {
-			skipped = append(skipped, secName)
-			continue
+		var r result
+		for _, secName := range s.SecretNames() {
+			sec := s.Secrets[secName]
+			if !slices.Contains(sec.AuthorizedPrincipals, name) || sec.Status == StatusRevoked {
+				continue
+			}
+			if sec.Pattern != PatternAuto {
+				r.skipped = append(r.skipped, secName)
+				continue
+			}
+			newValue, mintErr := secrets.GenerateToken(rolledSecretBytes)
+			if mintErr != nil {
+				return result{}, fmt.Errorf("mint %q: %w", secName, mintErr)
+			}
+			if rollErr := s.RollSecret(secName, newValue, now); rollErr != nil {
+				return result{}, rollErr
+			}
+			r.rolled = append(r.rolled, secName)
 		}
-		newValue, mintErr := secrets.GenerateToken(rolledSecretBytes)
-		if mintErr != nil {
-			return nil, nil, fmt.Errorf("mint %q: %w", secName, mintErr)
-		}
-		if rollErr := v.store.RollSecret(secName, newValue, now); rollErr != nil {
-			return nil, nil, rollErr
-		}
-		rolled = append(rolled, secName)
-	}
-
-	if saveErr := v.Save(); saveErr != nil {
-		if rbErr := v.restoreFromLastYAML(); rbErr != nil {
-			return nil, nil, fmt.Errorf("%w (rollback also failed: %v)", saveErr, rbErr)
-		}
-		return nil, nil, saveErr
-	}
-	return rolled, skipped, nil
+		return r, nil
+	})
+	return res.rolled, res.skipped, err
 }
