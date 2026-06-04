@@ -45,12 +45,15 @@ func runConfigSchema(args []string) int {
 }
 
 func printConfigValidateHelp() {
-	fmt.Println("Usage: ductile config validate --file PATH [--name NAME]")
+	fmt.Println("Usage: ductile config validate --file PATH [--name NAME] [--whole]")
 	fmt.Println("Statically validate a config file against an embedded JSON Schema.")
 	fmt.Println("Structure-only: no decryption and no age key required, so it runs")
 	fmt.Println("unprivileged. Use 'config check' for a full load + integrity check.")
 	fmt.Println("Checks only the named file's structure — not files pulled in via include[].")
-	fmt.Println("--name defaults to 'config'.")
+	fmt.Println("--name defaults to 'config' (lenient: validates whole files AND include")
+	fmt.Println("fragments — every key present is type-checked, but no key is required).")
+	fmt.Println("--whole asserts a COMPLETE single-file config (requires service, state,")
+	fmt.Println("plugin_roots); use it for a top-level config.yaml, not an include fragment.")
 }
 
 // runConfigValidate statically validates a config file against an embedded
@@ -60,6 +63,7 @@ func runConfigValidate(args []string) int {
 	fs := flag.NewFlagSet("config validate", flag.ContinueOnError)
 	file := fs.String("file", "", "Path to the config file to validate")
 	name := fs.String("name", "config", "Schema name to validate against")
+	whole := fs.Bool("whole", false, "Require a complete config (service, state, plugin_roots) — not an include fragment")
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
@@ -73,6 +77,24 @@ func runConfigValidate(args []string) int {
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "validate: read %s: %v\n", *file, err)
 		return 1
+	}
+
+	if canonical, folded := configschema.FoldedInto(*name); folded {
+		fmt.Fprintf(os.Stderr, "note: schema %q was folded into the single %q schema (ductile #36); validating against it.\n", *name, canonical)
+		*name = canonical
+	}
+
+	if *whole {
+		if *name != "config" {
+			fmt.Fprintln(os.Stderr, "validate: --whole only applies to the 'config' schema")
+			return 1
+		}
+		if err := configschema.ValidateYAMLWhole(data); err != nil {
+			fmt.Fprintf(os.Stderr, "INVALID — %s as a whole config:\n%v\n", *file, err)
+			return 1
+		}
+		fmt.Printf("OK: %s is a valid whole config\n", *file)
+		return 0
 	}
 
 	if err := configschema.ValidateYAML(*name, data); err != nil {

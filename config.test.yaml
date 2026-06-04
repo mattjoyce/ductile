@@ -33,8 +33,11 @@ plugins:
     schedules:
       - every: 5m                # Minimum allowed interval
         jitter: 10s
-    timeout: 30s
-    max_attempts: 3
+    timeouts:
+      poll: 30s
+      handle: 30s
+    retry:
+      max_attempts: 3
     circuit_breaker:
       threshold: 3
       reset_after: 2m          # Faster reset for testing
@@ -44,8 +47,11 @@ plugins:
   # File handler for pipeline testing (event-driven, not scheduled)
   file_handler:
     enabled: true
-    timeout: 30s
-    max_attempts: 1
+    timeouts:
+      poll: 30s
+      handle: 30s
+    retry:
+      max_attempts: 1
     config:
       allowed_read_paths: "/tmp"
       allowed_write_paths: "/tmp"
@@ -53,8 +59,11 @@ plugins:
   # Fabric plugin for text analysis (event-driven via routing)
   fabric:
     enabled: false
-    timeout: 120s
-    max_attempts: 1
+    timeouts:
+      poll: 120s
+      handle: 120s
+    retry:
+      max_attempts: 1
     config:
       FABRIC_DEFAULT_MODEL: "gpt-4"
 

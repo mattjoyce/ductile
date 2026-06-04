@@ -1,24 +1,40 @@
 # Example plugins configuration
+#
+# Per-plugin timeouts and retries use the nested shape that PluginConf actually
+# decodes: `timeouts:` (poll/handle/health/init, Go durations) and
+# `retry: {max_attempts}`. The flat `timeout:`/`max_attempts:` keys some earlier
+# examples used are NOT PluginConf fields — they were silently dropped at load.
+# A single operator-facing duration maps to both core lifecycle commands
+# (poll + handle); set them independently if a plugin needs different values.
 plugins:
   fabric:
     enabled: true
-    timeout: 120s
-    max_attempts: 2
+    timeouts:
+      poll: 120s
+      handle: 120s
+    retry:
+      max_attempts: 2
     config:
       FABRIC_DEFAULT_PATTERN: "summarize"
 
   file_handler:
     enabled: true
-    timeout: 30s
-    max_attempts: 1
+    timeouts:
+      poll: 30s
+      handle: 30s
+    retry:
+      max_attempts: 1
     config:
       allowed_read_paths: "~"
       allowed_write_paths: "~/.config/ductile/outputs"
 
   check_youtube:
     enabled: true
-    timeout: 30s
-    max_attempts: 1
+    timeouts:
+      poll: 30s
+      handle: 30s
+    retry:
+      max_attempts: 1
     config:
       field: url
       checks:
@@ -32,8 +48,11 @@ plugins:
 
   jina-reader:
     enabled: true
-    timeout: 30s
-    max_attempts: 3
+    timeouts:
+      poll: 30s
+      handle: 30s
+    retry:
+      max_attempts: 3
     circuit_breaker:
       threshold: 3
       reset_after: 5m
@@ -41,8 +60,11 @@ plugins:
 
   sys_exec:
     enabled: true
-    timeout: 30s
-    max_attempts: 1
+    timeouts:
+      poll: 30s
+      handle: 30s
+    retry:
+      max_attempts: 1
     config:
       command: "sh -c 'echo payload=$DUCTILE_PAYLOAD_MESSAGE'"
 
@@ -50,8 +72,11 @@ plugins:
     enabled: true
     schedules:
       - every: 1m
-    timeout: 30s
-    max_attempts: 1
+    timeouts:
+      poll: 30s
+      handle: 30s
+    retry:
+      max_attempts: 1
     config:
       watches:
         - id: summaries
@@ -69,8 +94,11 @@ plugins:
       - id: daily-early
         cron: "0 6 * * *"
         timezone: "Australia/Sydney"
-    timeout: 10m
-    max_attempts: 1
+    timeouts:
+      poll: 10m
+      handle: 10m
+    retry:
+      max_attempts: 1
     config:
       owner: "mattjoyce"
       owner_type: "user"
@@ -82,29 +110,41 @@ plugins:
 
   git_repo_sync:
     enabled: true
-    timeout: 5m
-    max_attempts: 1
+    timeouts:
+      poll: 5m
+      handle: 5m
+    retry:
+      max_attempts: 1
     config:
       prefer_ssh: true
       ssh_alias_host: "github.com-ductile"
 
   repo_policy:
     enabled: true
-    timeout: 2m
-    max_attempts: 1
+    timeouts:
+      poll: 2m
+      handle: 2m
+    retry:
+      max_attempts: 1
 
   changelog_microblog:
     enabled: true
-    timeout: 4m
-    max_attempts: 1
+    timeouts:
+      poll: 4m
+      handle: 4m
+    retry:
+      max_attempts: 1
     config:
       fabric_pattern: "~/.config/fabric/patterns/ductile-microblog-changelog.md"
       patterns_path: "~/.config/ductile/patterns"
 
   git_commit_push:
     enabled: true
-    timeout: 5m
-    max_attempts: 1
+    timeouts:
+      poll: 5m
+      handle: 5m
+    retry:
+      max_attempts: 1
     config:
       author_name: "ductile"
       author_email: "ductile@local"
