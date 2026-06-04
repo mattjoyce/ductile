@@ -11,9 +11,7 @@ import (
 func seedReservedStore(t *testing.T) *Store {
 	t.Helper()
 	s := NewStore()
-	if err := s.RegisterPrincipal(CorePrincipal, KindGateway); err != nil {
-		t.Fatalf("register core: %v", err)
-	}
+	s.SeedCorePrincipal("") // sanctioned seed: RegisterPrincipal refuses the reserved name
 	if err := s.RotateAdminToken("initial-admin-token", time.Now()); err != nil {
 		t.Fatalf("seed admin token: %v", err)
 	}
@@ -75,6 +73,22 @@ func TestReservedCorePrincipalMutationsRefused(t *testing.T) {
 	}
 	if _, ok := s.Principals[CorePrincipal]; !ok {
 		t.Fatal("core principal was removed despite the guard")
+	}
+}
+
+// The reserved core principal cannot be re-registered via the data plane either —
+// parity with the revoke/purge guards (branch-review N1, card 40). The duplicate
+// check would mask a live re-register, but the reserved guard makes the intent
+// explicit and holds even if `core` were ever removable.
+func TestReservedCorePrincipalRegisterRefused(t *testing.T) {
+	s := seedReservedStore(t)
+	if err := s.RegisterPrincipal(CorePrincipal, KindGateway); !errors.Is(err, ErrReservedEntity) {
+		t.Fatalf("register core: expected ErrReservedEntity, got %v", err)
+	}
+	if p := s.Principals[CorePrincipal]; p == nil || p.Kind != KindGateway {
+		// genesis seeds core as a gateway principal; the refused register must not
+		// have overwritten it.
+		t.Fatalf("core principal mutated by a refused register: %+v", p)
 	}
 }
 

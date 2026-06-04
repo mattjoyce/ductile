@@ -19,8 +19,8 @@ func TestRegisterPrincipal(t *testing.T) {
 
 func TestRegisterPrincipalDuplicateFails(t *testing.T) {
 	s := NewStore()
-	_ = s.RegisterPrincipal("core", KindGateway)
-	err := s.RegisterPrincipal("core", KindGateway)
+	_ = s.RegisterPrincipal("alpha", KindGateway)
+	err := s.RegisterPrincipal("alpha", KindGateway)
 	if !errors.Is(err, ErrDuplicatePrincipal) {
 		t.Fatalf("duplicate register err = %v, want ErrDuplicatePrincipal", err)
 	}
@@ -46,8 +46,8 @@ func TestPrincipalNamesSorted(t *testing.T) {
 	s := NewStore()
 	_ = s.RegisterPrincipal("zeta", KindPlugin)
 	_ = s.RegisterPrincipal("alpha", KindConsumer)
-	_ = s.RegisterPrincipal("core", KindGateway)
-	if got := s.PrincipalNames(); !reflect.DeepEqual(got, []string{"alpha", "core", "zeta"}) {
+	_ = s.RegisterPrincipal("beta", KindGateway)
+	if got := s.PrincipalNames(); !reflect.DeepEqual(got, []string{"alpha", "beta", "zeta"}) {
 		t.Fatalf("PrincipalNames = %v, want sorted", got)
 	}
 }

@@ -188,7 +188,7 @@ func TestActiveVaultSecretsExcludesRevoked(t *testing.T) {
 	}
 	sec.Status = vault.StatusRevoked
 
-	got := activeVaultSecrets(s)
+	got, _ := activeVaultSecrets(s)
 	if got["live"] != "L" {
 		t.Errorf("active secret missing, got %q", got["live"])
 	}
@@ -298,7 +298,7 @@ func TestActiveVaultSecretsExcludesPluginScoped(t *testing.T) {
 	set("shared", "S", []string{"gwsvc", "plug"})      // mixed -> graft (gateway needs it)
 	set("unscoped", "U", nil)                          // migrated tokens.yaml value -> graft
 
-	got := activeVaultSecrets(s)
+	got, _ := activeVaultSecrets(s)
 	for _, name := range []string{"gw_hmac", "shared", "unscoped"} {
 		if _, ok := got[name]; !ok {
 			t.Errorf("%q must remain in the gateway graft", name)
@@ -311,10 +311,22 @@ func TestActiveVaultSecretsExcludesPluginScoped(t *testing.T) {
 	}
 
 	// Orphan grant (principal no longer registered): we cannot confirm the secret
-	// is plugin-only, so it stays gateway-visible — never silently hidden.
+	// is plugin-only, so it stays gateway-visible — never silently hidden. But the
+	// dangling grantee is almost always a typo, so the warn-only blast-radius guard
+	// (#41) must surface it loudly while keeping the secret visible.
 	s.Secrets["gw_hmac"].AuthorizedPrincipals = []string{"ghost"}
-	if _, ok := activeVaultSecrets(s)["gw_hmac"]; !ok {
+	got, warnings := activeVaultSecrets(s)
+	if _, ok := got["gw_hmac"]; !ok {
 		t.Error("a grant to an unregistered principal must not hide the secret from the graft")
+	}
+	var warned bool
+	for _, w := range warnings {
+		if strings.Contains(w, "gw_hmac") && strings.Contains(w, "ghost") {
+			warned = true
+		}
+	}
+	if !warned {
+		t.Errorf("expected a warning naming the secret and the unregistered principal, got %v", warnings)
 	}
 }
 

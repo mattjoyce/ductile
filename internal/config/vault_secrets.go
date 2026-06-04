@@ -48,9 +48,10 @@ func graftVaultSecrets(cfg *Config, configDir string, kr *secrets.Keyring) ([]st
 		return nil, nil // no vault / keyless: resolve against tokens.yaml only
 	}
 
-	merged, warnings := mergeVaultSecrets(cfg.Tokens, activeVaultSecrets(store))
+	secretsMap, graftWarnings := activeVaultSecrets(store)
+	merged, mergeWarnings := mergeVaultSecrets(cfg.Tokens, secretsMap)
 	cfg.Tokens = merged
-	return warnings, nil
+	return append(graftWarnings, mergeWarnings...), nil
 }
 
 // LoadVault resolves the keyring and loads the vault *owner* for the active
@@ -143,14 +144,23 @@ func mergeVaultSecrets(tokens []TokenEntry, vaultSecrets map[string]string) ([]T
 }
 
 // activeVaultSecrets projects the store's active, gateway-visible secrets into a
-// name->value map for the load-time graft. Two exclusions:
+// name->value map for the load-time graft, plus any blast-radius warnings. Two
+// exclusions:
 //   - revoked secrets — a revoked secret must not resolve.
 //   - exclusively plugin-scoped secrets — these reach their consumer at *spawn*
 //     via Compose (#14), so grafting them into cfg.Tokens would leak them to
 //     every gateway/load-time consumer. The graft serves only the gateway's own
 //     consumers (webhook/relay HMAC); plugin delivery is the dispatcher's job.
-func activeVaultSecrets(s *vault.Store) map[string]string {
+//
+// Warn-only blast-radius guard (#41, Hickey-Armstrong Rev2 §1.2): a grant naming
+// an UNREGISTERED principal keeps the secret gateway-visible (fail toward
+// visibility — the documented Rung-2 choice), but is almost always an operator
+// typo that silently widens the secret's reach. We surface it as a loud warning
+// rather than silently hiding the secret (which would break a legitimate
+// consumer) or silently widening it (the original smell).
+func activeVaultSecrets(s *vault.Store) (map[string]string, []string) {
 	out := make(map[string]string)
+	var warnings []string
 	for _, name := range s.SecretNames() {
 		sec, ok := s.Secret(name)
 		if !ok || sec.Status != vault.StatusActive {
@@ -159,9 +169,27 @@ func activeVaultSecrets(s *vault.Store) map[string]string {
 		if pluginScopedSecret(s, sec) {
 			continue
 		}
+		if grantee := unregisteredGrantee(s, sec); grantee != "" {
+			warnings = append(warnings, fmt.Sprintf(
+				"secret %q grants to unregistered principal %q; it stays load-time visible to gateway consumers — register the principal or fix the grant",
+				name, grantee))
+		}
 		out[name] = sec.Value
 	}
-	return out
+	return out, warnings
+}
+
+// unregisteredGrantee returns the first authorized principal of sec that is not
+// registered in the store, or "" if every grantee resolves. A dangling grantee
+// is the signal that a secret is gateway-visible by accident (a typo) rather than
+// by design — see the warn-only guard in activeVaultSecrets.
+func unregisteredGrantee(s *vault.Store, sec *vault.Secret) string {
+	for _, name := range sec.AuthorizedPrincipals {
+		if _, ok := s.Principal(name); !ok {
+			return name
+		}
+	}
+	return ""
 }
 
 // pluginScopedSecret reports whether a secret is authorized *exclusively* to

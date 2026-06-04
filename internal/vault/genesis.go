@@ -27,8 +27,10 @@ const (
 // returns the live Vault and the plaintext admin token, which the caller must
 // surface once — it is not recoverable in plaintext afterward without the key.
 //
-// Genesis is composition of the existing primitives (RegisterPrincipal +
-// SetSecret + Save), not new mutation logic.
+// Genesis is composition of the sanctioned seed primitives (SeedCorePrincipal +
+// RotateAdminToken + Save), not new mutation logic. It uses the sanctioned paths
+// rather than the data-plane RegisterPrincipal/SetSecret, which refuse the
+// reserved core principal and admin-token secret.
 //
 // Fail-closed (Armstrong): Init refuses to run if path already exists, so a
 // re-init cannot silently clobber a live vault and wipe its secrets. `now` is
@@ -51,10 +53,10 @@ func Init(path string, kr *secrets.Keyring, now time.Time) (*Vault, string, erro
 	}
 
 	store := NewStore()
-	if err := store.RegisterPrincipal(CorePrincipal, KindGateway); err != nil {
-		return nil, "", fmt.Errorf("vault: genesis core principal: %w", err)
-	}
-	store.Principals[CorePrincipal].Nonce = nonce
+	// Seeded via the sanctioned SeedCorePrincipal path because the data-plane
+	// RegisterPrincipal now refuses the reserved `core` name (parity with the
+	// RotateAdminToken seed of the reserved admin-token secret below).
+	store.SeedCorePrincipal(nonce)
 	// No authorized_principals: the admin token is API-internal, never composed
 	// to a principal. Seeded via the sanctioned RotateAdminToken path because the
 	// data-plane SetSecret now refuses the reserved core-admin-token entry.

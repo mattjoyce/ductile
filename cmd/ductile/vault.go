@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -14,6 +15,8 @@ import (
 	"github.com/mattjoyce/ductile/internal/config"
 	"github.com/mattjoyce/ductile/internal/lock"
 	"github.com/mattjoyce/ductile/internal/secrets"
+	"github.com/mattjoyce/ductile/internal/state"
+	"github.com/mattjoyce/ductile/internal/storage"
 	"github.com/mattjoyce/ductile/internal/vault"
 )
 
@@ -93,6 +96,12 @@ func printVaultNounHelp(w *os.File) {
 // pattern: auto secret not yet minted by a roll. Kept separate from runVaultGet's
 // I/O so the read policy is unit-testable without a key or a blob on disk.
 func getSecretValue(store *vault.Store, name string) (string, error) {
+	if vault.IsReservedSecret(name) {
+		// The admin token is the management-API credential, not a deliverable
+		// secret. `vault get` must never print it (least-surprise): it is shown
+		// once at `vault init` and otherwise lives only in the encrypted blob.
+		return "", fmt.Errorf("secret %q is reserved (the management-API credential) and is never printed by 'vault get'", name)
+	}
 	sec, ok := store.Secret(name)
 	if !ok {
 		return "", fmt.Errorf("unknown secret %q", name)
@@ -153,9 +162,17 @@ func runVaultGet(args []string) int {
 
 	value, err := getSecretValue(v.Store(), *name)
 	if err != nil {
+		// Record the value-touching attempt on a reserved secret — someone tried
+		// to read the admin token locally. Other errors (unknown/revoked/no value)
+		// touch no value, so they are not audited as reads.
+		if vault.IsReservedSecret(*name) {
+			auditVaultRead(cfg, *name, "denied", "reserved secret; never printed by vault get")
+		}
 		fmt.Fprintf(os.Stderr, "vault get: %v\n", err)
 		return 1
 	}
+
+	auditVaultRead(cfg, *name, "ok", "local key-holder read")
 
 	// Soft warning if the value would land in a terminal's scrollback.
 	if fi, statErr := os.Stdout.Stat(); statErr == nil && fi.Mode()&os.ModeCharDevice != 0 {
@@ -165,6 +182,39 @@ func runVaultGet(args []string) int {
 	fmt.Fprintf(os.Stderr, "Read value of secret %q locally (age key-holder).\n", *name)
 	fmt.Println(value)
 	return 0
+}
+
+// auditVaultRead best-effort records a local `vault get` to the vault audit log,
+// so a value-touching read leaves a trace alongside the API-side mutations. It
+// records the secret NAME and an outcome only — never the value. Best-effort per
+// the audit fault model (state/vault_audit.go): a read is never failed because
+// the row could not be written. It deliberately does NOT bootstrap the state DB:
+// on a host where no daemon has run yet there is nothing to audit into, and a
+// read must not create one as a side effect.
+func auditVaultRead(cfg *config.Config, name, outcome, detail string) {
+	if cfg == nil || cfg.State.Path == "" {
+		return
+	}
+	if _, err := os.Stat(cfg.State.Path); err != nil {
+		return // no state DB yet — skip rather than create one on a read
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	db, err := storage.OpenSQLite(ctx, cfg.State.Path)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "vault get: warning — read not audited (open state db: %v)\n", err)
+		return
+	}
+	defer func() { _ = db.Close() }()
+	if err := state.NewStore(db).AppendVaultAudit(ctx, state.VaultAuditEvent{
+		Op:         "read",
+		SecretName: name,
+		Actor:      "cli",
+		Outcome:    outcome,
+		Detail:     detail,
+	}); err != nil {
+		fmt.Fprintf(os.Stderr, "vault get: warning — read not audited: %v\n", err)
+	}
 }
 
 // runVaultRotateKey rotates the vault's age identity LOCALLY. Rotation is

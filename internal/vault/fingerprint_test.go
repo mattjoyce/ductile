@@ -8,9 +8,7 @@ import (
 func TestFingerprintNonceReturns32Bytes(t *testing.T) {
 	t.Parallel()
 	store := NewStore()
-	if err := store.RegisterPrincipal(CorePrincipal, KindGateway); err != nil {
-		t.Fatalf("RegisterPrincipal: %v", err)
-	}
+	store.SeedCorePrincipal("") // sanctioned seed; nonce set explicitly below
 	raw := make([]byte, nonceBytes)
 	for i := range raw {
 		raw[i] = byte(i + 1)
@@ -41,10 +39,7 @@ func TestFingerprintNonceFailsClosedWithoutCore(t *testing.T) {
 func TestFingerprintNonceFailsClosedWithoutNonce(t *testing.T) {
 	t.Parallel()
 	store := NewStore()
-	if err := store.RegisterPrincipal(CorePrincipal, KindGateway); err != nil {
-		t.Fatalf("RegisterPrincipal: %v", err)
-	}
-	// core exists but no nonce was seeded.
+	store.SeedCorePrincipal("") // core exists but no nonce was seeded.
 	v := New("", nil, store)
 	if _, err := v.FingerprintNonce(); err == nil {
 		t.Fatal("expected a hard error when core has no nonce, got nil")

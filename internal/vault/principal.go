@@ -32,6 +32,12 @@ func validStatus(status string) bool {
 // Compose/spawn time; the vault stores no fingerprint here. Keyed-nonce binding
 // is the Rung 4 upgrade (Attestation ADR).
 func (s *Store) RegisterPrincipal(name, kind string) error {
+	if isReservedPrincipal(name) {
+		// Defense-in-depth + parity with the lifecycle mutators (RevokePrincipal /
+		// PurgePrincipal), which already refuse reserved names. `core` is seeded at
+		// genesis and is never re-registered through the data plane.
+		return fmt.Errorf("%w: principal %q", ErrReservedEntity, name)
+	}
 	if !principalNameRE.MatchString(name) {
 		return fmt.Errorf("%w: principal %q must be kebab-case", ErrInvalidName, name)
 	}
