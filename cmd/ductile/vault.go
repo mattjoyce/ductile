@@ -35,6 +35,8 @@ func runVaultNoun(args []string) int {
 		return runVaultInit(actionArgs)
 	case "import":
 		return runVaultImport(actionArgs)
+	case "get":
+		return runVaultGet(actionArgs)
 	case "set":
 		return runVaultSet(actionArgs)
 	case "register-principal":
@@ -72,6 +74,9 @@ func printVaultNounHelp(w *os.File) {
 	_, _ = fmt.Fprintln(w, "  import      Migrate tokens.yaml entries into an existing vault         [--config --tokens --resolve-env]")
 	_, _ = fmt.Fprintln(w, "  rotate-key  Rotate the vault's age identity (mints + re-encrypts)       [--config]")
 	_, _ = fmt.Fprintln(w, "")
+	_, _ = fmt.Fprintln(w, "Local, key-holding READ (holds the age key; read-only, so the daemon MAY be running):")
+	_, _ = fmt.Fprintln(w, "  get         Print ONE secret's value to stdout (never over the API)        [--config --name]")
+	_, _ = fmt.Fprintln(w, "")
 	_, _ = fmt.Fprintln(w, "Keyless API clients (no age key; POST to the running daemon, the sole writer):")
 	_, _ = fmt.Fprintln(w, "  Common flags: --api-url, --token (or DUCTILE_VAULT_TOKEN), --name")
 	_, _ = fmt.Fprintln(w, "  register-principal Register a deliver-to principal                     [--kind plugin|consumer|gateway]")
@@ -81,6 +86,85 @@ func printVaultNounHelp(w *os.File) {
 	_, _ = fmt.Fprintln(w, "  revoke-principal   Revoke a principal (its secrets stop being delivered)")
 	_, _ = fmt.Fprintln(w, "  purge-principal    Remove a principal and strip all its grants")
 	_, _ = fmt.Fprintln(w, "  roll-principal     Roll every auto secret a principal holds")
+}
+
+// getSecretValue returns the value of a named, readable secret, or an error
+// explaining why it cannot be read: unknown name, revoked (value cleared), or a
+// pattern: auto secret not yet minted by a roll. Kept separate from runVaultGet's
+// I/O so the read policy is unit-testable without a key or a blob on disk.
+func getSecretValue(store *vault.Store, name string) (string, error) {
+	sec, ok := store.Secret(name)
+	if !ok {
+		return "", fmt.Errorf("unknown secret %q", name)
+	}
+	if sec.Status == vault.StatusRevoked {
+		return "", fmt.Errorf("secret %q is revoked (value cleared)", name)
+	}
+	if sec.Value == "" {
+		return "", fmt.Errorf("secret %q has no value yet (pattern %s; run 'vault roll' to mint)", name, sec.Pattern)
+	}
+	return sec.Value, nil
+}
+
+// runVaultGet prints ONE secret's value, read LOCALLY. It is a key-holding op: it
+// resolves and decrypts the on-disk vault blob with the age key, so it never goes
+// over the daemon's management API — that API is value-free by design (it never
+// reads secret values back out). The operator already holds the key, so a local
+// read leaks nothing they could not `age -d` themselves.
+//
+// Unlike the write-side key-touching ops (rotate-key/import) it is READ-ONLY, so
+// it does NOT take the daemon PID lock: the blob is written atomically, so reading
+// it while the daemon is running is safe. The value goes to stdout (pipeable, e.g.
+// T=$(ductile vault get --name x)); all notices go to stderr.
+func runVaultGet(args []string) int {
+	fs := flag.NewFlagSet("vault get", flag.ContinueOnError)
+	configPath := fs.String("config", "", "Path to the ductile config dir (default: discover)")
+	name := fs.String("name", "", "Secret name")
+	if err := fs.Parse(args); err != nil {
+		return 1
+	}
+	if *name == "" {
+		fmt.Fprintln(os.Stderr, "vault get: --name is required")
+		return 1
+	}
+
+	cfg, configDir, err := loadBackupConfig(*configPath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "vault get: %v\n", err)
+		return 1
+	}
+	vaultPath := config.ResolveVaultPath(configDir, cfg)
+	keyPath := config.ResolveAgeKeyPath(configDir, cfg)
+	if keyPath == "" {
+		fmt.Fprintln(os.Stderr,
+			"vault get: no age key file resolved (set secrets.age_key_file or DUCTILE_AGE_KEY_FILE)")
+		return 1
+	}
+	kr, err := secrets.LoadKeyringFromFile(keyPath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "vault get: load key: %v\n", err)
+		return 1
+	}
+	v, err := vault.Load(vaultPath, kr)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "vault get: load vault: %v\n", err)
+		return 1
+	}
+
+	value, err := getSecretValue(v.Store(), *name)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "vault get: %v\n", err)
+		return 1
+	}
+
+	// Soft warning if the value would land in a terminal's scrollback.
+	if fi, statErr := os.Stdout.Stat(); statErr == nil && fi.Mode()&os.ModeCharDevice != 0 {
+		fmt.Fprintln(os.Stderr,
+			"vault get: warning — writing a secret value to a terminal; redirect or capture it instead.")
+	}
+	fmt.Fprintf(os.Stderr, "Read value of secret %q locally (age key-holder).\n", *name)
+	fmt.Println(value)
+	return 0
 }
 
 // runVaultRotateKey rotates the vault's age identity LOCALLY. Rotation is
