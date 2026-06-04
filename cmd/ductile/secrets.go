@@ -8,8 +8,39 @@ import (
 	"path/filepath"
 
 	"filippo.io/age"
+	"github.com/mattjoyce/ductile/internal/config"
 	"github.com/mattjoyce/ductile/internal/secrets"
 )
+
+// samePath reports whether two paths point at the same file. It compares
+// absolute, symlink-resolved, cleaned paths so /tmp vs /private/tmp or a
+// relative --file can't slip past an equality check.
+func samePath(a, b string) bool {
+	ra, ea := filepath.Abs(a)
+	rb, eb := filepath.Abs(b)
+	if ea != nil || eb != nil {
+		return false
+	}
+	if r, err := filepath.EvalSymlinks(ra); err == nil {
+		ra = r
+	}
+	if r, err := filepath.EvalSymlinks(rb); err == nil {
+		rb = r
+	}
+	return filepath.Clean(ra) == filepath.Clean(rb)
+}
+
+// vaultGuardPath returns the configured vault blob path for the #31 guard, or ""
+// when no ductile config is discoverable (so `secrets rotate` still works as a
+// generic age tool outside a ductile context). Best-effort: any load error means
+// "no guard", never a hard failure.
+func vaultGuardPath(configPath string) string {
+	cfg, configDir, err := loadBackupConfig(configPath)
+	if err != nil {
+		return ""
+	}
+	return config.ResolveVaultPath(configDir, cfg)
+}
 
 func runSecretsNoun(args []string) int {
 	if len(args) < 1 {
@@ -131,11 +162,25 @@ func runSecretsRotate(args []string) int {
 	fs.Var(&recipientFlags, "recipient", "New recipient public key (age1...); repeatable")
 	recipientsFile := fs.String("recipients-file", "", "Path to a file of new recipients, one per line")
 	file := fs.String("file", "", "Path to the encrypted file to rotate in place")
+	configPath := fs.String("config", "", "ductile config dir (default: discover); refuses if --file is the vault blob")
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
 	if *keyFile == "" || *file == "" {
 		fmt.Fprintln(os.Stderr, "rotate: --key and --file are required")
+		return 1
+	}
+
+	// #31: secrets rotate is a generic age tool, but rewriting the vault blob with
+	// it re-encrypts to a recipient set the daemon's resident model never sees —
+	// the next daemon write silently reverts it (the silent-revert footgun). Refuse
+	// before touching the file and point to the blessed path. Best-effort: outside a
+	// ductile config context vaultGuardPath is "" and the generic tool still works.
+	if vp := vaultGuardPath(*configPath); vp != "" && samePath(*file, vp) {
+		fmt.Fprintf(os.Stderr,
+			"rotate: %s is the ductile vault — use 'ductile vault rotate-key' instead "+
+				"(secrets rotate would re-encrypt it to a recipient set the running daemon never sees, "+
+				"and the next daemon write would silently revert it)\n", *file)
 		return 1
 	}
 
