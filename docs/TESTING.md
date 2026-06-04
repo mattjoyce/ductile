@@ -44,6 +44,23 @@ The default branch-development loop should optimize for:
 
 To preserve velocity, the fast inner loop should **not require Docker** and should **not be overloaded with every gate**.
 
+### Environment requirements for the fast suite
+
+`go test ./...` is mostly hermetic, but a few packages couple to the host environment.
+Run the fast suite as a **non-root user** with **`bash` and `python3` on `PATH`**:
+
+- Some `internal/vault` tests force a persist failure with `chmod 0500` on a directory
+  and assert the write is rejected. **root bypasses file permissions**, so these tests
+  fail with "expected a save failure" when run as root (e.g. in a stock CI container or a
+  bare `golang` image).
+- The `internal/e2e` and `internal/dispatch` plugin-spawn tests exec real plugin
+  entrypoints, which need `bash` (and `python3` for the `sys_exec`/python plugins).
+  Without them you get `env: can't execute 'bash'` and spurious failures.
+
+If you must run the suite in a container, base it on an image that has `bash`/`python3`
+and run as a non-root user — mirror the Dockerfile's **runtime** stage, not its builder
+stage. `scripts/test-fast` prints a warning when these preconditions are not met.
+
 ---
 
 ## 3. Docker-Backed Testing Policy
