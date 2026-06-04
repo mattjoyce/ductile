@@ -106,6 +106,7 @@ plugins:
         Operating:
           - DEPLOYMENT.md
           - OPERATOR_GUIDE.md
+          - SECRETS.md
           - HEALTH_CHECK.md
           - PLUGIN_DIAGNOSTICS.md
           - REMOTE_EVENT_RELAY.md
@@ -149,6 +150,7 @@ nav:
       - Deployment: DEPLOYMENT.md
       - macOS Installation: MACOS_INSTALLATION.md
       - Operator Guide: OPERATOR_GUIDE.md
+      - Secrets & Spawn Hygiene: SECRETS.md
       - Health Check: HEALTH_CHECK.md
       - Plugin Diagnostics: PLUGIN_DIAGNOSTICS.md
       - Remote Event Relay: REMOTE_EVENT_RELAY.md

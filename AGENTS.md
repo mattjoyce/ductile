@@ -169,8 +169,6 @@ These are non-negotiable without explicit redesign:
 
 ## 4. Workflow
 
-- **Issue tracking:** use `bd` (beads). Do not maintain markdown TODO lists or
-  any other parallel tracker. Run `bd onboard` when workflow context is needed.
 - **Branching:** `<component>/card<id>-<short-description>`.
 - **Commits:** `<component>: <action> <what>`. Never attribute AI tooling in
   commit messages or PR descriptions.

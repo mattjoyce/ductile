@@ -76,7 +76,6 @@ say so explicitly in the PR. Do not silence findings.
 
 ## Branching, commits, PRs
 
-- Issue tracking is done with `bd` (beads). Run `bd onboard` for context.
 - Branch name: `<component>/card<id>-<short-description>`.
 - Commit message: `<component>: <action> <what>`. Do not attribute AI tooling.
 - One card → one branch → one PR.
