@@ -1,0 +1,12 @@
+service:
+  strict_mode: false
+state:
+  path: "./state/ductile.db"
+plugin_roots:
+  - "./plugins"
+secrets:
+  age_key_file: "age.key"
+  vault_file: "vault.age"
+include:
+  - api.yaml
+  - plugins.yaml

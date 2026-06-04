@@ -1,0 +1,7 @@
+api:
+  enabled: true
+  listen: "127.0.0.1:18181"
+  auth:
+    tokens:
+      - token: "test-admin-token"
+        scopes: ["*"]

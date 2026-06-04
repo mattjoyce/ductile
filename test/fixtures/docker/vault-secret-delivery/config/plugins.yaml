@@ -1,0 +1,3 @@
+plugins:
+  secret-probe:
+    enabled: true
