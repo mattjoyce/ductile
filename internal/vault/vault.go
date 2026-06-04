@@ -4,10 +4,12 @@ import (
 	"bytes"
 	"crypto/sha256"
 	"crypto/subtle"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/mattjoyce/ductile/internal/secrets"
@@ -347,5 +349,28 @@ func writeFileAtomic(path string, data []byte) error {
 	if err := tmp.Close(); err != nil {
 		return err
 	}
-	return os.Rename(tmpName, path)
+	if err := os.Rename(tmpName, path); err != nil {
+		return err
+	}
+	// A rename is not crash-durable until the parent directory's entry is fsynced
+	// (ext4/XFS): without this, a crash right after a vault mutation can lose the
+	// rename and silently revert the operator's last set/roll/revoke (Lamport F8).
+	return fsyncDir(dir)
+}
+
+// fsyncDir flushes a directory so a preceding rename is durable across a crash. A
+// filesystem that cannot sync a directory fd (EINVAL/ENOTSUP) is tolerated — the
+// file bytes were already fsynced and the barrier is simply unavailable there — but
+// a real I/O sync error is surfaced rather than swallowed.
+func fsyncDir(dir string) error {
+	// #nosec G304 -- dir is the parent of an operator-controlled local path.
+	d, err := os.Open(dir)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = d.Close() }()
+	if err := d.Sync(); err != nil && !errors.Is(err, syscall.EINVAL) && !errors.Is(err, syscall.ENOTSUP) {
+		return err
+	}
+	return nil
 }
