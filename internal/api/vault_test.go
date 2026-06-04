@@ -116,7 +116,10 @@ func TestVaultSet_ValidAdminToken(t *testing.T) {
 		t.Fatalf("expected exactly one SetSecret call, got %d", len(fv.calls))
 	}
 	got := fv.calls[0]
-	if got.name != "api_key" || got.value != "shh" || got.pattern != "manual" {
+	// Pattern defaulting moved from the handler to the model (#23) so a metadata
+	// set can't silently flip an auto secret — an omitted pattern reaches the
+	// model as "" (which the model defaults to manual on create / leaves on update).
+	if got.name != "api_key" || got.value != "shh" || got.pattern != "" {
 		t.Fatalf("unexpected SetSecret args: %+v", got)
 	}
 	// The response must never echo the secret value back.

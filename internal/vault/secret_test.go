@@ -35,20 +35,89 @@ func TestSetSecretCreate(t *testing.T) {
 }
 
 func TestSetSecretUpdateKeepsCreatedBumpsUpdated(t *testing.T) {
-	s := storeWithPrincipals("withings")
+	s := storeWithPrincipals("withings", "other")
 	_ = s.SetSecret("withings_api", "v1", []string{"withings"}, PatternManual, testTime)
-	if err := s.SetSecret("withings_api", "v2", nil, PatternManual, laterTime); err != nil {
+	// Metadata-only update: empty value (leave), change grants. (Value is roll-only
+	// now, so a value change via set is rejected — see TestSetSecretValueImmutable.)
+	if err := s.SetSecret("withings_api", "", []string{"withings", "other"}, PatternManual, laterTime); err != nil {
 		t.Fatalf("update: %v", err)
 	}
 	sec, _ := s.Secret("withings_api")
-	if sec.Value != "v2" {
-		t.Fatalf("value = %q, want v2", sec.Value)
+	if sec.Value != "v1" {
+		t.Fatalf("value changed on a metadata-only set: %q, want v1", sec.Value)
+	}
+	if len(sec.AuthorizedPrincipals) != 2 {
+		t.Fatalf("grants not updated: %v", sec.AuthorizedPrincipals)
 	}
 	if sec.CreatedAt != "2026-06-01T12:00:00Z" {
 		t.Fatalf("created_at changed on update: %q", sec.CreatedAt)
 	}
 	if sec.UpdatedAt != "2026-06-02T09:00:00Z" {
 		t.Fatalf("updated_at not bumped: %q", sec.UpdatedAt)
+	}
+}
+
+// TestSetSecretValueImmutable proves the #23 decision: set cannot change an
+// existing value (that is roll's job); a differing value is refused, an empty or
+// equal value leaves it.
+func TestSetSecretValueImmutable(t *testing.T) {
+	s := storeWithPrincipals("withings")
+	_ = s.SetSecret("withings_api", "v1", []string{"withings"}, PatternManual, testTime)
+
+	if err := s.SetSecret("withings_api", "v2", nil, "", laterTime); !errors.Is(err, ErrValueImmutable) {
+		t.Fatalf("differing value via set: err = %v, want ErrValueImmutable", err)
+	}
+	if sec, _ := s.Secret("withings_api"); sec.Value != "v1" {
+		t.Fatalf("value mutated despite rejection: %q", sec.Value)
+	}
+	if err := s.SetSecret("withings_api", "v1", nil, "", laterTime); err != nil {
+		t.Fatalf("equal value should be a no-op: %v", err)
+	}
+	if err := s.SetSecret("withings_api", "", nil, "", laterTime); err != nil {
+		t.Fatalf("empty value should leave it unchanged: %v", err)
+	}
+}
+
+// TestSetSecretGrantsPartialUpdate proves nil leaves grants, [] clears, [list]
+// replaces — the grant-wipe footgun fix (#23 facet a).
+func TestSetSecretGrantsPartialUpdate(t *testing.T) {
+	s := storeWithPrincipals("a", "b")
+	_ = s.SetSecret("x", "v1", []string{"a"}, PatternManual, testTime)
+
+	_ = s.SetSecret("x", "", nil, "", laterTime) // nil → leave
+	if sec, _ := s.Secret("x"); len(sec.AuthorizedPrincipals) != 1 || sec.AuthorizedPrincipals[0] != "a" {
+		t.Fatalf("nil authz should leave grants, got %v", sec.AuthorizedPrincipals)
+	}
+	_ = s.SetSecret("x", "", []string{"a", "b"}, "", laterTime) // [list] → replace
+	if sec, _ := s.Secret("x"); len(sec.AuthorizedPrincipals) != 2 {
+		t.Fatalf("list authz should replace, got %v", sec.AuthorizedPrincipals)
+	}
+	_ = s.SetSecret("x", "", []string{}, "", laterTime) // [] → clear
+	if sec, _ := s.Secret("x"); len(sec.AuthorizedPrincipals) != 0 {
+		t.Fatalf("empty authz should clear grants, got %v", sec.AuthorizedPrincipals)
+	}
+}
+
+// TestSetSecretPatternLeftOnUpdate proves "" pattern leaves an existing pattern
+// (so a metadata set can't silently flip an auto secret to manual).
+func TestSetSecretPatternLeftOnUpdate(t *testing.T) {
+	s := storeWithPrincipals("a")
+	_ = s.SetSecret("x", "v1", []string{"a"}, PatternAuto, testTime)
+	_ = s.SetSecret("x", "", nil, "", laterTime)
+	if sec, _ := s.Secret("x"); sec.Pattern != PatternAuto {
+		t.Fatalf("pattern flipped on a metadata set: %q, want auto", sec.Pattern)
+	}
+}
+
+// TestSetSecretEmptyActiveManualRefused proves F7: an active manual secret can't
+// be created empty; an auto secret can (it is minted by the first roll).
+func TestSetSecretEmptyActiveManualRefused(t *testing.T) {
+	s := storeWithPrincipals("a")
+	if err := s.SetSecret("m", "", []string{"a"}, PatternManual, testTime); !errors.Is(err, ErrEmptyValue) {
+		t.Fatalf("empty manual create: err = %v, want ErrEmptyValue", err)
+	}
+	if err := s.SetSecret("auto", "", []string{"a"}, PatternAuto, testTime); err != nil {
+		t.Fatalf("empty auto create should be allowed (minted by roll): %v", err)
 	}
 }
 

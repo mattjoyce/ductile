@@ -36,12 +36,31 @@ func vaultSetServer(t *testing.T, wantToken string) (*httptest.Server, *map[stri
 func TestDoVaultSet_Success(t *testing.T) {
 	srv, got := vaultSetServer(t, "admin-tok")
 
-	err := doVaultSet(srv.URL, "admin-tok", "api_key", "shh", []string{"mailer"}, "manual")
+	err := doVaultSet(srv.URL, "admin-tok", "api_key", "shh", &[]string{"mailer"}, "manual")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if (*got)["name"] != "api_key" || (*got)["value"] != "shh" || (*got)["pattern"] != "manual" {
 		t.Fatalf("server received unexpected body: %+v", *got)
+	}
+	if _, ok := (*got)["authorized_principals"]; !ok {
+		t.Fatalf("authorized_principals should be sent when --principal given: %+v", *got)
+	}
+}
+
+// TestDoVaultSet_OmitsGrantsAndPatternWhenAbsent proves the CLI sends neither
+// authorized_principals (nil → leave grants) nor pattern (\"\" → leave) when not
+// supplied — the partial-update wire contract (#23).
+func TestDoVaultSet_OmitsGrantsAndPatternWhenAbsent(t *testing.T) {
+	srv, got := vaultSetServer(t, "admin-tok")
+	if err := doVaultSet(srv.URL, "admin-tok", "api_key", "shh", nil, ""); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if _, ok := (*got)["authorized_principals"]; ok {
+		t.Fatalf("authorized_principals must be omitted when nil (leave grants): %+v", *got)
+	}
+	if _, ok := (*got)["pattern"]; ok {
+		t.Fatalf("pattern must be omitted when empty (leave/default): %+v", *got)
 	}
 }
 

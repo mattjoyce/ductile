@@ -17,6 +17,15 @@ var (
 	ErrSecretRevoked      = errors.New("vault: secret is revoked")
 	ErrReservedEntity     = errors.New("vault: reserved entity cannot be mutated via the data plane")
 
+	// ErrValueImmutable signals an attempt to change an existing secret's value via
+	// set. The value is roll-only: roll is the sole, audited (RollCount) value-change
+	// path, so set cannot be a side door around it (#23).
+	ErrValueImmutable = errors.New("vault: secret value is immutable via set; use roll")
+	// ErrEmptyValue signals an attempt to create an active manual secret with no
+	// value — it would look live but deliver nothing. Auto-pattern secrets are
+	// exempt: they are minted by the first roll (#23 / Lamport F7).
+	ErrEmptyValue = errors.New("vault: active secret value must not be empty")
+
 	// ErrVaultModifiedExternally signals that the on-disk blob changed underneath
 	// the owner since it last wrote or loaded it — an out-of-band writer the
 	// sole-writer guarantee does not cover. Save fails loud with this rather than

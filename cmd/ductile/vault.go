@@ -155,8 +155,10 @@ func runVaultSet(args []string) int {
 	apiURL := fs.String("api-url", "", "Daemon API base URL (e.g. http://127.0.0.1:8080)")
 	token := fs.String("token", "", "Vault admin token (or set DUCTILE_VAULT_TOKEN)")
 	name := fs.String("name", "", "Secret name")
-	pattern := fs.String("pattern", vault.PatternManual, "Provisioning pattern: manual|auto")
-	principalsCSV := fs.String("principal", "", "Comma-separated principals authorized to receive the secret")
+	// Empty default: the daemon defaults pattern to manual on CREATE and leaves it
+	// unchanged on UPDATE — so a metadata edit can't silently flip an auto secret.
+	pattern := fs.String("pattern", "", "Provisioning pattern: manual|auto (default manual on create; left unchanged on update)")
+	principalsCSV := fs.String("principal", "", "Comma-separated principals authorized to receive the secret. Omit to leave existing grants; pass an empty string to clear them.")
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
@@ -167,7 +169,8 @@ func runVaultSet(args []string) int {
 
 	tok := resolveVaultToken(*token)
 
-	// Read the value from stdin so the secret never appears on argv.
+	// Read the value from stdin so the secret never appears on argv. An empty value
+	// means "leave unchanged" on update (the value is roll-only; use 'vault roll').
 	valueBytes, err := io.ReadAll(os.Stdin)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "vault set: read value from stdin: %v\n", err)
@@ -175,12 +178,20 @@ func runVaultSet(args []string) int {
 	}
 	value := strings.TrimRight(string(valueBytes), "\r\n")
 
-	var principals []string
-	for _, p := range strings.Split(*principalsCSV, ",") {
-		if p = strings.TrimSpace(p); p != "" {
-			principals = append(principals, p)
+	// Distinguish --principal absent (leave grants) from given (replace; empty clears).
+	var principals *[]string
+	fs.Visit(func(f *flag.Flag) {
+		if f.Name != "principal" {
+			return
 		}
-	}
+		list := []string{}
+		for _, p := range strings.Split(*principalsCSV, ",") {
+			if p = strings.TrimSpace(p); p != "" {
+				list = append(list, p)
+			}
+		}
+		principals = &list
+	})
 
 	if err := doVaultSet(*apiURL, tok, *name, value, principals, *pattern); err != nil {
 		fmt.Fprintf(os.Stderr, "vault set: %v\n", err)
@@ -190,14 +201,18 @@ func runVaultSet(args []string) int {
 	return 0
 }
 
-// doVaultSet POSTs a secret to the daemon's /vault/secret endpoint.
-func doVaultSet(apiURL, token, name, value string, principals []string, pattern string) error {
-	_, err := vaultAPIPost(apiURL, token, "/vault/secret", map[string]any{
-		"name":                  name,
-		"value":                 value,
-		"authorized_principals": principals,
-		"pattern":               pattern,
-	})
+// doVaultSet POSTs a secret to the daemon's /vault/secret endpoint. principals is
+// nil to leave existing grants, or non-nil to replace them (empty clears); pattern
+// "" is omitted so the daemon defaults (create) or leaves (update) it.
+func doVaultSet(apiURL, token, name, value string, principals *[]string, pattern string) error {
+	body := map[string]any{"name": name, "value": value}
+	if principals != nil {
+		body["authorized_principals"] = *principals
+	}
+	if pattern != "" {
+		body["pattern"] = pattern
+	}
+	_, err := vaultAPIPost(apiURL, token, "/vault/secret", body)
 	return err
 }
 

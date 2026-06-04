@@ -165,6 +165,13 @@ time. It is the home for secrets that have a lifecycle.
   `pattern` (`manual` = operator-supplied, `auto` = daemon-minted from a CSPRNG), and
   an immutable value (a `roll` supersedes it; there is no version history). Revocation
   is terminal and clears the value.
+- **`set` is a partial update, not a value editor.** On an existing secret, `set`
+  updates only metadata/grants: omit `--principal` to **leave** grants untouched, pass
+  an empty `--principal ""` to **clear** them, or pass a list to replace them. A value
+  *change* is refused — the value is roll-only, so `roll` is the single audited
+  (`roll_count`) path and `set` can't be a side door around it. (An active `manual`
+  secret also cannot be created with an empty value; `auto` secrets are minted on first
+  `roll`.)
 - **Compose** — at dispatch, the daemon resolves the calling principal's authorized,
   active secrets and delivers them in the plugin's request `config` map over **stdin**
   — never via the environment or argv. Compose is **fail-closed**: an unknown

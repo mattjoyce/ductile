@@ -15,14 +15,26 @@ func validPattern(pattern string) bool {
 	return pattern == PatternAuto || pattern == PatternManual
 }
 
-// SetSecret registers a new secret or updates an existing active one (upsert).
-// Pure model mutation; the caller persists via Save. `now` is injected so the
-// model stays clock-free and tests are deterministic.
+// SetSecret registers a new secret or partially updates an existing active one
+// (upsert). Pure model mutation; the caller persists via Save. `now` is injected
+// so the model stays clock-free and tests are deterministic.
 //
-// Fail-closed preconditions: a kebab/identifier name, a known pattern, and every
-// authorized principal must already be registered (an orphan grant is refused at
-// write, not just flagged later by Check). Updating a *revoked* secret is
-// refused — revocation is terminal; use a fresh name.
+// Semantics (#23):
+//   - Value is ROLL-ONLY. On update, a `value` that differs from the current is
+//     refused (ErrValueImmutable) — roll is the sole, RollCount-audited value
+//     path, so set cannot be a side door. An empty value on update means "leave
+//     unchanged"; an equal value is a no-op.
+//   - Grants are a PARTIAL update: authorizedPrincipals nil = leave the existing
+//     grants; non-nil (including empty) = replace them (empty clears). This stops
+//     a value/metadata edit from silently wiping every grant.
+//   - pattern "" on update = leave; on create, "" defaults to manual.
+//   - An active MANUAL secret must not be created with an empty value
+//     (ErrEmptyValue); auto-pattern secrets are exempt — they are minted by roll.
+//
+// Fail-closed preconditions: a kebab/identifier name, a known pattern (when
+// given), and every named principal must already be registered (an orphan grant
+// is refused at write). Updating a *revoked* secret is refused — revocation is
+// terminal; use a fresh name.
 func (s *Store) SetSecret(name, value string, authorizedPrincipals []string, pattern string, now time.Time) error {
 	if !secretNameRE.MatchString(name) {
 		return fmt.Errorf("%w: secret %q", ErrInvalidName, name)
@@ -30,7 +42,7 @@ func (s *Store) SetSecret(name, value string, authorizedPrincipals []string, pat
 	if isReservedSecret(name) {
 		return fmt.Errorf("%w: secret %q (use RotateAdminToken)", ErrReservedEntity, name)
 	}
-	if !validPattern(pattern) {
+	if pattern != "" && !validPattern(pattern) {
 		return fmt.Errorf("%w: %q", ErrInvalidPattern, pattern)
 	}
 	for _, p := range authorizedPrincipals {
@@ -39,23 +51,37 @@ func (s *Store) SetSecret(name, value string, authorizedPrincipals []string, pat
 		}
 	}
 	ts := now.UTC().Format(time.RFC3339)
-	// Defensive copy so later caller mutation of the slice can't reach the model.
-	authz := append([]string(nil), authorizedPrincipals...)
 
 	if existing, ok := s.Secrets[name]; ok {
 		if existing.Status == StatusRevoked {
 			return fmt.Errorf("%w: %q", ErrSecretRevoked, name)
 		}
-		existing.Value = value
-		existing.AuthorizedPrincipals = authz
-		existing.Pattern = pattern
+		// Value is roll-only: a differing value is refused; "" or equal leaves it.
+		if value != "" && value != existing.Value {
+			return fmt.Errorf("%w: secret %q", ErrValueImmutable, name)
+		}
+		// Grants: nil leaves existing; non-nil (incl. empty) replaces.
+		if authorizedPrincipals != nil {
+			existing.AuthorizedPrincipals = append([]string(nil), authorizedPrincipals...)
+		}
+		// Pattern: "" leaves existing.
+		if pattern != "" {
+			existing.Pattern = pattern
+		}
 		existing.UpdatedAt = ts
 		return nil
 	}
 
+	// Create.
+	if pattern == "" {
+		pattern = PatternManual
+	}
+	if value == "" && pattern != PatternAuto {
+		return fmt.Errorf("%w: secret %q", ErrEmptyValue, name)
+	}
 	s.Secrets[name] = &Secret{
 		Value:                value,
-		AuthorizedPrincipals: authz,
+		AuthorizedPrincipals: append([]string(nil), authorizedPrincipals...),
 		Status:               StatusActive,
 		Pattern:              pattern,
 		CreatedAt:            ts,

@@ -9,7 +9,6 @@ import (
 
 	"github.com/mattjoyce/ductile/internal/auth"
 	"github.com/mattjoyce/ductile/internal/state"
-	"github.com/mattjoyce/ductile/internal/vault"
 )
 
 // VaultManager is the narrow management surface the API needs from the vault
@@ -75,11 +74,18 @@ func (s *Server) authenticateVaultAdmin(next http.Handler) http.Handler {
 }
 
 // vaultSetRequest is the POST /vault/secret body.
+//
+// AuthorizedPrincipals is a pointer so the handler can tell "field absent"
+// (nil → leave existing grants) from "explicit []" (clear) from "[list]"
+// (replace) — a partial update, so a value/metadata edit can't silently wipe
+// grants (#23). Pattern "" likewise means "leave" on update / default-manual on
+// create; the model owns that, so the handler does not pre-default it (which
+// would silently flip an existing auto secret to manual).
 type vaultSetRequest struct {
-	Name                 string   `json:"name"`
-	Value                string   `json:"value"`
-	AuthorizedPrincipals []string `json:"authorized_principals,omitempty"`
-	Pattern              string   `json:"pattern,omitempty"`
+	Name                 string    `json:"name"`
+	Value                string    `json:"value"`
+	AuthorizedPrincipals *[]string `json:"authorized_principals,omitempty"`
+	Pattern              string    `json:"pattern,omitempty"`
 }
 
 // vaultSetResponse is the value-free success body.
@@ -97,16 +103,21 @@ func (s *Server) handleVaultSet(w http.ResponseWriter, r *http.Request) {
 		s.writeError(w, http.StatusBadRequest, "invalid JSON body")
 		return
 	}
-	pattern := req.Pattern
-	if pattern == "" {
-		pattern = vault.PatternManual
+	// nil pointer → nil slice (leave grants); non-nil → its slice (replace/clear).
+	var authz []string
+	if req.AuthorizedPrincipals != nil {
+		authz = *req.AuthorizedPrincipals
 	}
-	if err := s.vault.SetSecret(req.Name, req.Value, req.AuthorizedPrincipals, pattern, time.Now()); err != nil {
+	if err := s.vault.SetSecret(req.Name, req.Value, authz, req.Pattern, time.Now()); err != nil {
 		s.writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	detail := "pattern=" + req.Pattern
+	if req.Pattern == "" {
+		detail = "pattern=unchanged"
+	}
 	s.auditVault(r.Context(), state.VaultAuditEvent{
-		Op: "set", SecretName: req.Name, Actor: vaultAdminActor, Outcome: "ok", Detail: "pattern=" + pattern,
+		Op: "set", SecretName: req.Name, Actor: vaultAdminActor, Outcome: "ok", Detail: detail,
 	})
 	respondJSON(w, http.StatusOK, vaultSetResponse{Name: req.Name, Status: "set"})
 }
