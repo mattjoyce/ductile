@@ -31,6 +31,32 @@ func TestStrictDecodeWarningsCleanConfig(t *testing.T) {
 	}
 }
 
+// TestStrictDecodeErrorClean proves the hard-gate companion (#26 flip) passes a
+// config with no dropped keys.
+func TestStrictDecodeErrorClean(t *testing.T) {
+	cfg := cfgFromSources(t, map[string]string{
+		"config.yaml": "service:\n  tick_interval: 60s\n  log_level: info\nstate:\n  path: /tmp/x.db\n",
+	})
+	if err := StrictDecodeError(cfg); err != nil {
+		t.Fatalf("clean config produced a gate error: %v", err)
+	}
+}
+
+// TestStrictDecodeErrorNamesDroppedKey proves a silently-dropped key becomes a
+// hard error (warn-then-fail per validate_config_on_boot) that names the key.
+func TestStrictDecodeErrorNamesDroppedKey(t *testing.T) {
+	cfg := cfgFromSources(t, map[string]string{
+		"config.yaml": "service:\n  tick_interval: 60s\n  log_levle: info\nstate:\n  path: /tmp/x.db\n",
+	})
+	err := StrictDecodeError(cfg)
+	if err == nil {
+		t.Fatal("dropped key did not produce a gate error")
+	}
+	if !strings.Contains(err.Error(), "log_levle") {
+		t.Errorf("gate error should name the dropped key; got: %v", err)
+	}
+}
+
 func TestStrictDecodeWarningsUnknownTopLevelKey(t *testing.T) {
 	cfg := cfgFromSources(t, map[string]string{
 		"config.yaml": "service:\n  tick_interval: 60s\nbogus_section:\n  typo: true\n",

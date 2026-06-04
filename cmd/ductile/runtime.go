@@ -445,14 +445,22 @@ func buildRuntime(cfg *config.Config, configPath string, configSource string, re
 		}
 	}
 
-	// Unknown-key visibility (#26): the load-time YAML decode is lenient, so a
+	// Unknown-key handling (#26): the load-time YAML decode is lenient, so a
 	// typo'd or unsupported key is silently dropped — the operator believes it is
-	// active when it is not. Surface each dropped key as a warning. This is
-	// warn-only: it never blocks boot (the daemon already accepts this config),
-	// it just makes the gap visible. A strict gate awaits the config/schema-drift
-	// cleanup (the embedded examples themselves still carry dropped keys).
+	// active when it is not. Always surface each dropped key as a warning. When
+	// admission.validate_config_on_boot is set, dropped keys are additionally an
+	// admission FAILURE (the config/schema drift that once blocked this — #36 — is
+	// resolved, so ductile's own configs decode clean); otherwise it stays
+	// warn-only. buildRuntime runs at boot AND reload, so this gates both, matching
+	// the doctor.Validate() check above.
 	for _, w := range config.StrictDecodeWarnings(cfg) {
 		logger.Warn("config: key ignored (not a known field)", "detail", w)
+	}
+	if admission.ValidateConfigOnBoot {
+		if err := config.StrictDecodeError(cfg); err != nil {
+			logger.Error("configuration validation failed: ignored config keys (admission.validate_config_on_boot)", "error", err)
+			return nil, fmt.Errorf("configuration validation failed: %w; fix or remove the keys, or disable service.admission.validate_config_on_boot", err)
+		}
 	}
 
 	if admission.RequireAPIAuth && cfg.API.Enabled && len(cfg.API.Auth.Tokens) == 0 {

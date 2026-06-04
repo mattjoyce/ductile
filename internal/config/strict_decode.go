@@ -60,6 +60,20 @@ func StrictDecodeWarnings(cfg *Config) []string {
 	return warnings
 }
 
+// StrictDecodeError is the hard-gate companion to StrictDecodeWarnings (#26): it
+// returns a non-nil error naming every key the lenient load silently dropped, or
+// nil when the decode is clean. The daemon promotes dropped keys from a warning
+// to an admission failure when service.admission.validate_config_on_boot is set;
+// otherwise the keys stay warn-only. It uses the same struct-decode mechanism as
+// StrictDecodeWarnings (not the embedded JSON schema, which is the CLI lint).
+func StrictDecodeError(cfg *Config) error {
+	w := StrictDecodeWarnings(cfg)
+	if len(w) == 0 {
+		return nil
+	}
+	return fmt.Errorf("%d ignored config key(s): %s", len(w), strings.Join(w, "; "))
+}
+
 // unknownFieldLines pulls the "field X not found in type ..." lines out of a yaml
 // decode error, dropping type-mismatch lines so the warnings are only about keys
 // the decode dropped, not values it could not parse.
