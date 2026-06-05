@@ -2,7 +2,9 @@ package main
 
 import (
 	"fmt"
+	"log/slog"
 	"path/filepath"
+	"time"
 
 	"github.com/mattjoyce/ductile/internal/config"
 	"github.com/mattjoyce/ductile/internal/plugin"
@@ -27,14 +29,31 @@ type pluginIdentityVerifier struct {
 	registry  *plugin.Registry
 	configDir string
 	nonceSrc  fingerprintNonceSource
+	logger    *slog.Logger
 }
 
-func newPluginIdentityVerifier(registry *plugin.Registry, configDir string, nonceSrc fingerprintNonceSource) *pluginIdentityVerifier {
-	return &pluginIdentityVerifier{registry: registry, configDir: configDir, nonceSrc: nonceSrc}
+func newPluginIdentityVerifier(registry *plugin.Registry, configDir string, nonceSrc fingerprintNonceSource, logger *slog.Logger) *pluginIdentityVerifier {
+	if logger == nil {
+		logger = slog.Default()
+	}
+	return &pluginIdentityVerifier{registry: registry, configDir: configDir, nonceSrc: nonceSrc, logger: logger}
 }
 
-// VerifyIdentity implements dispatch.PluginVerifier.
-func (v *pluginIdentityVerifier) VerifyIdentity(name string) error {
+// VerifyIdentity implements dispatch.PluginVerifier. Compose-time re-hashing
+// (LoadChecksums + two keyed-BLAKE3 file hashes) is a per-spawn cost on the hot
+// dispatch path; a debug-level timing line makes it observable rather than
+// inferred, with no overhead at normal verbosity.
+func (v *pluginIdentityVerifier) VerifyIdentity(name string) (err error) {
+	start := time.Now()
+	defer func() {
+		outcome := "ok"
+		if err != nil {
+			outcome = "denied"
+		}
+		v.logger.Debug("plugin fingerprint re-verified at spawn",
+			"plugin", name, "outcome", outcome, "duration", time.Since(start))
+	}()
+
 	manifest, err := config.LoadChecksums(v.configDir)
 	if err != nil {
 		return fmt.Errorf("plugin %q: cannot read attestation (.checksums): %w", name, err)

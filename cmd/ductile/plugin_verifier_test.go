@@ -54,7 +54,7 @@ func TestPluginIdentityVerifierCleanPasses(t *testing.T) {
 	lockConfigAndPlugins(t, tmp, "gmail")
 	reg, v := buildRegistryAndVault(t, tmp)
 
-	pv := newPluginIdentityVerifier(reg, tmp, v)
+	pv := newPluginIdentityVerifier(reg, tmp, v, nil)
 	if err := pv.VerifyIdentity("gmail"); err != nil {
 		t.Fatalf("attested, unchanged plugin must verify: %v", err)
 	}
@@ -69,7 +69,7 @@ func TestPluginIdentityVerifierTamperDenies(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(tmp, "plugins", "gmail", "gmail"), []byte("#!/bin/sh\necho swapped\n"), 0o755); err != nil {
 		t.Fatalf("swap: %v", err)
 	}
-	pv := newPluginIdentityVerifier(reg, tmp, v)
+	pv := newPluginIdentityVerifier(reg, tmp, v, nil)
 	err := pv.VerifyIdentity("gmail")
 	if err == nil {
 		t.Fatal("a swapped binary must be denied at compose time")
@@ -87,7 +87,7 @@ func TestPluginIdentityVerifierNoRecordedFingerprintDenies(t *testing.T) {
 	}
 	reg, v := buildRegistryAndVault(t, tmp)
 
-	pv := newPluginIdentityVerifier(reg, tmp, v)
+	pv := newPluginIdentityVerifier(reg, tmp, v, nil)
 	err := pv.VerifyIdentity("gmail")
 	if err == nil {
 		t.Fatal("a principal with no recorded fingerprint must be denied (fail closed)")
@@ -105,7 +105,7 @@ func TestPluginIdentityVerifierUndiscoverableDenies(t *testing.T) {
 	}
 	reg, v := buildRegistryAndVault(t, tmp)
 
-	pv := newPluginIdentityVerifier(reg, tmp, v)
+	pv := newPluginIdentityVerifier(reg, tmp, v, nil)
 	if err := pv.VerifyIdentity("gmail"); err == nil {
 		t.Fatal("an undiscoverable plugin must be denied")
 	}
@@ -116,7 +116,7 @@ func TestPluginIdentityVerifierNonceFailureDenies(t *testing.T) {
 	lockConfigAndPlugins(t, tmp, "gmail")
 	reg, _ := buildRegistryAndVault(t, tmp)
 
-	pv := newPluginIdentityVerifier(reg, tmp, errNonceSource{})
+	pv := newPluginIdentityVerifier(reg, tmp, errNonceSource{}, nil)
 	if err := pv.VerifyIdentity("gmail"); err == nil {
 		t.Fatal("a nonce-source failure must deny (no unkeyed downgrade)")
 	}

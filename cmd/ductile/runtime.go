@@ -596,7 +596,7 @@ func buildRuntime(cfg *config.Config, configPath string, configSource string, re
 		// §3.3: re-verify a principal's live bytes against its recorded keyed
 		// fingerprint right before delivering its secrets. The nonce comes from the
 		// same loaded vault that holds the secrets.
-		pluginVerifier = newPluginIdentityVerifier(registry, configDir, vaultOwner)
+		pluginVerifier = newPluginIdentityVerifier(registry, configDir, vaultOwner, logger)
 		logger.Info("vault secret delivery enabled (compose-time attestation on)")
 	}
 
