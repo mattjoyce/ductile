@@ -1,6 +1,6 @@
 ---
 id: 45
-status: review
+status: done
 priority: Normal
 blocked_by: [35]
 tags: [docs, vault, secrets, contract, branch-review]

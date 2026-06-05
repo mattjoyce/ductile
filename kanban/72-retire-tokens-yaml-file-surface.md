@@ -8,6 +8,11 @@ tags: [vault, tokens-yaml, decomplect, cleanup, cli]
 
 # Retire the tokens.yaml *file* surface (config token CLI + file types) — #48 slice 3b
 
+> Status note (2026-06-06): primary surface deletion **shipped** (`a7e592c`); card stays `doing` because
+> its acceptance (`grep -r tokens.yaml` clean + per-instance include/file drop) is not yet met. The
+> residual cleanup below (stale comments, dead-residue sweep, sample-filename test renames, shim removal)
+> is consolidated into [[73-tokens-yaml-retirement-branch-review-punchlist]] to avoid duplicate tracking.
+
 ## DONE (2026-06-06) — user-facing surface deleted
 - Deleted the `ductile config token` + `config scope` CLIs (both managed tokens.yaml) and their routing,
   help, and ~700 lines of handlers/helpers in `config_manage.go`.

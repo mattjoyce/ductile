@@ -2,7 +2,7 @@
 id: 48
 status: doing
 priority: Normal
-blocked_by: [9, 14, 68]
+blocked_by: []
 tags: [vault, epic, back-compat, decomplect, tokens-yaml]
 ---
 

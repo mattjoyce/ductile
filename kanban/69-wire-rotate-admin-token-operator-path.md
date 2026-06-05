@@ -1,6 +1,6 @@
 ---
 id: 69
-status: review
+status: done
 priority: Normal
 blocked_by: []
 tags: [vault, security, admin-token, cli, api, field-trial-finding, gap]

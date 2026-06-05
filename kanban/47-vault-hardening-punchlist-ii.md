@@ -1,6 +1,6 @@
 ---
 id: 47
-status: review
+status: done
 priority: Low
 tags: [vault, hardening, clarity, dry, branch-review, backlog]
 ---

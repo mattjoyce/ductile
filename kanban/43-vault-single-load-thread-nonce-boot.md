@@ -2,9 +2,19 @@
 id: 43
 status: todo
 priority: Normal
-blocked_by: [12]
+blocked_by: []
 tags: [vault, boot, toctou, attestation, efficiency, branch-review]
 ---
+
+### Update (2026-06-06) — partially overtaken by events
+- **Back-compat half: DONE (evaporated).** The graft's extra decrypt is gone — #48 slice 3a
+  (`0baf11e`) removed `graftVaultSecrets`/`cfg.Tokens`, exactly as predicted below.
+- **Reload-path regression: FIXED (`38e1e77`).** The reload path had regressed to a double-decrypt
+  (owner-less `config.Load` then a second `LoadVault` in `buildRuntime`); now threads the
+  `LoadWithVault` owner through `runtimeBuildOptions.vaultOwner`.
+- **Intrinsic half: STILL OPEN.** The boot fingerprint-verify TOCTOU remains —
+  `verifyPluginFingerprintsForConfig`/`fingerprintNonceForConfig` re-load + re-decrypt for the nonce
+  instead of reusing the one boot owner. Now also tracked as item 1 of [[73-tokens-yaml-retirement-branch-review-punchlist]].
 
 ### DEFERRED to its own PR (2026-06-05, operator decision)
 Kept out of the 40/41/42 should-fix batch deliberately: this is a cross-cutting refactor

@@ -1,6 +1,6 @@
 ---
 id: 46
-status: review
+status: done
 priority: Low
 blocked_by: [12]
 tags: [vault, attestation, observability, performance, branch-review]
