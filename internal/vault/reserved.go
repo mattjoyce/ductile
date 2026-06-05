@@ -10,8 +10,16 @@ import "time"
 // (privilege escalation), brick attestation, or brick the API. Identity is
 // enforced here, not merely asserted in a comment.
 
+// reservedSecrets is the set of reserved secret names — entries that may never be
+// mutated through the data plane (set/roll/revoke). Set-membership (not a single
+// `==`) so adding a second reserved secret can't silently slip the guard.
+var reservedSecrets = map[string]struct{}{AdminTokenSecret: {}}
+
 // isReservedSecret reports whether name is a reserved secret entry.
-func isReservedSecret(name string) bool { return name == AdminTokenSecret }
+func isReservedSecret(name string) bool {
+	_, ok := reservedSecrets[name]
+	return ok
+}
 
 // IsReservedSecret reports whether name is a reserved secret entry — the
 // management-API credential. Exported so callers outside the package (e.g. the

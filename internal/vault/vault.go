@@ -254,11 +254,19 @@ func mutateR[T any](v *Vault, fn func(*Store) (T, error)) (T, error) {
 func (v *Vault) AuthenticateAdmin(presented string) bool {
 	v.mu.RLock()
 	defer v.mu.RUnlock()
-	sec, ok := v.store.Secrets[AdminTokenSecret]
-	if !ok || sec.Status != StatusActive {
-		return false
+	// Timing-flat (Lamport F9): always run the constant-time compare, even when the
+	// admin token is absent or revoked, so the path does not branch-leak whether an
+	// active admin token exists. An absent/revoked token compares against the zero
+	// value and never authenticates (guarded by `active` so an empty presented token
+	// can't match an empty resident value).
+	var resident string
+	active := false
+	if sec, ok := v.store.Secrets[AdminTokenSecret]; ok && sec.Status == StatusActive {
+		resident = sec.Value
+		active = true
 	}
-	return subtle.ConstantTimeCompare([]byte(presented), []byte(sec.Value)) == 1
+	match := subtle.ConstantTimeCompare([]byte(presented), []byte(resident)) == 1
+	return active && match
 }
 
 // restoreFromLastYAML rebuilds the resident model from the last persisted

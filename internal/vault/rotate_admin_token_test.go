@@ -62,6 +62,24 @@ func TestRotateAdminTokenRollsCredentialInPlace(t *testing.T) {
 	}
 }
 
+// TestAuthenticateAdminTimingFlatRejectsAbsent locks the timing-flat edge: when
+// no admin token is resident the path now always runs the constant-time compare
+// (against the zero value), so the `active` guard must still reject BOTH a
+// non-empty and an empty presented token — an empty token must never match an
+// empty/absent resident value.
+func TestAuthenticateAdminTimingFlatRejectsAbsent(t *testing.T) {
+	v := New(filepath.Join(t.TempDir(), "vault.age"), testKeyring(t), NewStore())
+	if _, ok := v.Store().Secret(AdminTokenSecret); ok {
+		t.Fatal("precondition: a fresh store should have no admin token")
+	}
+	if v.AuthenticateAdmin("anything") {
+		t.Fatal("absent admin token must reject a non-empty presented token")
+	}
+	if v.AuthenticateAdmin("") {
+		t.Fatal("absent admin token must reject an empty presented token (active guard)")
+	}
+}
+
 // TestRotateAdminTokenStaysReserved guards the privilege-escalation invariant:
 // rotating the admin token must never expose it through the data plane — it is
 // not delivered to the core principal, and the reserved guard still refuses
