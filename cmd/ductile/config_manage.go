@@ -1073,10 +1073,8 @@ plugins: {}
 		fmt.Fprintf(os.Stderr, "Failed to write webhooks.yaml: %v\n", err)
 		return 1
 	}
-	if err := writeIfNeeded(filepath.Join(configDir, "tokens.yaml"), "tokens: []\n", 0o600); err != nil {
-		fmt.Fprintf(os.Stderr, "Failed to write tokens.yaml: %v\n", err)
-		return 1
-	}
+	// tokens.yaml is no longer scaffolded: the vault is the sole secret source
+	// (epic #48). Secrets are added with 'ductile vault set', not a tokens file.
 
 	if err := refreshConfigIntegrity(configDir); err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to generate checksums: %v\n", err)

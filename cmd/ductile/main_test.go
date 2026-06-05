@@ -1482,7 +1482,7 @@ func TestRunConfigInitBackupRestore(t *testing.T) {
 		t.Fatalf("backup archive missing: %v", err)
 	}
 
-	if err := os.WriteFile(filepath.Join(configDir, "tokens.yaml"), []byte("tokens:\n  - name: changed\n    key: x\n"), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(configDir, "webhooks.yaml"), []byte("webhooks:\n  - name: changed\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 
@@ -1493,12 +1493,12 @@ func TestRunConfigInitBackupRestore(t *testing.T) {
 		t.Fatalf("runConfigRestore() code = %d, stderr: %s", restoreCode, restoreStderr)
 	}
 
-	raw, err := os.ReadFile(filepath.Join(configDir, "tokens.yaml"))
+	raw, err := os.ReadFile(filepath.Join(configDir, "webhooks.yaml"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if strings.Contains(string(raw), "changed") {
-		t.Fatalf("restore did not replace modified tokens.yaml: %s", string(raw))
+		t.Fatalf("restore did not replace modified webhooks.yaml: %s", string(raw))
 	}
 }
 

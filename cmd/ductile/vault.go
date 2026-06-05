@@ -74,7 +74,6 @@ func printVaultNounHelp(w *os.File) {
 	_, _ = fmt.Fprintln(w, "")
 	_, _ = fmt.Fprintln(w, "Local, key-touching (hold the age key; the daemon must be STOPPED):")
 	_, _ = fmt.Fprintln(w, "  init        Genesis: create a new vault (core + nonce + admin token)   [--vault --key]")
-	_, _ = fmt.Fprintln(w, "  import      Migrate tokens.yaml entries into an existing vault         [--config --tokens --resolve-env]")
 	_, _ = fmt.Fprintln(w, "  rotate-key  Rotate the vault's age identity (mints + re-encrypts)       [--config]")
 	_, _ = fmt.Fprintln(w, "  rotate-admin-token  Rotate the management-API admin token in place        [--config]")
 	_, _ = fmt.Fprintln(w, "              (mints a fresh token, prints it once; the old token stops working)")
