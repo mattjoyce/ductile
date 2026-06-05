@@ -89,21 +89,17 @@ func (v *Vault) RotateKey(keyFilePath string) (string, error) {
 		return "", fmt.Errorf("vault: rotate: finalise blob (new key is live at %q — re-run or restore): %w", keyFilePath, err)
 	}
 
-	// Adopt the new identity as the resident keyring + baseline, so any later
-	// Save persists under the new key (never silently re-encrypting to the old)
-	// and rebase the external-modification backstop on the just-written blob so
-	// the next Save does not mistake this rotation for an out-of-band write.
+	// Adopt the new identity as the resident keyring + baseline, so any later Save
+	// persists under the new key (never silently re-encrypting to the old). The
+	// external-modification backstop baseline was already rebased on the just-written
+	// blob by reencryptTo, so the next Save does not mistake this rotation for an
+	// out-of-band write.
 	newKR, err := secrets.NewKeyring(newID)
 	if err != nil {
 		return "", fmt.Errorf("vault: rotate: adopt keyring: %w", err)
 	}
 	v.keyring = newKR
 	v.lastYAML = plaintext
-	// #nosec G304 -- vault path is operator-controlled local input.
-	if finalBlob, rerr := os.ReadFile(v.path); rerr == nil {
-		sum := sha256.Sum256(finalBlob)
-		v.lastDiskHash = sum[:]
-	}
 	return newRecipient.String(), nil
 }
 
@@ -141,6 +137,12 @@ func (v *Vault) reencryptTo(plaintext []byte, recipients []age.Recipient) error 
 	if err := writeFileAtomic(v.path, ciphertext); err != nil {
 		return fmt.Errorf("write %q: %w", v.path, err)
 	}
+	// Keep the external-modification backstop baseline in sync with the bytes just
+	// written — derived from the ciphertext in hand, never a re-read. A re-read that
+	// errored would silently leave a STALE baseline, making the next Save mistake
+	// this rotation for an out-of-band write (Lamport N2).
+	sum := sha256.Sum256(ciphertext)
+	v.lastDiskHash = sum[:]
 	return nil
 }
 
