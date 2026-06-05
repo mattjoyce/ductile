@@ -1,6 +1,6 @@
 ---
 id: 46
-status: todo
+status: review
 priority: Low
 blocked_by: [12]
 tags: [vault, attestation, observability, performance, branch-review]
@@ -14,6 +14,11 @@ on the hot dispatch path (`internal/.../plugin_verifier.go:38-62`). The cost is 
 inferable, not measured.
 
 **Scope:**
-- Add a `log.Debug` timing line around the per-spawn verify so the cost is observable rather than
+- [x] Add a `log.Debug` timing line around the per-spawn verify so the cost is observable rather than
   guessed (duration + plugin name).
-- Keep it debug-level (no hot-path overhead at normal verbosity).
+- [x] Keep it debug-level (no hot-path overhead at normal verbosity).
+
+**Done 2026-06-05.** `pluginIdentityVerifier.VerifyIdentity` (cmd/ductile/plugin_verifier.go) now
+times the whole verify (LoadChecksums + keyed-BLAKE3 hashes) via a deferred `logger.Debug` line —
+`plugin`, `outcome` (ok/denied), `duration` — on every path, success or deny. Threaded a `*slog.Logger`
+through `newPluginIdentityVerifier` (nil → `slog.Default()`); runtime passes its logger.

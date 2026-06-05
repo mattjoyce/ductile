@@ -11,9 +11,11 @@ Smaller nice-to-have findings from the 2026-06-04 branch reviews. Each is indepe
 grouped to keep the board readable — split into its own card when picked up. (Follows the pattern
 of [[27-vault-hardening-punchlist]], now closed.)
 
-- [ ] **Timing-flat `AuthenticateAdmin` (Lamport F9).** `vault.go:230-231` early-returns before the
+- [x] **Timing-flat `AuthenticateAdmin` (Lamport F9).** ~~`vault.go` early-returned before the
   constant-time compare when the token is absent/revoked, leaking "does the admin token exist and
-  is it active." Compare against a zero value so the path is timing-flat.
+  is it active."~~ Fixed 2026-06-05: always runs the constant-time compare against the resident
+  (or zero) value; an `active` guard rejects absent/revoked. Edge covered by
+  `TestAuthenticateAdminTimingFlatRejectsAbsent`.
 - [ ] **`RollPrincipal` rollback on mid-loop error + DRY (Lamport F6 / §6).** `lifecycle_owner.go:79-103`
   rolls back only on `Save` failure, not on a mid-loop error. Extract a `saveOrRollback` helper and
   reuse it from `mutate` (`vault.go:211-216`) — fixes the rollback gap and the duplication together.
@@ -24,9 +26,9 @@ of [[27-vault-hardening-punchlist]], now closed.)
   "RegisterPrincipal + SetSecret + Save" but the code correctly calls `RotateAdminToken`.~~ Fixed
   2026-06-05 as a side effect of [[40-vault-registerprincipal-reserved-guard]] — now reads
   "SeedCorePrincipal + RotateAdminToken + Save".
-- [ ] **`isReservedSecret` set-based (Lamport §8.2).** `reserved.go:14` hard-codes `AdminTokenSecret`
-  by name; make it set-membership now (one line) so a future second reserved secret can't silently
-  slip the guard.
+- [x] **`isReservedSecret` set-based (Lamport §8.2).** ~~`reserved.go:14` hard-coded `AdminTokenSecret`
+  by name~~ — now `reservedSecrets` set-membership (2026-06-05) so a future second reserved secret
+  can't silently slip the guard.
 - [ ] **`roll_count`: drop or add a reader (Brooks-Beck §2.2).** `Secret.RollCount` is "audit-only"
   with no functional consumer beyond an audit Detail string. Either drop it (YAGNI) or implement the
   audit reader.

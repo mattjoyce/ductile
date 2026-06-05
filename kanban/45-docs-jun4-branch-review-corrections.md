@@ -1,6 +1,6 @@
 ---
 id: 45
-status: todo
+status: review
 priority: Normal
 blocked_by: [35]
 tags: [docs, vault, secrets, contract, branch-review]
@@ -12,20 +12,18 @@ tags: [docs, vault, secrets, contract, branch-review]
 Concrete doc fixes the reviewers flagged *after* the #35 SECRETS.md rewrite. Verify each against
 the current docs and fix any that still hold.
 
-- [ ] **`secrets` vs `config` envelope (Ousterhout §3).** SECRETS.md §3 says plugin secrets arrive
-  in the `config` map, but the wire and `PLUGIN_DEVELOPMENT.md` correctly place them in a distinct
-  `secrets` field (`dispatcher.go:412`, `protocol/types.go`). A plugin author following SECRETS.md
-  reads the wrong field. Correct to the `secrets` envelope.
-- [ ] **Webhook/relay secret-freshness asymmetry (Ousterhout §2).** Plugin secrets compose **fresh
-  per spawn** (roll takes effect next dispatch); webhook/relay secrets **freeze at boot** (roll needs
-  reload). This is undocumented and SECRETS.md currently implies secrets are uniformly live. Either
-  resolve `secret_ref` live for webhook/relay at request time, or state the reload requirement in
-  SECRETS.md (`config/vault_secrets.go:35`, `cmd/ductile/runtime.go:686`).
-- [ ] **`authorized_principals` nil-vs-empty wire contract (Ousterhout §1).** Partial-update `set`
-  makes absent ≠ empty: nil = leave, `[]` = clear, `[list]` = replace (survives the wire as
-  `*[]string` + `omitempty`). Add one explicit API-doc sentence so future HTTP clients don't wipe
-  grants by flattening the distinction.
-- [ ] **register→grant→lock lifecycle (Hickey §2.2).** With compose-time attestation, onboarding a
-  plugin is three sequential steps — register principal, grant secrets, **and lock the plugin** (a
-  principal needs a recorded keyed fingerprint or `VerifyIdentity` fails). Spell this out in the
-  operator handbook and the `ductile` skill.
+- [x] **`secrets` vs `config` envelope (Ousterhout §3).** ~~SECRETS.md §3 said plugin secrets arrive
+  in the `config` map~~ — verified the wire (`protocol/types.go` distinct `secrets` field,
+  `dispatcher.go` `req.Secrets`) and PLUGIN_DEVELOPMENT.md (correct). Fixed 2026-06-05: SECRETS.md
+  lines for Compose / example / spawn-hygiene / See-also now say the `secrets` map. (The env-passthrough
+  line legitimately keeps `config` — moving a *non-secret* value there is correct.)
+- [x] **Webhook/relay secret-freshness asymmetry (Ousterhout §2).** Fixed 2026-06-05: chose to
+  document (OPERATOR_GUIDE.md already covered it at §"Rolling…"; SECRETS.md was silent). Added a
+  "Freshness asymmetry" note to SECRETS.md Compose — plugin secrets fresh per spawn, webhook/relay
+  freeze at boot and need `system reload` — cross-linked to OPERATOR_GUIDE.md.
+- [x] **`authorized_principals` nil-vs-empty wire contract (Ousterhout §1).** Fixed 2026-06-05:
+  API_REFERENCE.md `POST /vault/secret` row now states omit=leave, `[]`=clear, list=replace
+  (partial update never silently wipes grants).
+- [x] **register→grant→lock lifecycle (Hickey §2.2).** Fixed 2026-06-05: added the three-ordered-step
+  onboarding note (register principal → grant → `plugin lock`, all required or compose-time identity
+  verify fails → no delivery) to the operator handbook and the `ductile` skill vault sections.
