@@ -1,6 +1,6 @@
 ---
 id: 62
-status: doing
+status: done
 priority: Normal
 blocked_by: [60]
 tags: [vault, deploy, thinkpad, monitor, soak]

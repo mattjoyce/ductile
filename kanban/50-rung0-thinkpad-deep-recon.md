@@ -1,6 +1,6 @@
 ---
 id: 50
-status: doing
+status: done
 priority: High
 blocked_by: []
 tags: [vault, deploy, thinkpad, recon]

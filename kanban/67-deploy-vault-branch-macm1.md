@@ -1,6 +1,6 @@
 ---
 id: 67
-status: doing
+status: done
 priority: High
 blocked_by: [66, 64]
 tags: [vault, deploy, mac-m1, rollout]
