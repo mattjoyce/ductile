@@ -116,7 +116,7 @@ func TestGraftVaultSecretsRoundTrip(t *testing.T) {
 	}
 
 	cfg := &Config{Tokens: []TokenEntry{{Name: "relay_a", Key: "ra"}}}
-	warnings, err := graftVaultSecrets(cfg, dir, kr) // default path <dir>/vault.age
+	_, warnings, err := graftVaultSecrets(cfg, dir, kr) // default path <dir>/vault.age
 	if err != nil {
 		t.Fatalf("graft: %v", err)
 	}
@@ -139,7 +139,7 @@ func TestGraftVaultSecretsNoVaultIsNoOp(t *testing.T) {
 	kr := writeTestKey(t, dir)
 
 	cfg := &Config{Tokens: []TokenEntry{{Name: "relay_a", Key: "ra"}}}
-	warnings, err := graftVaultSecrets(cfg, dir, kr) // no vault.age present
+	_, warnings, err := graftVaultSecrets(cfg, dir, kr) // no vault.age present
 	if err != nil {
 		t.Fatalf("missing vault should no-op, got: %v", err)
 	}
@@ -164,12 +164,48 @@ func TestGraftVaultSecretsKeylessIsNoOp(t *testing.T) {
 	}
 
 	cfg := &Config{Tokens: []TokenEntry{{Name: "relay_a", Key: "ra"}}}
-	warnings, err := graftVaultSecrets(cfg, dir, &secrets.Keyring{}) // empty keyring
+	_, warnings, err := graftVaultSecrets(cfg, dir, &secrets.Keyring{}) // empty keyring
 	if err != nil {
 		t.Fatalf("keyless should no-op, got: %v", err)
 	}
 	if len(warnings) != 0 || len(cfg.Tokens) != 1 {
 		t.Errorf("keyless caller should not graft, got %+v", cfg.Tokens)
+	}
+}
+
+// TestGraftVaultSecretsReturnsOwner — slice 2 (epic #48): the graft returns the
+// vault owner it decrypted so the daemon can reuse that single decryption as its
+// live owner instead of decrypting the blob a second time at runtime
+// construction (#43 redundant decrypt).
+func TestGraftVaultSecretsReturnsOwner(t *testing.T) {
+	dir := t.TempDir()
+	kr := writeTestKey(t, dir)
+
+	vaultPath := filepath.Join(dir, "vault.age")
+	v, _, err := vault.Init(vaultPath, kr, time.Now())
+	if err != nil {
+		t.Fatalf("vault init: %v", err)
+	}
+	if err := v.Store().SetSecret("relay_hmac", "VAULT-VAL", nil, vault.PatternManual, time.Now()); err != nil {
+		t.Fatalf("set: %v", err)
+	}
+	if err := v.Save(); err != nil {
+		t.Fatalf("save: %v", err)
+	}
+
+	owner, _, err := graftVaultSecrets(&Config{}, dir, kr)
+	if err != nil {
+		t.Fatalf("graft: %v", err)
+	}
+	if owner == nil {
+		t.Fatal("expected a non-nil owner to reuse as the live vault; got nil")
+	}
+	store, err := owner.Snapshot()
+	if err != nil {
+		t.Fatalf("snapshot: %v", err)
+	}
+	if sec, ok := store.Secret("relay_hmac"); !ok || sec.Value != "VAULT-VAL" {
+		t.Errorf("returned owner does not serve the secret; ok=%v sec=%+v", ok, sec)
 	}
 }
 
@@ -249,7 +285,7 @@ func TestLoadVaultNoVaultIsNil(t *testing.T) {
 }
 
 // TestVaultStoreKeylessIsNil — a keyless caller cannot decrypt; the shared
-// loader returns a nil Store rather than failing, mirroring the graft.
+// loader returns a nil owner rather than failing, mirroring the graft.
 func TestVaultStoreKeylessIsNil(t *testing.T) {
 	dir := t.TempDir()
 	kr := writeTestKey(t, dir)
@@ -263,12 +299,12 @@ func TestVaultStoreKeylessIsNil(t *testing.T) {
 		t.Fatalf("save: %v", err)
 	}
 
-	store, err := vaultStore(dir, &Config{}, &secrets.Keyring{})
+	owner, err := loadVaultOwner(dir, &Config{}, &secrets.Keyring{})
 	if err != nil {
 		t.Fatalf("keyless should be (nil,nil): %v", err)
 	}
-	if store != nil {
-		t.Errorf("keyless caller must get nil Store, got %v", store)
+	if owner != nil {
+		t.Errorf("keyless caller must get nil owner, got %v", owner)
 	}
 }
 

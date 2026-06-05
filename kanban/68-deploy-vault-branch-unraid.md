@@ -1,6 +1,6 @@
 ---
 id: 68
-status: backlog
+status: done
 priority: Normal
 blocked_by: [67]
 tags: [vault, deploy, unraid, docker, rollout, boundary-node]
@@ -43,6 +43,30 @@ added to the include list; (2) service.name set to "unraid-prod" (empty peer hea
 Verified: Thinkpad ingress "relay request accepted", peer unraid-prod, key_id v1, event b5427132-041a-4923-b3cf-f44b2679c762, 202 Accepted.
 
 **Status:** doing → only the validate_config_on_boot Path-B flip remains to fully match Thinkpad/Mac (4 gates).
+
+## CLOSED 2026-06-05 (Path-B flip — Thinkpad.unraid_admin executed over walkie-talkie, MacM1.Ductile drove the calls)
+**4-gate parity reached.** Two-stage strict-decode cleanup so the flip couldn't crash-loop:
+- **Stage 1 (gate OFF):** the lenient loader was silently dropping 25 flat keys across 3 files — they were
+  INERT, so the box had been running on defaults the whole time. Calls (lengthen-only vs defaults handle
+  120s / poll 60s / max_attempts 4): NEST only the two that strictly lengthen — `birda` + `astro_rebuild_prod`
+  `timeouts.handle: 300s` (both single-command handlers; birda's manifest documents a 300s GPU budget).
+  DROP everything else: all sub-default flat timeouts, ALL `max_attempts` (keep proven default 4 — not
+  changing retry behavior here), and ALL `concurrency_safe` (a plugin *manifest* field, never valid in
+  config). `api.yaml`: dropped dead `api_key` + `webhooks:[]`. `tokens.yaml`: removed the whole `tokens:`
+  secrets block (all 3 in vault w/ proven parity — clears the dupe warnings). `config lock`, restart →
+  **zero "key ignored" lines** with the gate still off (no crash risk).
+- **Stage 2 (arm):** `validate_config_on_boot: true` → `config lock` → restart → clean boot, all 4 gates
+  live, 46 plugins / 0 circuits, attestation on. Relay smoketest post-flip: Unraid → Thinkpad ingress,
+  receiver event `9dc27175-b87d-4909-a65f-95e346ee0cdb`, peer `unraid-prod`. (Mac is not a peer on
+  `relay-unraid-thinkpad-v1`, so the receiver-side confirmation is the Thinkpad's, not the Mac's.)
+
+**Follow-ups spun out:** #70 (concurrency_safe manifest check — birda/health_data_summary; the dropped
+config key was inert, so if either must run serial it has to be declared in the manifest), and #71 (no
+resolved-effective config view — defaults live only in code, invisible to `config show`; the Hickey
+"hidden values" gap this cleanup surfaced).
+
+All three instances (Thinkpad/Mac/Unraid) now on the vault path with 4 gates — unblocks the #48 epic
+sequencing (still gated on #67's gmail-keychain close).
 
 ## Recon (2026-06-05, from the Mac)
 - ductile healthz OK on `192.168.20.4:8888`: **v0.786-215c63f**, uptime ~23h, 45 plugins, 0 circuits,

@@ -39,19 +39,29 @@ import (
 //     decrypt; vault-only secrets are the daemon's to resolve, per ADR §3.5.1)
 //   - present but broken  -> error (fail-closed: a corrupt/owned vault must not
 //     be silently skipped)
-func graftVaultSecrets(cfg *Config, configDir string, kr *secrets.Keyring) ([]string, error) {
-	store, err := vaultStore(configDir, cfg, kr)
+func graftVaultSecrets(cfg *Config, configDir string, kr *secrets.Keyring) (*vault.Vault, []string, error) {
+	owner, err := loadVaultOwner(configDir, cfg, kr)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	if store == nil {
-		return nil, nil // no vault / keyless: resolve against tokens.yaml only
+	if owner == nil {
+		return nil, nil, nil // no vault / keyless: resolve against tokens.yaml only
 	}
 
+	// Snapshot (an independent deep copy) for the merge so the graft never aliases
+	// the owner's live Store past the read lock.
+	store, err := owner.Snapshot()
+	if err != nil {
+		return nil, nil, err
+	}
 	secretsMap, graftWarnings := activeVaultSecrets(store)
 	merged, mergeWarnings := mergeVaultSecrets(cfg.Tokens, secretsMap)
 	cfg.Tokens = merged
-	return append(graftWarnings, mergeWarnings...), nil
+
+	// Return the owner so the daemon can reuse this single decryption as its live
+	// vault owner (config.LoadWithVault) instead of decrypting the blob a second
+	// time at runtime construction (#43 redundant decrypt; epic #48 slice 2).
+	return owner, append(graftWarnings, mergeWarnings...), nil
 }
 
 // LoadVault resolves the keyring and loads the vault *owner* for the active
@@ -93,18 +103,6 @@ func loadVaultOwner(configDir string, cfg *Config, kr *secrets.Keyring) (*vault.
 		return nil, err // present + keyed but broken: fail-closed
 	}
 	return v, nil
-}
-
-// vaultStore loads the decrypted Store given an already-resolved keyring, for
-// the load-time graft (which needs the pure model, not the guarded owner). It
-// returns a Snapshot — an independent deep copy — rather than the live model, so
-// the graft never aliases the owner's Store past the read lock.
-func vaultStore(configDir string, cfg *Config, kr *secrets.Keyring) (*vault.Store, error) {
-	v, err := loadVaultOwner(configDir, cfg, kr)
-	if err != nil || v == nil {
-		return nil, err
-	}
-	return v.Snapshot()
 }
 
 // mergeVaultSecrets overlays vault secret values onto the legacy token table.

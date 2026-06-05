@@ -645,6 +645,7 @@ func runVaultImport(args []string) int {
 	configPath := fs.String("config", "", "Path to the ductile config dir (default: discover)")
 	tokensPath := fs.String("tokens", "", "Path to the tokens.yaml to import from")
 	resolveEnv := fs.Bool("resolve-env", false, "Import the resolved value of ${ENV} entries instead of flagging them")
+	verifyOnly := fs.Bool("verify", false, "Read-only: prove parity between tokens.yaml and the vault; mutate nothing (repeatable, safe before cutover)")
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
@@ -661,15 +662,19 @@ func runVaultImport(args []string) int {
 
 	// Sole-writer: the daemon is the only writer of the vault. Import is local and
 	// key-touching, so refuse if the daemon holds the PID lock; holding it for the
-	// op also stops a daemon starting mid-import.
-	pidLock, err := lock.AcquirePIDLock(getPIDLockPath(cfg))
-	if err != nil {
-		fmt.Fprintf(os.Stderr,
-			"vault import: the daemon appears to be running (could not take the lock): %v\n"+
-				"Stop the daemon before importing — key-touching ops are local.\n", err)
-		return 1
+	// op also stops a daemon starting mid-import. --verify is read-only (it never
+	// writes the blob), so it skips the lock and is safe to run while the daemon
+	// serves — that is the point of a repeatable pre-cutover parity check.
+	if !*verifyOnly {
+		pidLock, err := lock.AcquirePIDLock(getPIDLockPath(cfg))
+		if err != nil {
+			fmt.Fprintf(os.Stderr,
+				"vault import: the daemon appears to be running (could not take the lock): %v\n"+
+					"Stop the daemon before importing — key-touching ops are local.\n", err)
+			return 1
+		}
+		defer func() { _ = pidLock.Release() }()
 	}
-	defer func() { _ = pidLock.Release() }()
 
 	vaultPath := config.ResolveVaultPath(configDir, cfg)
 	keyPath := config.ResolveAgeKeyPath(configDir, cfg)
@@ -696,6 +701,10 @@ func runVaultImport(args []string) int {
 		return 1
 	}
 
+	if *verifyOnly {
+		return runVaultImportVerify(v, entries, *resolveEnv)
+	}
+
 	plan := config.PlanTokenImport(entries, *resolveEnv, os.LookupEnv)
 
 	batch := make([]vault.ManualSecret, 0, len(plan.Imported))
@@ -720,6 +729,40 @@ func runVaultImport(args []string) int {
 		}
 	}
 	return 0
+}
+
+// runVaultImportVerify proves parity between a tokens.yaml table and the live
+// vault without mutating anything (epic #48 slice 1). It snapshots the loaded
+// vault (an independent deep copy — never aliases the owner) and classifies every
+// entry. Exit 0 only when the report is green (every secret satisfied by the
+// vault); any missing/drift/unresolved entry exits 2 so a cutover script can gate
+// on it. Safe to run repeatedly, even while the daemon serves.
+func runVaultImportVerify(v *vault.Vault, entries []config.TokenEntry, resolveEnv bool) int {
+	store, err := v.Snapshot()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "vault import --verify: snapshot: %v\n", err)
+		return 1
+	}
+
+	lookup := func(name string) (string, bool) {
+		sec, ok := store.Secret(name)
+		if !ok || sec.Status != vault.StatusActive {
+			return "", false
+		}
+		return sec.Value, true
+	}
+
+	report := config.VerifyTokenParity(entries, resolveEnv, os.LookupEnv, lookup)
+
+	for _, e := range report.Entries {
+		fmt.Fprintf(os.Stderr, "  [%-10s] %s — %s\n", e.Status, e.Name, e.Detail)
+	}
+	if report.Green() {
+		fmt.Fprintf(os.Stderr, "PARITY GREEN: all %d tokens.yaml entr(ies) satisfied by the vault.\n", len(report.Entries))
+		return 0
+	}
+	fmt.Fprintln(os.Stderr, "PARITY NOT GREEN: resolve the entries above before cutover (missing/drift/unresolved).")
+	return 2
 }
 
 // runVaultInit bootstraps a new vault. It is a local, key-touching operation —

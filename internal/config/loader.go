@@ -15,6 +15,7 @@ import (
 
 	"github.com/mattjoyce/ductile/internal/scheduleexpr"
 	"github.com/mattjoyce/ductile/internal/secrets"
+	"github.com/mattjoyce/ductile/internal/vault"
 	"gopkg.in/yaml.v3"
 )
 
@@ -23,6 +24,17 @@ var envVarPattern = regexp.MustCompile(`\$\{([A-Za-z_][A-Za-z0-9_]*)\}`)
 // Load reads and parses configuration from a file.
 // Supports both single-file mode (all config in one file) and multi-file mode (via include array).
 func Load(configPath string) (*Config, error) {
+	cfg, _, err := load(configPath, true, true)
+	return cfg, err
+}
+
+// LoadWithVault reads configuration AND returns the vault owner decrypted during
+// the load-time graft, so the daemon can reuse that single decryption as its
+// live owner instead of decrypting the blob a second time at runtime
+// construction (#43 redundant decrypt; epic #48 slice 2). The returned owner is
+// nil when there is no vault or no key (coexistence window / keyless callers) —
+// callers fall back to LoadVault. The *Config is identical to what Load returns.
+func LoadWithVault(configPath string) (*Config, *vault.Vault, error) {
 	return load(configPath, true, true)
 }
 
@@ -30,27 +42,28 @@ func Load(configPath string) (*Config, error) {
 // skips existing .checksums verification so an operator can create or refresh
 // the lock manifest from an unlocked state.
 func LoadForLock(configPath string) (*Config, error) {
-	return load(configPath, false, false)
+	cfg, _, err := load(configPath, false, false)
+	return cfg, err
 }
 
-func load(configPath string, verifyScopes bool, validateConfig bool) (*Config, error) {
+func load(configPath string, verifyScopes bool, validateConfig bool) (*Config, *vault.Vault, error) {
 	// Resolve to absolute path for consistent relative path resolution
 	absPath, err := filepath.Abs(configPath)
 	if err != nil {
-		return nil, fmt.Errorf("failed to resolve config path %q: %w", configPath, err)
+		return nil, nil, fmt.Errorf("failed to resolve config path %q: %w", configPath, err)
 	}
 
 	// Check if path is directory and resolve config.yaml
 	info, err := os.Stat(absPath)
 	if err != nil {
-		return nil, fmt.Errorf("config file not found: %s\n"+
+		return nil, nil, fmt.Errorf("config file not found: %s\n"+
 			"Hint: Check the path or run with --config flag", absPath)
 	}
 
 	if info.IsDir() {
 		absPath = filepath.Join(absPath, "config.yaml")
 		if _, err := os.Stat(absPath); err != nil {
-			return nil, fmt.Errorf("directory provided but config.yaml not found: %s", absPath)
+			return nil, nil, fmt.Errorf("directory provided but config.yaml not found: %s", absPath)
 		}
 	}
 
@@ -60,13 +73,13 @@ func load(configPath string, verifyScopes bool, validateConfig bool) (*Config, e
 	configDir := filepath.Dir(absPath)
 	kr, err := resolveKeyring(configDir, nil)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	// Load main config file
 	cfg, err := loadConfigFile(absPath, make(map[string]bool), kr)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	cfg.SourceFiles = make(map[string]*yaml.Node)
 
@@ -75,7 +88,7 @@ func load(configPath string, verifyScopes bool, validateConfig bool) (*Config, e
 	if kr.Empty() && cfg.Secrets.AgeKeyFile != "" {
 		kr, err = resolveKeyring(configDir, cfg)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 	}
 
@@ -97,7 +110,7 @@ func load(configPath string, verifyScopes bool, validateConfig bool) (*Config, e
 		// origin).
 		visited[absPath] = true
 		if err := loadIncludes(cfg, cfg.Include, configDir, visited, kr); err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		for path := range visited {
 			includedPaths = append(includedPaths, path)
@@ -111,16 +124,16 @@ func load(configPath string, verifyScopes bool, validateConfig bool) (*Config, e
 	// Graft vault secrets into the legacy resolution table before validation, so
 	// a secret_ref to a vault-only secret passes the existence checks. No-ops
 	// when there is no vault or no key (coexistence window / keyless callers).
-	warnings, err := graftVaultSecrets(cfg, configDir, kr)
+	owner, warnings, err := graftVaultSecrets(cfg, configDir, kr)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	logGraftWarnings(warnings)
 
 	if verifyScopes {
 		// Hash-verify scope files (tokens.yaml, webhooks.yaml)
 		if err := verifyScopeFilesRecursively(includedPaths); err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 	}
 
@@ -135,13 +148,13 @@ func load(configPath string, verifyScopes bool, validateConfig bool) (*Config, e
 				vaultBlind: vaultBlind(configDir, cfg, kr),
 			}
 			if err := validator.ValidateCrossReferences(); err != nil {
-				return nil, fmt.Errorf("configuration validation failed: %w", err)
+				return nil, nil, fmt.Errorf("configuration validation failed: %w", err)
 			}
 		}
 
 		// Standard validation
 		if err := validate(cfg); err != nil {
-			return nil, fmt.Errorf("invalid configuration: %w", err)
+			return nil, nil, fmt.Errorf("invalid configuration: %w", err)
 		}
 	}
 
@@ -151,7 +164,7 @@ func load(configPath string, verifyScopes bool, validateConfig bool) (*Config, e
 		cfg.Plugins[name] = merged
 	}
 
-	return cfg, nil
+	return cfg, owner, nil
 }
 
 // DiscoverConfigDir finds the config directory by checking standard locations.

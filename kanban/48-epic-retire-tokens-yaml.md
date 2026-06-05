@@ -1,10 +1,40 @@
 ---
 id: 48
-status: backlog
+status: doing
 priority: Normal
 blocked_by: [9, 14, 68]
-tags: [vault, epic, back-compat, decomplect, tokens-yaml, deferred]
+tags: [vault, epic, back-compat, decomplect, tokens-yaml]
 ---
+
+## Progress (2026-06-05) — blockers [9,14,68] all DONE; epic unblocked, execution started
+
+**Slice 1 — parity-verify tool: DONE + tested.** Added `ductile vault import --verify` (read-only,
+skips the PID lock, mutates nothing, repeatable while the daemon serves). Pure classifier
+`config.VerifyTokenParity` (`internal/config/vault_import.go`) reuses `PlanTokenImport`'s literal-vs-${ENV}
+split, then per entry vs the live vault yields: **match** / **vault-only** (env-pointer superseded by an
+active vault value — green) / **missing** (resolvable in tokens.yaml, absent in vault) / **drift** (both
+present & differ — the idempotency guard: a since-rolled value is NEVER clobbered) / **unresolved**
+(${ENV} with no vault value — forces an explicit decision, no silent freeze). Exit 0 only when green; else
+exit 2 so a cutover script gates on it. Unit test covers all five verdicts + revoked-not-counted + sorted
+output (`go test ./internal/config` green).
+
+**Slice 2 — single-decrypt (snapshot-at-reload, per Matt's call): DONE + tested.** Chose the Hickey-honest
+design: instead of stashing a live owner on the `Config` value (complecting a value with a process object),
+**thread the owner explicitly**. The load-time graft (`graftVaultSecrets`) now returns the owner it already
+decrypts; `config.LoadWithVault` surfaces it; the daemon-start path (`runStart`) passes it via
+`runtimeBuildOptions.vaultOwner`, and `buildRuntime` reuses it instead of a second `LoadVault` decrypt
+(#43 redundant decrypt killed on the start path). **Default-safe:** a nil opts owner — reload, restore,
+keyless, no-vault — falls back to the exact prior `LoadVault`, so reload + all CLIs + boot validation are
+byte-for-byte unchanged (the graft still populates `cfg.Tokens` before `ValidateCrossReferences`, so the
+armed `validate_config_on_boot` gate sees vault-only refs exactly as before). Removed the now-redundant
+`vaultStore` helper. Tests: `TestGraftVaultSecretsReturnsOwner` + existing graft/keyless suite green;
+`go build/vet/golangci-lint ./...` clean. NOTE: resolvers still read `cfg.Tokens` (graft-populated) —
+fully pointing them at the owner + deleting the graft is slice 3.
+
+Drive-by: fixed one pre-existing repo-wide lint failure (`internal/state/stopwatch_query.go` unchecked
+`rows.Close`) so the premerge `golangci-lint run ./...` gate is green.
+
+**Slice 3 — demolish (destructive): GATED on explicit go-ahead.** Unchanged.
 
 # Retire `tokens.yaml` — kill the graft, resolve against the live vault (EPIC)
 
@@ -50,3 +80,38 @@ migration tool reports green parity on a real `tokens.yaml`; `grep -r tokens.yam
 All three already import their tokens.yaml into the vault with proven parity (Thinkpad: 6/6), and each
 logs the 6 "in both vault and tokens.yaml — remove the entry" graft warnings on every op. Killing the
 graft + tokens.yaml clears that cruft. Do not start until #68 is done.
+
+## Hickey × Armstrong review (2026-06-05)
+
+Design review of this epic through structure-at-rest (Hickey) and behaviour-under-fault (Armstrong).
+The epic is sound and correctly scoped to *demolish, not execute yet*. Three concrete additions:
+
+**Hickey — the essential move is killing the copy.** The same vault blob is decrypted twice into two
+independently-shaped containers: `graftVaultSecrets` (`loader.go:114`) → flat `cfg.Tokens`, *frozen at
+load*; and `config.LoadVault` (`runtime.go:589`) → the live `vaultOwner`. That is two copies of one value
+with no single source of truth at the point of use — the webhook reads the frozen copy (`runtime.go:686`),
+the plugin reads the live one (`Compose`). The freshness asymmetry is the symptom; the duplicated value is
+the disease. Everything in `vault_secrets.go` (`activeVaultSecrets`, `mergeVaultSecrets`,
+`pluginScopedSecret`, `unregisteredGrantee`, the blast-radius warning, `vaultBlind`) is the *cost of the
+copy*, not essential to "resolve a secret_ref" — slice 2 makes it all evaporate. The graft's own comment
+("without touching a single resolver") is the tell: easy slid into complex.
+
+**Armstrong — slice 2 introduces the only genuinely new failure mode.** The epic *reduces* failure
+surfaces (one decrypt, one owner, already supervised by the fail-closed boot path) — good. But the message
+contract for webhook/relay changes shape: today they get a *frozen `map[string]string`* once at
+construction (`relay/config.go:149`, `runtime.go:686`) and an HMAC check *cannot* fail "secret vanished".
+After slice 2 they ask the *live* owner, which *can* fail at request time (revoke-mid-flight, mid-rotation,
+owner lock held by a long write), and webhook/plugin resolution stop failing independently — they share the
+owner. **Action (slice 2):** specify the read contract (cheap live read vs. snapshot-at-reload vs.
+snapshot-per-request; `Snapshot()` is a deep copy under lock — is it on the webhook hot path now?) and name
+the request-time-miss supervisor/fallback.
+
+**`${ENV}` parity trap — implicit state masquerading as data.** tokens.yaml `${ENV}` indirections resolve
+at load against *the daemon's environment*; the vault holds a *frozen value*. So slice-1 "parity" is true
+only at the import host, at import time — and the three instances are different machines. **Action (slice
+1):** state the rule as "refuse to silently freeze an `${ENV}` — the environment is an uncontracted,
+host-local input"; parity is host-and-time-scoped, not absolute.
+
+**Demolition gate is a note, not an invariant.** "Do not start until #68 is done" is supervised by Matt
+remembering. **Action (slice 3):** have slice 1's tool emit a per-host green-parity attestation and make
+slice 3 *require* all three before it will demolish — turn the sequencing note into a checked precondition.

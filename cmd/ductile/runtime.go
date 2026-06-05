@@ -31,6 +31,7 @@ import (
 	"github.com/mattjoyce/ductile/internal/scheduler"
 	"github.com/mattjoyce/ductile/internal/state"
 	"github.com/mattjoyce/ductile/internal/storage"
+	"github.com/mattjoyce/ductile/internal/vault"
 	"github.com/mattjoyce/ductile/internal/webhook"
 )
 
@@ -67,6 +68,11 @@ type reloadManager struct {
 type runtimeBuildOptions struct {
 	snapshotReason     string
 	existingSnapshotID string
+	// vaultOwner, when non-nil, is the vault owner already decrypted by the
+	// load-time graft (config.LoadWithVault). buildRuntime reuses it as the live
+	// owner instead of decrypting the blob again (#43 redundant decrypt; epic #48
+	// slice 2). nil — reload, restore, or no vault — falls back to a fresh load.
+	vaultOwner *vault.Vault
 }
 
 func (rt *runtimeState) Stop() {
@@ -586,10 +592,17 @@ func buildRuntime(cfg *config.Config, configPath string, configSource string, re
 	// compose-time gate is off for vault-less deployments (and we avoid a typed-nil
 	// interface that would defeat the nil check in composePluginSecrets).
 	var pluginVerifier dispatch.PluginVerifier
-	vaultOwner, err := config.LoadVault(configDir, cfg)
-	if err != nil {
-		logger.Error("failed to load vault", "error", err)
-		return nil, fmt.Errorf("vault: %w", err)
+	// Reuse the owner the load-time graft already decrypted (passed via opts on the
+	// daemon start path) rather than decrypting the blob a second time (#43
+	// redundant decrypt; epic #48 slice 2). A nil opts owner — reload, restore, or
+	// no vault — falls back to a fresh load, preserving prior behaviour exactly.
+	vaultOwner := opts.vaultOwner
+	if vaultOwner == nil {
+		vaultOwner, err = config.LoadVault(configDir, cfg)
+		if err != nil {
+			logger.Error("failed to load vault", "error", err)
+			return nil, fmt.Errorf("vault: %w", err)
+		}
 	}
 	if vaultOwner != nil {
 		secretComposer = vaultOwner
@@ -731,7 +744,9 @@ func runStart(args []string) int {
 		*configPath = discovered
 	}
 
-	cfg, err := config.Load(*configPath)
+	// LoadWithVault also returns the owner decrypted by the load-time graft, so the
+	// daemon reuses that single decryption as its live owner (epic #48 slice 2).
+	cfg, vaultOwner, err := config.LoadWithVault(*configPath)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to load config: %v\n", err)
 		return 1
@@ -754,6 +769,7 @@ func runStart(args []string) int {
 
 	runtime, err := buildRuntime(cfg, *configPath, configSource, manager.reloadFunc, manager.errCh, runtimeBuildOptions{
 		snapshotReason: configsnapshot.ReasonStartup,
+		vaultOwner:     vaultOwner,
 	})
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to start runtime: %v\n", err)
