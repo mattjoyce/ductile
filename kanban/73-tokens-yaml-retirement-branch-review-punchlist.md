@@ -41,7 +41,11 @@ Grouped to keep the board readable — split into its own card when picked up (f
     variant behind the existing public signatures. Deferred as its own change. Remaining part of
     [[43-vault-single-load-thread-nonce-boot]]; efficiency + minor TOCTOU cleanup, **not** a security hole.
 
-- [ ] **(MED) Dangling `vault import` verb + stale CLI help print "Unknown action".**
+- [x] **(MED) Dangling `vault import` verb + stale CLI help print "Unknown action".** FIXED `c5fcab5`:
+  deleted the `import` help line from `printVaultNounHelp` (verb dispatch+impl were already gone; the
+  on-ramp was a deliberate throwaway — operators with an old `tokens.yaml` use `vault set`). Also fixed
+  the stale `secrets` help example (tokens.yaml→webhooks.yaml) and stopped `config init` scaffolding a
+  `tokens.yaml` stub.
   Ousterhout's sharpest delta finding (6a, user-facing); also Lamport T2 / Hickey.
   `printVaultNounHelp` (`cmd/ductile/vault.go:77`) still advertises `import   Migrate tokens.yaml entries…
   [--config --tokens --resolve-env]`, but `runVaultNoun` has no `case "import"` and `runVaultImport` +
@@ -51,7 +55,11 @@ Grouped to keep the board readable — split into its own card when picked up (f
   *Decision needed:* either **restore the `import` verb** (it is the on-ramp an operator with an old
   `tokens.yaml` still needs) **or delete the help lines**. Help and dispatch must agree.
 
-- [ ] **(LOW) Sweep stale comments/doc-drift that still narrate the retired `tokens.yaml`/graft world.**
+- [x] **(LOW) Sweep stale comments/doc-drift that still narrate the retired `tokens.yaml`/graft world.**
+  FIXED `877e9bc`: renamed the "graft" vocabulary to "projection", dropped the dead `cfg.Tokens` /
+  "tokens.yaml is authoritative" references, and renamed `logGraftWarnings`→`logSecretProjectionWarnings`
+  (vault_secrets.go, loader.go, runtime.go, webhook types/doc). Left the still-accurate shim comments
+  (loader scope-file handling) untouched — that machinery is live until the shim is removed (see below).
   Flagged by all four; navigation hazard in an AI-built codebase where doc-comments are the stated contract.
   Survivors: `loader.go:124` ("graft … legacy resolution table / coexistence window"), `loader.go:133`
   ("Hash-verify scope files (tokens.yaml, webhooks.yaml)"), `vault_secrets.go:24/60/101/102/124/175`
@@ -61,7 +69,8 @@ Grouped to keep the board readable — split into its own card when picked up (f
   no merge/collision now, these are blast-radius warnings), `internal/webhook/types.go:39`
   ("SecretRef references a secret in tokens.yaml"). Behaviour is correct; the words describe a dead world.
 
-- [ ] **(LOW) Bump `SnapshotFormat` (or restore dropped token fields).**
+- [x] **(LOW) Bump `SnapshotFormat` (or restore dropped token fields).** FIXED `877e9bc`: `SnapshotFormat`
+  `1`→`2` with a comment recording the {name,key} vault-sourced shape change.
   Lamport T1 — the bug-hunt's "HIGH" was **disproven**: `sanitizeConfig` now emits tokens as `{name, key}` and
   labels the source `vault` (`configsnapshot/snapshot.go:288-302`), changing the appended `config_hash` shape on
   upgrade, but this is **cosmetic** — `FailOnDrift` drives `.checksums` integrity drift via `verifyReloadIntegrity`
@@ -77,14 +86,15 @@ Grouped to keep the board readable — split into its own card when picked up (f
   risk is it outliving its purpose. Delete after the M1 / Unraid / ThinkPad boxes ([[67-deploy-vault-branch-macm1]],
   [[68-deploy-vault-branch-unraid]], [[49-epic-thinkpad-vault-field-trial]]) drop the include.
 
-- [ ] **(LOW) Dead-residue sweep.** Ousterhout 6d — `TokensConfig` (`types.go:356`, the flat `tokens.yaml` model)
-  has no remaining non-test referent; the `tokens.yaml` half of `verifyScopeFilesRecursively` is now unreachable
-  for authoring (webhooks.yaml remains). Delete, or annotate as intentional back-compat.
+- [x] **(LOW) Dead-residue sweep.** FIXED `877e9bc`: deleted the dead `config.TokensConfig` type (zero
+  referents, even in tests). The `tokens.yaml` half of `verifyScopeFilesRecursively` is **intentionally
+  retained** — it is the live deploy-safety shim (see next item), not dead code.
 
-- [ ] **(MED · verify) Confirm inbound API bearer-token authz kept a home after `tokens.yaml` retirement.**
-  Brooks's one honest residual — he verified the inbound *scope domain* (`cf.Scopes`, `scopes/*.json`, `auth.go`)
-  survives the `TokenEntry.ScopesFile` deletion, but did **not** fully trace where inbound API *bearer-token
-  definitions* now live post-`tokens.yaml`. Confirm API-token authz was not orphaned by the cutover.
+- [x] **(MED · verify) Confirm inbound API bearer-token authz kept a home after `tokens.yaml` retirement.**
+  CONFIRMED 2026-06-06: inbound API bearer tokens live in `cfg.API.Auth.Tokens` (config-native, never
+  `tokens.yaml`) and are checked by `auth.Authenticate(token, s.config.Tokens)` (`internal/api/auth.go:23`);
+  validated by `loader.go` + `doctor.go`, snapshotted by fingerprint only. Wholly independent of the retired
+  `tokens.yaml`/`TokenEntry` path — not orphaned by the cutover.
 
 ## Notes (no action — captured for the trail)
 
