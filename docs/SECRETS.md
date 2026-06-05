@@ -192,6 +192,11 @@ That splits the CLI into two classes (see `ductile vault --help`):
 
 ### Genesis and lifecycle
 
+> **Deploying onto a real instance?** This section is the lifecycle model. The full,
+> ordered first-time deploy procedure — backup, `vault_audit` migration, genesis, config
+> reconcile, import, `config lock` **and** `plugin lock --all`, cutover, verify — is the
+> how-to in [DEPLOYMENT.md § 11](DEPLOYMENT.md).
+
 ```bash
 # 1. Genesis: create a new vault. Seeds the core principal, the fingerprint nonce,
 #    and a one-time admin token (printed once — store it; it is the API credential).
