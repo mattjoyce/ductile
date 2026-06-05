@@ -173,9 +173,13 @@ time. It is the home for secrets that have a lifecycle.
   secret also cannot be created with an empty value; `auto` secrets are minted on first
   `roll`.)
 - **Compose** — at dispatch, the daemon resolves the calling principal's authorized,
-  active secrets and delivers them in the plugin's request `config` map over **stdin**
-  — never via the environment or argv. Compose is **fail-closed**: an unknown
-  principal, a revoked secret, or a failed plugin attestation yields no delivery.
+  active secrets and delivers them in the plugin's request **`secrets`** map (a field
+  distinct from `config`) over **stdin** — never via the environment or argv. Compose
+  is **fail-closed**: an unknown principal, a revoked secret, or a failed plugin
+  attestation yields no delivery. **Freshness asymmetry:** plugin secrets compose
+  **fresh per spawn** (a `roll` is visible on the next dispatch); webhook/relay
+  `secret_ref`s instead **freeze at boot** and need `ductile system reload` to pick up
+  a roll (see [OPERATOR_GUIDE.md](OPERATOR_GUIDE.md)).
 
 ### Sole-writer model
 
@@ -215,7 +219,7 @@ ductile vault roll   --api-url ... --token ... --name withings_api
 ductile vault revoke --api-url ... --token ... --name withings_api
 ```
 
-The plugin receives `withings_api` in its request `config` at dispatch — it never sees
+The plugin receives `withings_api` in its request `secrets` map at dispatch — it never sees
 the vault, the key, or other principals' secrets.
 
 ### Rotating the vault key
@@ -296,7 +300,7 @@ Plugin child processes **no longer inherit the gateway's full environment.** The
 PATH  HOME  TZ  LANG  LANGUAGE  LC_ALL  LC_*  TMPDIR
 ```
 
-plus any names the operator explicitly grants. Secrets reach plugins **only** over the stdin protocol request (the `config` map) — never via the environment, never via argv.
+plus any names the operator explicitly grants. Secrets reach plugins **only** over the stdin protocol request (the request's `secrets` map, distinct from `config`) — never via the environment, never via argv.
 
 ### Granting extra variables
 
@@ -324,4 +328,4 @@ In this repo, `plugins/sys_exec` is the one plugin that reads the process enviro
 
 - [CONFIG_REFERENCE.md](CONFIG_REFERENCE.md) — directory model, integrity preflight, env interpolation order.
 - [OPERATOR_GUIDE.md](OPERATOR_GUIDE.md) — `config lock`/`check`, strict mode, day-to-day operations.
-- [PLUGIN_DEVELOPMENT.md](PLUGIN_DEVELOPMENT.md) — how secrets reach plugins via the `config` map over stdin.
+- [PLUGIN_DEVELOPMENT.md](PLUGIN_DEVELOPMENT.md) — how secrets reach plugins via the request's `secrets` map over stdin.

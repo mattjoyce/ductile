@@ -148,6 +148,8 @@ ductile secrets keygen|encrypt|rotate            # age-at-rest tooling for confi
 ductile system vault-audit [--principal <p>]     # the append-only audit log (names + outcomes, never values)
 ```
 
+**Onboarding a plugin to vault secrets = three ordered steps:** (1) `vault register-principal --name <p> --kind plugin`, (2) `vault set --name <s> --principal <p>` (grant each secret), (3) `plugin lock <p>` (attest its bytes). All three are required — an unattested plugin has no recorded keyed fingerprint, so compose-time identity verification fails and it receives **nothing**.
+
 ### API (direct gateway calls)
 ```bash
 ductile api /jobs

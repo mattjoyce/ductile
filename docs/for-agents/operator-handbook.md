@@ -119,6 +119,8 @@ ductile plugin lock <name>                     # Attest plugin bytes — REQUIRE
 
 The vault delivers secrets to attested plugins. Two op classes (full model: `docs/SECRETS.md`):
 
+**Onboarding a plugin to vault secrets is three ordered steps:** (1) `vault register-principal --name <p> --kind plugin`, (2) `vault set --name <s> --principal <p>` to grant each secret, (3) `plugin lock <p>` to attest its bytes. All three are required — an unattested plugin has no recorded keyed fingerprint, so compose-time identity verification fails and it receives **nothing**.
+
 ```bash
 # Local, key-touching — daemon STOPPED (hold the age key; PID-lock guarded):
 ductile vault init   --vault vault.age --key age.key      # genesis: core principal + nonce + one-time admin token

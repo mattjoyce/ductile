@@ -604,7 +604,7 @@ Manage the owned secret store (principals and secrets). **Auth:** the vault-resi
 | Endpoint | Body | Response | Notes |
 |---|---|---|---|
 | `POST /vault/principal` | `{"name","kind"}` | `{"name","status"}` | Register a deliver-to identity. `kind` is `plugin`, `consumer`, or `gateway`. |
-| `POST /vault/secret` | `{"name","value","authorized_principals":[],"pattern"}` | `{"name","status"}` | Upsert a secret. `pattern` is `manual` (default) or `auto`. `authorized_principals` lists the principals allowed to receive it (each must already be registered). |
+| `POST /vault/secret` | `{"name","value","authorized_principals":[],"pattern"}` | `{"name","status"}` | Upsert a secret. `pattern` is `manual` (default) or `auto`. `authorized_principals` lists the principals allowed to receive it (each must already be registered). Omitting the field leaves existing grants unchanged; `[]` clears them; a list replaces them — so a partial update never silently wipes grants. |
 | `POST /vault/secret/roll` | `{"name","value"}` | `{"name","status"}` | Supersede the value. Manual secrets take the new value from the body; auto secrets are minted by the daemon (any `value` ignored). |
 | `POST /vault/secret/revoke` | `{"name"}` | `{"name","status"}` | Terminal: marks the secret revoked and clears its value. |
 | `POST /vault/principal/revoke` | `{"name"}` | `{"name","status"}` | Revoke a principal; its secrets stop being delivered (fail closed). |
