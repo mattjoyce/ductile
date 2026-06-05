@@ -34,7 +34,22 @@ fully pointing them at the owner + deleting the graft is slice 3.
 Drive-by: fixed one pre-existing repo-wide lint failure (`internal/state/stopwatch_query.go` unchecked
 `rows.Close`) so the premerge `golangci-lint run ./...` gate is green.
 
-**Slice 3 — demolish (destructive): GATED on explicit go-ahead.** Unchanged.
+**Rigorous validation (2026-06-05, Dell x86 `golang:1.25` container, offline-vendored):**
+- `go build` + `go vet` + full `go test ./...` green on x86 Linux (incl. `cmd/ductile`). The only
+  red were environmental, NOT this change: 2 `internal/vault` `…RollsBackOnSaveFailure` tests fail
+  under root-in-container (perm-based save-failure can't trigger as root) — both PASS as `--user 1000`;
+  and 2 macOS dispatch timing flakes that pass on Linux. `internal/vault` is untouched by this commit.
+- `golangci-lint run ./...` = 0 issues (after the stopwatch_query drive-by).
+- Slice 1 e2e via the real binary: `vault import --verify` → MATCH (green, exit 0), DRIFT (exit 2,
+  never clobbered), MISSING (exit 2). All verdicts correct.
+- Slice 2 e2e: `ductile system start` against a real vault boots clean — "vault secret delivery
+  enabled (compose-time attestation on)", no vault load errors (the reused single owner serves).
+
+Committed + pushed: `fbad7a0` on `feat/age-secrets-and-spawn-hygiene`.
+
+**Slice 3 — demolish (destructive): GATED on explicit go-ahead.** Unchanged. Now the natural next step:
+point relay (`relay/config.go tokensByName`) + webhook (`runtime.go`) straight at the owner, delete the
+graft + `cfg.Tokens` + tokens.yaml support + the `import`/`--verify` tool, rename `→ resolvedSecrets`.
 
 # Retire `tokens.yaml` — kill the graft, resolve against the live vault (EPIC)
 
