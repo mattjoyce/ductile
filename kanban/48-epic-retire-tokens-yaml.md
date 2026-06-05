@@ -2,7 +2,7 @@
 id: 48
 status: backlog
 priority: Normal
-blocked_by: [9, 14]
+blocked_by: [9, 14, 68]
 tags: [vault, epic, back-compat, decomplect, tokens-yaml, deferred]
 ---
 
@@ -44,3 +44,9 @@ marker so it's never mistaken for load-bearing.
 
 **Acceptance:** a fresh deploy with no `tokens.yaml` resolves every `secret_ref` from the vault; the
 migration tool reports green parity on a real `tokens.yaml`; `grep -r tokens.yaml` finds only history.
+
+**Sequencing (2026-06-05):** this is the FINAL step, after all three instances are on the vault path —
+[[66-redeploy-thinkpad-after-65-fix]] → [[67-deploy-vault-branch-macm1]] → [[68-deploy-vault-branch-unraid]].
+All three already import their tokens.yaml into the vault with proven parity (Thinkpad: 6/6), and each
+logs the 6 "in both vault and tokens.yaml — remove the entry" graft warnings on every op. Killing the
+graft + tokens.yaml clears that cruft. Do not start until #68 is done.
