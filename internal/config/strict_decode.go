@@ -10,12 +10,20 @@ import (
 )
 
 // dedicatedScopeDomains are top-level config domains that are NOT decoded
-// field-by-field into Config — Config carries Pipelines as `yaml:"-"` and loads
-// it via a dedicated path. A file that only carries such a domain is not a
-// Config document, so a strict Config-decode would mis-report its top key as
-// "unknown". Skip those files in the strict-decode warning pass.
+// field-by-field into Config — Config carries them as `yaml:"-"` and loads them
+// via a dedicated directory-mode path (Pipelines, Tokens). A file that only
+// carries such a domain is not a Config document, so a strict Config-decode
+// would mis-report its top key as "unknown". Skip those files in the
+// strict-decode warning pass.
+//
+// Invariant: every top-level file-domain that Config carries as `yaml:"-"`
+// (i.e. loaded outside the struct decode) MUST be listed here, or a file that
+// only carries it is a false positive. The `yaml:"-"` tag erases the domain
+// name, so this list is maintained by hand rather than derived by reflection.
+// (`tokens` is retired with tokens.yaml itself — see the retire-tokens epic.)
 var dedicatedScopeDomains = map[string]bool{
 	"pipelines": true,
+	"tokens":    true,
 }
 
 // StrictDecodeWarnings re-decodes the already-loaded config's source files
