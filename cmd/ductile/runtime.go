@@ -151,7 +151,7 @@ func (rm *reloadManager) Reload(ctx context.Context) (api.ReloadResponse, error)
 	}
 	oldCfg := oldRuntime.cfg
 
-	newCfg, err := config.Load(rm.configPath)
+	newCfg, newOwner, err := config.LoadWithVault(rm.configPath)
 	if err != nil {
 		return api.ReloadResponse{Status: "error", Message: err.Error()}, err
 	}
@@ -182,6 +182,11 @@ func (rm *reloadManager) Reload(ctx context.Context) (api.ReloadResponse, error)
 
 	runtime, err := buildRuntime(newCfg, rm.configPath, rm.configSource, rm.reloadFunc, rm.errCh, runtimeBuildOptions{
 		snapshotReason: configsnapshot.ReasonReload,
+		// Reuse the owner LoadWithVault already decrypted instead of letting
+		// buildRuntime re-decrypt the blob via LoadVault. The start path already
+		// threads its owner (#43 single-decrypt); the reload path regressed to a
+		// double-decrypt (2026-06-06 branch review, Ousterhout 6c) — this closes it.
+		vaultOwner: newOwner,
 	})
 	if err != nil {
 		oldRuntime.logger.Error("reload failed; attempting to restore previous runtime", "error", err)
