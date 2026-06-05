@@ -83,49 +83,9 @@ func TestReadConfigBytesEncryptedNoKeyFails(t *testing.T) {
 	}
 }
 
-// TestGraftTokensEncryptedThenInterpolated proves the load ordering: an encrypted
-// tokens file is decrypted first, then ${ENV} interpolation runs over the
-// plaintext, then YAML is parsed.
-func TestGraftTokensEncryptedThenInterpolated(t *testing.T) {
-	kr, id := makeKeyringForTest(t)
-	t.Setenv("TEST_WITHINGS_TOKEN", "interpolated-secret")
-
-	plaintext := []byte("tokens:\n  - name: withings\n    key: ${TEST_WITHINGS_TOKEN}\n")
-	ciphertext, err := secrets.Encrypt(plaintext, []age.Recipient{id.Recipient()})
-	if err != nil {
-		t.Fatalf("encrypt: %v", err)
-	}
-	path := filepath.Join(t.TempDir(), "tokens.yaml")
-	if err := os.WriteFile(path, ciphertext, 0o600); err != nil {
-		t.Fatalf("write: %v", err)
-	}
-
-	cfg := &Config{}
-	if err := graftTokens(cfg, path, kr); err != nil {
-		t.Fatalf("graftTokens: %v", err)
-	}
-	if len(cfg.Tokens) != 1 {
-		t.Fatalf("got %d tokens, want 1", len(cfg.Tokens))
-	}
-	if cfg.Tokens[0].Key != "interpolated-secret" {
-		t.Fatalf("token key = %q, want interpolated-secret (decrypt-then-interpolate)", cfg.Tokens[0].Key)
-	}
-}
-
-func TestGraftTokensPlaintextBackwardCompatible(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "tokens.yaml")
-	if err := os.WriteFile(path, []byte("tokens:\n  - name: a\n    key: plain\n"), 0o600); err != nil {
-		t.Fatalf("write: %v", err)
-	}
-	cfg := &Config{}
-	// An empty keyring must still load plaintext tokens (encryption off).
-	if err := graftTokens(cfg, path, &secrets.Keyring{}); err != nil {
-		t.Fatalf("graftTokens plaintext: %v", err)
-	}
-	if len(cfg.Tokens) != 1 || cfg.Tokens[0].Key != "plain" {
-		t.Fatalf("plaintext tokens not loaded: %+v", cfg.Tokens)
-	}
-}
+// tokens.yaml is no longer a secret source (epic #48) — the decrypt-then-
+// interpolate-then-graft path it had is removed. Secret resolution and its
+// decrypt ordering are now covered by the vault projection tests.
 
 // TestLoadEnvFileDecryptsEncrypted proves the altitude fix: an age-encrypted
 // .env include is decrypted before its KEY=VALUE lines are parsed.

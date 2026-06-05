@@ -1670,7 +1670,6 @@ func TestLoadAcceptsIncludedStandaloneWebhooksFileNestedShape(t *testing.T) {
 	tmpDir := t.TempDir()
 	configYAML := `
 include:
-  - tokens.yaml
   - webhooks.yaml
 
 service:
@@ -1679,6 +1678,9 @@ state:
   path: ./test.db
 plugin_roots:
   - ./plugins
+secrets:
+  age_key_file: age.key
+  vault_file: vault.age
 plugins:
   echo:
     enabled: true
@@ -1708,9 +1710,11 @@ webhooks:
 	if err := os.WriteFile(filepath.Join(tmpDir, "scopes", "webhook.json"), []byte("[\"*\"]\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := GenerateChecksumsWithReport(tmpDir, []string{"tokens.yaml", "webhooks.yaml"}, false); err != nil {
+	if _, err := GenerateChecksumsWithReport(tmpDir, []string{"webhooks.yaml"}, false); err != nil {
 		t.Fatal(err)
 	}
+	// The webhook secret now resolves from the vault (epic #48), not tokens.yaml.
+	seedVault(t, tmpDir, map[string]string{"github_webhook_secret": "test-secret"})
 
 	cfg, err := Load(tmpDir)
 	if err != nil {
@@ -1719,8 +1723,8 @@ webhooks:
 	if cfg.Webhooks == nil || len(cfg.Webhooks.Endpoints) != 1 {
 		t.Fatalf("cfg.Webhooks.Endpoints = %v, want 1 endpoint", cfg.Webhooks)
 	}
-	if len(cfg.Tokens) != 1 || cfg.Tokens[0].Name != "github_webhook_secret" {
-		t.Fatalf("cfg.Tokens = %v, want github_webhook_secret", cfg.Tokens)
+	if cfg.ResolvedSecrets["github_webhook_secret"] != "test-secret" {
+		t.Fatalf("github_webhook_secret not resolved from vault: %v", cfg.ResolvedSecrets)
 	}
 }
 
@@ -1777,7 +1781,6 @@ func TestLoadAcceptsRelayConfigIncludes(t *testing.T) {
 	tmpDir := t.TempDir()
 	configYAML := `
 include:
-  - tokens.yaml
   - relay-instances.yaml
   - relay-ingress.yaml
 
@@ -1788,6 +1791,9 @@ state:
   path: ./test.db
 plugin_roots:
   - ./plugins
+secrets:
+  age_key_file: age.key
+  vault_file: vault.age
 plugins:
   echo:
     enabled: true
@@ -1854,6 +1860,8 @@ remote_ingress:
 		t.Fatal(err)
 	}
 
+	seedVault(t, tmpDir, map[string]string{"relay-lab-v1": "test-secret"})
+
 	cfg, err := Load(tmpDir)
 	if err != nil {
 		t.Fatalf("Load() failed: %v", err)
@@ -1873,7 +1881,6 @@ func TestLoadRejectsDuplicateRelayInstanceNames(t *testing.T) {
 	tmpDir := t.TempDir()
 	configYAML := `
 include:
-  - tokens.yaml
   - relay-instances.yaml
 
 service:
@@ -1883,6 +1890,9 @@ state:
   path: ./test.db
 plugin_roots:
   - ./plugins
+secrets:
+  age_key_file: age.key
+  vault_file: vault.age
 plugins:
   echo:
     enabled: true
@@ -1925,6 +1935,8 @@ instances:
 	if _, err := GenerateChecksumsWithReport(tmpDir, []string{"tokens.yaml"}, false); err != nil {
 		t.Fatal(err)
 	}
+
+	seedVault(t, tmpDir, map[string]string{"relay-lab-v1": "test-secret"})
 
 	_, err := Load(tmpDir)
 	if err == nil {

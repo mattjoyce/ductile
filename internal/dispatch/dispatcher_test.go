@@ -326,7 +326,7 @@ func TestDispatcher_ExecuteCoreRelayStep(t *testing.T) {
 	}
 	disp.router = router.New(set, nil)
 	disp.cfg.Service.Name = "home-primary"
-	disp.cfg.Tokens = []config.TokenEntry{{Name: "relay_lab_v1", Key: "shared-secret"}}
+	disp.cfg.ResolvedSecrets = map[string]string{"relay_lab_v1": "shared-secret"}
 	disp.cfg.RelayInstances = []config.RelayInstanceConfig{{
 		Name:        "lab",
 		Enabled:     true,

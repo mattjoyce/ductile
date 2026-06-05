@@ -47,9 +47,26 @@ Drive-by: fixed one pre-existing repo-wide lint failure (`internal/state/stopwat
 
 Committed + pushed: `fbad7a0` on `feat/age-secrets-and-spawn-hygiene`.
 
-**Slice 3 — demolish (destructive): GATED on explicit go-ahead.** Unchanged. Now the natural next step:
-point relay (`relay/config.go tokensByName`) + webhook (`runtime.go`) straight at the owner, delete the
-graft + `cfg.Tokens` + tokens.yaml support + the `import`/`--verify` tool, rename `→ resolvedSecrets`.
+**Slice 3a — demolish the runtime back-compat: DONE + tested (2026-06-06).** The vault is now the SOLE
+secret source. Changes:
+- Renamed `cfg.Tokens []TokenEntry` → `cfg.ResolvedSecrets map[string]string`, projected once from the
+  vault owner at load (`projectVaultSecrets`, was `graftVaultSecrets` — no tokens.yaml, no merge).
+- Repointed every reader at `ResolvedSecrets`: relay (`tokensByName`), webhook (`runtime.go`), load-time
+  `ValidateCrossReferences`, observability (`configsnapshot`, `api/config_view` — now show resolved secret
+  *names* only).
+- Deleted: `graftTokens` (`config/tokens.go`), `mergeVaultSecrets`, the whole `vault_import.go`
+  (`PlanTokenImport`/`VerifyTokenParity`/`ReadRawTokens`), the `ductile vault import` + `--verify` CLI.
+- **Deploy-safe:** a lingering `tokens.yaml` include is now a harmless no-op — `dedicatedScopeDomains`
+  already skips it in strict-decode, so the existing prod boxes boot fine; vault just becomes sole source.
+- **Behaviour change (correct):** a config with a `secret_ref` but NO vault now fails `Load()`
+  (`checkSecretRef` is a hard error unless `vaultBlind`). Secrets must live in the vault.
+- Tests: reworked the loader/relay/snapshot/cmd tests onto a vault (`seedVault`/`seedVaultSecrets`
+  helpers); `go test ./...` green, `golangci-lint ./...` 0 issues.
+
+**Slice 3b — delete the orphaned tokens.yaml *file* surface: TODO (#72).** The `ductile config token` CLI,
+`TokensFileConfig`, `TokenEntry`, `ConfigFiles.Tokens` discovery still exist (they manage the tokens.yaml
+file independently of the runtime). After 3a they're dead-but-isolated: `config token add` writes a file
+the runtime ignores. 3b removes them so `grep -r tokens.yaml` finds only history (the epic's acceptance).
 
 # Retire `tokens.yaml` — kill the graft, resolve against the live vault (EPIC)
 

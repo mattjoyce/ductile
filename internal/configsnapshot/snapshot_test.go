@@ -27,7 +27,7 @@ func TestBuildRedactsSecretsAndHashesSecretChanges(t *testing.T) {
 	cfg.SourceFiles = map[string]*yaml.Node{configPath: {}}
 	cfg.API.Enabled = true
 	cfg.API.Auth.Tokens = []config.APIToken{{Token: "api-secret-one", Scopes: []string{"job:rw"}}}
-	cfg.Tokens = []config.TokenEntry{{Name: "github_webhook_secret", Key: "webhook-secret-one"}}
+	cfg.ResolvedSecrets = map[string]string{"github_webhook_secret": "webhook-secret-one"}
 	cfg.Webhooks = &config.WebhooksConfig{
 		Endpoints: []config.WebhookEndpoint{{Name: "github", Path: "/github", Plugin: "echo", SecretRef: "github_webhook_secret"}},
 	}

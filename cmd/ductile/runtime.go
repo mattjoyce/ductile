@@ -696,11 +696,7 @@ func buildRuntime(cfg *config.Config, configPath string, configSource string, re
 	}
 
 	if cfg.Webhooks != nil && len(cfg.Webhooks.Endpoints) > 0 {
-		tokensMap := make(map[string]string, len(cfg.Tokens))
-		for _, t := range cfg.Tokens {
-			tokensMap[t.Name] = t.Key
-		}
-		webhookConfig, err := webhook.FromGlobalConfig(cfg.Webhooks, tokensMap, cfg.Plugins)
+		webhookConfig, err := webhook.FromGlobalConfig(cfg.Webhooks, cfg.ResolvedSecrets, cfg.Plugins)
 		if err != nil {
 			logger.Error("failed to configure webhooks", "error", err)
 			return nil, err

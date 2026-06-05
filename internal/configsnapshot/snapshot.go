@@ -283,19 +283,21 @@ func sanitizeConfig(cfg *config.Config) (map[string]any, []SecretUse) {
 		})
 	}
 
-	tokenByName := make(map[string]string, len(cfg.Tokens))
-	tokens := make([]map[string]any, 0, len(cfg.Tokens))
-	for _, token := range cfg.Tokens {
-		tokenByName[token.Name] = token.Key
-		purpose := "tokens." + token.Name + ".key"
-		secretUses = append(secretUses, secretUse(purpose, token.Name, "tokens.yaml", token.Key))
+	// Secrets resolve from the vault (epic #48): cfg.ResolvedSecrets is the
+	// projected name->value table. Emit names (redacted) in deterministic order.
+	tokenByName := cfg.ResolvedSecrets
+	secretNames := make([]string, 0, len(tokenByName))
+	for name := range tokenByName {
+		secretNames = append(secretNames, name)
+	}
+	sort.Strings(secretNames)
+	tokens := make([]map[string]any, 0, len(secretNames))
+	for _, name := range secretNames {
+		purpose := "secret." + name
+		secretUses = append(secretUses, secretUse(purpose, name, "vault", tokenByName[name]))
 		tokens = append(tokens, map[string]any{
-			"name":        token.Name,
-			"key":         "[redacted:" + purpose + "]",
-			"scopes_file": token.ScopesFile,
-			"scopes_hash": token.ScopesHash,
-			"created_at":  token.CreatedAt,
-			"description": token.Description,
+			"name": name,
+			"key":  "[redacted:" + purpose + "]",
 		})
 	}
 

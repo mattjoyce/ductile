@@ -272,7 +272,6 @@ Plugin Commands:
 
 Vault Commands:
   vault init             Genesis: create a new vault (core principal, nonce, admin token) — local, key-touching
-  vault import           Migrate tokens.yaml entries into an existing vault — local, key-touching
   vault rotate-key       Rotate the vault's age identity — local, key-touching, daemon must be down
   vault register-principal Register a deliver-to principal (--name --kind plugin|consumer|gateway)
   vault set              Set a secret's value (value from stdin) — keyless API client

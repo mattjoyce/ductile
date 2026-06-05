@@ -26,7 +26,7 @@ type Config struct {
 	Routes          []RouteConfig         `yaml:"routes,omitempty"`   // Not in MVP
 	Webhooks        *WebhooksConfig       `yaml:"webhooks,omitempty"` // Not in MVP
 	SourceFiles     map[string]*yaml.Node `yaml:"-"`                  // Physical files tracked for updates
-	Tokens          []TokenEntry          `yaml:"-"`                  // Directory mode: token entries from tokens.yaml
+	ResolvedSecrets map[string]string     `yaml:"-"`                  // name->value, projected from the vault owner at load (epic #48)
 	Pipelines       []PipelineEntry       `yaml:"-"`                  // Directory mode: pipeline entries
 	ConfigDir       string                `yaml:"-"`                  // Directory mode: root config directory
 }

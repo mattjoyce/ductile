@@ -1164,7 +1164,7 @@ func refreshConfigIntegrity(configDir string) error {
 func errEncryptedTokens(path string) error {
 	return fmt.Errorf("tokens file %q is age-encrypted; the legacy 'config token' / 'config set' commands "+
 		"are not age-aware and would clobber it.\n"+
-		"Manage encrypted secrets through the vault instead: 'ductile vault set' / 'ductile vault import'", path)
+		"Manage encrypted secrets through the vault instead: 'ductile vault set'", path)
 }
 
 func loadTokensFile(path string) (*config.TokensFileConfig, error) {

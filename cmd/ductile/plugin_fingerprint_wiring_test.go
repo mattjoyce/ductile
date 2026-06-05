@@ -23,6 +23,14 @@ import (
 // <configDir>/age.key, resolveVaultPath → <configDir>/vault.age) mean no config
 // fields are needed to wire it up.
 func seedVault(t *testing.T, configDir string) {
+	seedVaultSecrets(t, configDir, nil)
+}
+
+// seedVaultSecrets writes a keyed vault (age.key + vault.age) into configDir
+// holding the given secrets, so a Load() there resolves their secret_refs now that
+// the vault is the sole secret source (epic #48). Pair it with a config secrets:
+// block pointing age_key_file/vault_file at age.key/vault.age.
+func seedVaultSecrets(t *testing.T, configDir string, kv map[string]string) {
 	t.Helper()
 	id, err := secrets.GenerateIdentity()
 	if err != nil {
@@ -36,8 +44,19 @@ func seedVault(t *testing.T, configDir string) {
 	if err != nil {
 		t.Fatalf("load keyring: %v", err)
 	}
-	if _, _, err := vault.Init(filepath.Join(configDir, "vault.age"), kr, time.Now()); err != nil {
+	v, _, err := vault.Init(filepath.Join(configDir, "vault.age"), kr, time.Now())
+	if err != nil {
 		t.Fatalf("vault init: %v", err)
+	}
+	for name, val := range kv {
+		if err := v.Store().SetSecret(name, val, nil, vault.PatternManual, time.Now()); err != nil {
+			t.Fatalf("seed secret %q: %v", name, err)
+		}
+	}
+	if len(kv) > 0 {
+		if err := v.Save(); err != nil {
+			t.Fatalf("vault save: %v", err)
+		}
 	}
 }
 

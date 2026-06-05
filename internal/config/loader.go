@@ -124,7 +124,7 @@ func load(configPath string, verifyScopes bool, validateConfig bool) (*Config, *
 	// Graft vault secrets into the legacy resolution table before validation, so
 	// a secret_ref to a vault-only secret passes the existence checks. No-ops
 	// when there is no vault or no key (coexistence window / keyless callers).
-	owner, warnings, err := graftVaultSecrets(cfg, configDir, kr)
+	owner, warnings, err := projectVaultSecrets(cfg, configDir, kr)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -140,11 +140,11 @@ func load(configPath string, verifyScopes bool, validateConfig bool) (*Config, *
 	if validateConfig {
 		// Validate configuration (including cross-file references if multi-file mode)
 		if len(cfg.Include) > 0 {
-			// Multi-file mode: extract tokens for cross-validation
-			tokens := extractTokensFromConfig(cfg)
+			// Multi-file mode: cross-validate secret_refs against the vault-projected
+			// resolved secrets (epic #48 — the vault is the sole secret source).
 			validator := &ConfigValidator{
 				config:     cfg,
-				tokens:     tokens,
+				tokens:     cfg.ResolvedSecrets,
 				vaultBlind: vaultBlind(configDir, cfg, kr),
 			}
 			if err := validator.ValidateCrossReferences(); err != nil {
@@ -336,12 +336,11 @@ func loadIncludeFile(cfg *Config, includeIndex int, includePath string, absPath 
 		return fmt.Errorf("include[%d] (%s): %w", includeIndex, includePath, err)
 	}
 
-	// Special handling for scope files with non-YAML-serialisable fields
-	if filepath.Base(absPath) == "tokens.yaml" {
-		if err := graftTokens(cfg, absPath, kr); err != nil {
-			return fmt.Errorf("include[%d] (%s): %w", includeIndex, includePath, err)
-		}
-	}
+	// tokens.yaml is no longer a secret source — the vault is the sole source
+	// (epic #48). A lingering tokens.yaml include is a harmless no-op: its `tokens:`
+	// key is ignored by the lenient decode and skipped by the strict-decode gate
+	// (dedicatedScopeDomains), so existing configs keep booting until the include
+	// is removed.
 
 	// Deep merge included config into main config
 	if err := deepMergeConfig(cfg, includedCfg); err != nil {
@@ -611,15 +610,6 @@ func verifyScopeFilesRecursively(paths []string) error {
 	}
 
 	return nil
-}
-
-// extractTokensFromConfig extracts token definitions from config for cross-validation.
-func extractTokensFromConfig(cfg *Config) map[string]string {
-	m := make(map[string]string, len(cfg.Tokens))
-	for _, t := range cfg.Tokens {
-		m[t.Name] = t.Key
-	}
-	return m
 }
 
 // applyConfigDefaults merges default values into config where not explicitly set.

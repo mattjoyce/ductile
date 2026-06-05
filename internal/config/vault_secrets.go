@@ -5,63 +5,50 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
-	"sort"
 
 	"github.com/mattjoyce/ductile/internal/secrets"
 	"github.com/mattjoyce/ductile/internal/vault"
 )
 
-// graftVaultSecrets overlays the vault's active secrets onto the legacy
-// secret-resolution table (cfg.Tokens) at config load. This is the Rung-2
-// coexistence bridge: every existing consumer keeps resolving secret_ref against
-// cfg.Tokens, while the vault becomes the source of truth without touching a
-// single resolver.
+// projectVaultSecrets loads the vault owner and projects its active,
+// gateway-visible secrets into cfg.ResolvedSecrets — the single secret-resolution
+// table for the gateway's own consumers (webhook/relay HMAC). The vault is the
+// sole source (epic #48): there is no tokens.yaml and no merge. The owner is
+// returned so the daemon reuses this single decryption as its live owner instead
+// of decrypting the blob again at runtime construction (#43 redundant decrypt).
 //
-// NB: cfg.Tokens is the *legacy, misnamed* table — it holds secrets, not auth
-// tokens (see the ADR glossary). This function speaks "secret"; the table keeps
-// its deprecated name until tokens.yaml is removed.
+// Plugin secrets are NOT projected here — they reach their consumer at *spawn* via
+// Compose with live fingerprint re-verification (#14). activeVaultSecrets excludes
+// plugin-scoped secrets for that reason.
 //
-// Resolution timing here is load-time, which is correct for the gateway's own
-// consumers (webhook/relay HMAC secrets). Plugin secrets resolve at *spawn* via
-// Compose with live fingerprint re-verification — that is #14's path, not this
-// one, so plugin-scoped delivery must not be folded into this graft.
+// Snapshot-at-load (snapshot-at-reload): a rolled webhook/relay secret takes
+// effect on the running servers after the daemon RELOADS; plugin secrets re-resolve
+// at the next spawn. (OPERATOR_GUIDE.md "Rolling a webhook/relay secret".)
 //
-// FRESHNESS ASYMMETRY (#27, Ousterhout §2.2): because this graft runs at
-// load/reload, a rolled webhook/relay secret_ref only takes effect on the running
-// servers after the daemon RELOADS — the graft is frozen at boot. Plugin secrets
-// differ: they re-resolve at the next spawn, so a roll is visible on the next job.
-// So after rolling a webhook/relay secret, reload to make it live. (See
-// OPERATOR_GUIDE.md "Rolling a webhook/relay secret".)
-//
-// Degradation is deliberate and fail-open *only for visibility, not for secrecy*:
-//   - no vault file yet  -> no-op (early in the migration window)
-//   - keyless caller     -> no-op (static `config validate` / CLI tools cannot
+// Degradation is fail-open *for visibility, not secrecy*:
+//   - no vault file yet  -> nil owner, no secrets (early in a deploy)
+//   - keyless caller     -> nil owner (static `config validate` / CLI tools cannot
 //     decrypt; vault-only secrets are the daemon's to resolve, per ADR §3.5.1)
-//   - present but broken  -> error (fail-closed: a corrupt/owned vault must not
-//     be silently skipped)
-func graftVaultSecrets(cfg *Config, configDir string, kr *secrets.Keyring) (*vault.Vault, []string, error) {
+//   - present but broken  -> error (fail-closed: a corrupt/owned vault must not be
+//     silently skipped)
+func projectVaultSecrets(cfg *Config, configDir string, kr *secrets.Keyring) (*vault.Vault, []string, error) {
 	owner, err := loadVaultOwner(configDir, cfg, kr)
 	if err != nil {
 		return nil, nil, err
 	}
 	if owner == nil {
-		return nil, nil, nil // no vault / keyless: resolve against tokens.yaml only
+		return nil, nil, nil // no vault / keyless
 	}
 
-	// Snapshot (an independent deep copy) for the merge so the graft never aliases
-	// the owner's live Store past the read lock.
+	// Snapshot (an independent deep copy) so we never alias the owner's live Store
+	// past the read lock.
 	store, err := owner.Snapshot()
 	if err != nil {
 		return nil, nil, err
 	}
-	secretsMap, graftWarnings := activeVaultSecrets(store)
-	merged, mergeWarnings := mergeVaultSecrets(cfg.Tokens, secretsMap)
-	cfg.Tokens = merged
-
-	// Return the owner so the daemon can reuse this single decryption as its live
-	// vault owner (config.LoadWithVault) instead of decrypting the blob a second
-	// time at runtime construction (#43 redundant decrypt; epic #48 slice 2).
-	return owner, append(graftWarnings, mergeWarnings...), nil
+	secretsMap, warnings := activeVaultSecrets(store)
+	cfg.ResolvedSecrets = secretsMap
+	return owner, warnings, nil
 }
 
 // LoadVault resolves the keyring and loads the vault *owner* for the active
@@ -105,41 +92,6 @@ func loadVaultOwner(configDir string, cfg *Config, kr *secrets.Keyring) (*vault.
 	return v, nil
 }
 
-// mergeVaultSecrets overlays vault secret values onto the legacy token table.
-// The vault is the source of truth: on a name present in both, the vault value
-// wins and a warning names the shadowed tokens.yaml entry (the migration
-// invariant is "if it is a secret, it is in the vault" — the tokens.yaml dupe
-// should be removed). Pure: no I/O, deterministic ordering.
-func mergeVaultSecrets(tokens []TokenEntry, vaultSecrets map[string]string) ([]TokenEntry, []string) {
-	if len(vaultSecrets) == 0 {
-		return tokens, nil
-	}
-
-	idx := make(map[string]int, len(tokens))
-	for i, t := range tokens {
-		idx[t.Name] = i
-	}
-	merged := append([]TokenEntry(nil), tokens...)
-
-	names := make([]string, 0, len(vaultSecrets))
-	for n := range vaultSecrets {
-		names = append(names, n)
-	}
-	sort.Strings(names)
-
-	var warnings []string
-	for _, name := range names {
-		value := vaultSecrets[name]
-		if i, ok := idx[name]; ok {
-			warnings = append(warnings, fmt.Sprintf(
-				"secret %q is in both the vault and tokens.yaml; using the vault value — remove the tokens.yaml entry", name))
-			merged[i].Key = value
-			continue
-		}
-		merged = append(merged, TokenEntry{Name: name, Key: value})
-	}
-	return merged, warnings
-}
 
 // activeVaultSecrets projects the store's active, gateway-visible secrets into a
 // name->value map for the load-time graft, plus any blast-radius warnings. Two

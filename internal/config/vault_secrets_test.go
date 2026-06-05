@@ -29,71 +29,34 @@ func writeTestKey(t *testing.T, dir string) *secrets.Keyring {
 	return kr
 }
 
-func tokenKeyMap(entries []TokenEntry) map[string]string {
-	m := make(map[string]string, len(entries))
-	for _, e := range entries {
-		m[e.Name] = e.Key
+// seedVault writes a keyed vault (age.key + vault.age) into dir holding the given
+// secrets, so a Load() in dir resolves their secret_refs now that the vault is the
+// sole secret source (epic #48). Pair it with a config secrets: block:
+//
+//	secrets:
+//	  age_key_file: age.key
+//	  vault_file: vault.age
+func seedVault(t *testing.T, dir string, kv map[string]string) {
+	t.Helper()
+	kr := writeTestKey(t, dir)
+	v, _, err := vault.Init(filepath.Join(dir, "vault.age"), kr, time.Now())
+	if err != nil {
+		t.Fatalf("vault init: %v", err)
 	}
-	return m
-}
-
-// TestMergeVaultSecretsOverridesAndAppends pins the coexistence-window contract:
-// the vault is the source of truth, so a name present in both the vault and the
-// legacy tokens.yaml table resolves to the *vault* value (and warns), while a
-// vault-only secret is appended and a tokens.yaml-only entry is left untouched.
-func TestMergeVaultSecretsOverridesAndAppends(t *testing.T) {
-	tokens := []TokenEntry{
-		{Name: "gh_webhook", Key: "old-from-yaml"}, // collision -> vault wins
-		{Name: "relay_a", Key: "ra"},               // yaml-only -> untouched
+	for name, val := range kv {
+		if err := v.Store().SetSecret(name, val, nil, vault.PatternManual, time.Now()); err != nil {
+			t.Fatalf("seed secret %q: %v", name, err)
+		}
 	}
-	vaultSecrets := map[string]string{
-		"gh_webhook": "new-from-vault", // overrides the yaml entry
-		"withings":   "wv",             // vault-only -> appended
-	}
-
-	merged, warnings := mergeVaultSecrets(tokens, vaultSecrets)
-	got := tokenKeyMap(merged)
-
-	if got["gh_webhook"] != "new-from-vault" {
-		t.Errorf("collision should resolve to the vault value, got %q", got["gh_webhook"])
-	}
-	if got["withings"] != "wv" {
-		t.Errorf("vault-only secret should be grafted in, got %q", got["withings"])
-	}
-	if got["relay_a"] != "ra" {
-		t.Errorf("tokens.yaml-only entry should be untouched, got %q", got["relay_a"])
-	}
-	if len(merged) != 3 {
-		t.Errorf("expected 3 entries (no duplicate for the collision), got %d", len(merged))
-	}
-
-	if len(warnings) != 1 {
-		t.Fatalf("expected exactly one collision warning, got %d: %v", len(warnings), warnings)
-	}
-	if !strings.Contains(warnings[0], "gh_webhook") {
-		t.Errorf("warning should name the shadowed entry, got %q", warnings[0])
+	if err := v.Save(); err != nil {
+		t.Fatalf("vault save: %v", err)
 	}
 }
 
-// TestMergeVaultSecretsEmptyIsNoOp — no vault secrets means the token table and
-// the (nil) warnings are returned unchanged.
-func TestMergeVaultSecretsEmptyIsNoOp(t *testing.T) {
-	tokens := []TokenEntry{{Name: "relay_a", Key: "ra"}}
-
-	merged, warnings := mergeVaultSecrets(tokens, nil)
-
-	if len(merged) != 1 || merged[0].Key != "ra" {
-		t.Errorf("token table should be unchanged, got %+v", merged)
-	}
-	if warnings != nil {
-		t.Errorf("no collisions means no warnings, got %v", warnings)
-	}
-}
-
-// TestGraftVaultSecretsRoundTrip proves the wrapper grafts through a real
-// encrypted vault blob: genesis + a granted secret on disk, then graft resolves
-// it into the legacy table while leaving an existing entry alone.
-func TestGraftVaultSecretsRoundTrip(t *testing.T) {
+// TestProjectVaultSecretsRoundTrip proves projectVaultSecrets resolves a granted
+// secret from a real encrypted vault blob into cfg.ResolvedSecrets. The vault is
+// the sole source (epic #48) — there is no tokens.yaml table to merge with.
+func TestProjectVaultSecretsRoundTrip(t *testing.T) {
 	dir := t.TempDir()
 	kr := writeTestKey(t, dir)
 
@@ -102,9 +65,9 @@ func TestGraftVaultSecretsRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("vault init: %v", err)
 	}
-	// Grant to a consumer principal: the load-time graft serves gateway/consumer
+	// Grant to a consumer principal: the projection serves gateway/consumer
 	// (webhook/relay) consumers. Plugin-scoped secrets are delivered at spawn and
-	// are excluded from the graft — see TestActiveVaultSecretsExcludesPluginScoped.
+	// are excluded — see TestActiveVaultSecretsExcludesPluginScoped.
 	if err := v.Store().RegisterPrincipal("relaysvc", vault.KindConsumer); err != nil {
 		t.Fatalf("register: %v", err)
 	}
@@ -115,42 +78,37 @@ func TestGraftVaultSecretsRoundTrip(t *testing.T) {
 		t.Fatalf("save: %v", err)
 	}
 
-	cfg := &Config{Tokens: []TokenEntry{{Name: "relay_a", Key: "ra"}}}
-	_, warnings, err := graftVaultSecrets(cfg, dir, kr) // default path <dir>/vault.age
+	cfg := &Config{}
+	_, warnings, err := projectVaultSecrets(cfg, dir, kr) // default path <dir>/vault.age
 	if err != nil {
-		t.Fatalf("graft: %v", err)
+		t.Fatalf("project: %v", err)
 	}
 	if len(warnings) != 0 {
-		t.Errorf("no collision expected, got %v", warnings)
+		t.Errorf("no warnings expected, got %v", warnings)
 	}
-	got := tokenKeyMap(cfg.Tokens)
-	if got["relay_hmac"] != "VAULT-VAL" {
-		t.Errorf("vault secret not grafted, got %q", got["relay_hmac"])
-	}
-	if got["relay_a"] != "ra" {
-		t.Errorf("existing entry clobbered, got %q", got["relay_a"])
+	if cfg.ResolvedSecrets["relay_hmac"] != "VAULT-VAL" {
+		t.Errorf("vault secret not projected, got %q", cfg.ResolvedSecrets["relay_hmac"])
 	}
 }
 
-// TestGraftVaultSecretsNoVaultIsNoOp — early in the migration window there is no
-// vault file; graft must leave the token table untouched.
-func TestGraftVaultSecretsNoVaultIsNoOp(t *testing.T) {
+// TestProjectVaultSecretsNoVaultIsNoOp — no vault file yet: nil owner, no secrets.
+func TestProjectVaultSecretsNoVaultIsNoOp(t *testing.T) {
 	dir := t.TempDir()
 	kr := writeTestKey(t, dir)
 
-	cfg := &Config{Tokens: []TokenEntry{{Name: "relay_a", Key: "ra"}}}
-	_, warnings, err := graftVaultSecrets(cfg, dir, kr) // no vault.age present
+	cfg := &Config{}
+	owner, warnings, err := projectVaultSecrets(cfg, dir, kr) // no vault.age present
 	if err != nil {
 		t.Fatalf("missing vault should no-op, got: %v", err)
 	}
-	if len(warnings) != 0 || len(cfg.Tokens) != 1 {
-		t.Errorf("expected untouched table, got %+v warnings=%v", cfg.Tokens, warnings)
+	if owner != nil || len(warnings) != 0 || len(cfg.ResolvedSecrets) != 0 {
+		t.Errorf("expected nil owner + empty secrets, got owner=%v secrets=%+v warnings=%v", owner, cfg.ResolvedSecrets, warnings)
 	}
 }
 
-// TestGraftVaultSecretsKeylessIsNoOp — a keyless caller (static config validate /
-// CLI tools) cannot decrypt the vault; it resolves against tokens.yaml only.
-func TestGraftVaultSecretsKeylessIsNoOp(t *testing.T) {
+// TestProjectVaultSecretsKeylessIsNoOp — a keyless caller (static config validate /
+// CLI tools) cannot decrypt the vault, so it projects no secrets.
+func TestProjectVaultSecretsKeylessIsNoOp(t *testing.T) {
 	dir := t.TempDir()
 	kr := writeTestKey(t, dir)
 
@@ -163,21 +121,21 @@ func TestGraftVaultSecretsKeylessIsNoOp(t *testing.T) {
 		t.Fatalf("save: %v", err)
 	}
 
-	cfg := &Config{Tokens: []TokenEntry{{Name: "relay_a", Key: "ra"}}}
-	_, warnings, err := graftVaultSecrets(cfg, dir, &secrets.Keyring{}) // empty keyring
+	cfg := &Config{}
+	owner, warnings, err := projectVaultSecrets(cfg, dir, &secrets.Keyring{}) // empty keyring
 	if err != nil {
 		t.Fatalf("keyless should no-op, got: %v", err)
 	}
-	if len(warnings) != 0 || len(cfg.Tokens) != 1 {
-		t.Errorf("keyless caller should not graft, got %+v", cfg.Tokens)
+	if owner != nil || len(warnings) != 0 || len(cfg.ResolvedSecrets) != 0 {
+		t.Errorf("keyless caller should project nothing, got owner=%v secrets=%+v", owner, cfg.ResolvedSecrets)
 	}
 }
 
-// TestGraftVaultSecretsReturnsOwner — slice 2 (epic #48): the graft returns the
-// vault owner it decrypted so the daemon can reuse that single decryption as its
-// live owner instead of decrypting the blob a second time at runtime
-// construction (#43 redundant decrypt).
-func TestGraftVaultSecretsReturnsOwner(t *testing.T) {
+// TestProjectVaultSecretsReturnsOwner — slice 2 (epic #48): projection returns the
+// vault owner it decrypted so the daemon reuses that single decryption as its live
+// owner instead of decrypting the blob a second time at runtime construction
+// (#43 redundant decrypt).
+func TestProjectVaultSecretsReturnsOwner(t *testing.T) {
 	dir := t.TempDir()
 	kr := writeTestKey(t, dir)
 
@@ -193,9 +151,9 @@ func TestGraftVaultSecretsReturnsOwner(t *testing.T) {
 		t.Fatalf("save: %v", err)
 	}
 
-	owner, _, err := graftVaultSecrets(&Config{}, dir, kr)
+	owner, _, err := projectVaultSecrets(&Config{}, dir, kr)
 	if err != nil {
-		t.Fatalf("graft: %v", err)
+		t.Fatalf("project: %v", err)
 	}
 	if owner == nil {
 		t.Fatal("expected a non-nil owner to reuse as the live vault; got nil")

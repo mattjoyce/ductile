@@ -1061,7 +1061,6 @@ func writeRelaySenderConfigFixture(t *testing.T, dir, baseURL string) {
 
 	configYAML := `
 include:
-  - tokens.yaml
   - relay-instances.yaml
 service:
   name: home-primary
@@ -1072,6 +1071,9 @@ state:
   path: ` + filepath.Join(dir, "state.db") + `
 plugin_roots:
   - ` + pluginsDir + `
+secrets:
+  age_key_file: age.key
+  vault_file: vault.age
 plugins: {}
 `
 	if err := os.WriteFile(filepath.Join(dir, "config.yaml"), []byte(configYAML), 0o644); err != nil {
@@ -1108,6 +1110,9 @@ instances:
 	if err := os.WriteFile(filepath.Join(dir, "relay-instances.yaml"), []byte(relayInstancesYAML), 0o644); err != nil {
 		t.Fatal(err)
 	}
+
+	// The relay secret now resolves from the vault (epic #48), not tokens.yaml.
+	seedVaultSecrets(t, dir, map[string]string{"relay-lab-v1": "shared-secret"})
 }
 
 func TestRunRelaySendDeliversConfiguredEvent(t *testing.T) {
@@ -1159,7 +1164,7 @@ pipelines:
 				},
 			},
 		},
-		Tokens: []config.TokenEntry{{Name: "relay-lab-v1", Key: "shared-secret"}},
+		ResolvedSecrets: map[string]string{"relay-lab-v1": "shared-secret"},
 	}
 	receiver, err := relay.NewReceiver(receiverCfg, q, engine, contexts, state.NewAdmitter(q, state.DefaultMaxContextBytes), slog.Default())
 	if err != nil {
