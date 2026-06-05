@@ -56,6 +56,8 @@ func runVaultNoun(args []string) int {
 		return runVaultRollPrincipal(actionArgs)
 	case "rotate-key":
 		return runVaultRotateKey(actionArgs)
+	case "rotate-admin-token":
+		return runVaultRotateAdminToken(actionArgs)
 	case "help":
 		printVaultNounHelp(os.Stdout)
 		return 0
@@ -76,6 +78,8 @@ func printVaultNounHelp(w *os.File) {
 	_, _ = fmt.Fprintln(w, "  init        Genesis: create a new vault (core + nonce + admin token)   [--vault --key]")
 	_, _ = fmt.Fprintln(w, "  import      Migrate tokens.yaml entries into an existing vault         [--config --tokens --resolve-env]")
 	_, _ = fmt.Fprintln(w, "  rotate-key  Rotate the vault's age identity (mints + re-encrypts)       [--config]")
+	_, _ = fmt.Fprintln(w, "  rotate-admin-token  Rotate the management-API admin token in place        [--config]")
+	_, _ = fmt.Fprintln(w, "              (mints a fresh token, prints it once; the old token stops working)")
 	_, _ = fmt.Fprintln(w, "")
 	_, _ = fmt.Fprintln(w, "Local, key-holding READ (holds the age key; read-only, so the daemon MAY be running):")
 	_, _ = fmt.Fprintln(w, "  get         Print ONE secret's value to stdout (never over the API)        [--config --name]")
@@ -278,6 +282,112 @@ func runVaultRotateKey(args []string) int {
 		"(e.g. to your password manager). It is the only key that can decrypt the vault.\n", keyPath)
 	fmt.Fprintf(os.Stderr, "New public recipient: %s\n", newRecipient)
 	return 0
+}
+
+// runVaultRotateAdminToken rotates the vault's reserved management-API admin token
+// LOCALLY. Rotation surfaces a fresh token value, and the management API is
+// value-free by design (it never emits secret values over HTTP) — so, like
+// init/rotate-key, this is a local, key-touching op, never over the API: it holds
+// the age key, mints a new token, persists the blob, and prints the token ONCE to
+// stdout. It requires the daemon to be down (acquires the PID lock, refusing if
+// held) so the live daemon's resident token and the on-disk blob cannot diverge.
+// The previous token stops authenticating the moment the blob is saved; capture
+// the new one and update any API clients (DUCTILE_VAULT_TOKEN) before restarting.
+func runVaultRotateAdminToken(args []string) int {
+	fs := flag.NewFlagSet("vault rotate-admin-token", flag.ContinueOnError)
+	configPath := fs.String("config", "", "Path to the ductile config dir (default: discover)")
+	if err := fs.Parse(args); err != nil {
+		return 1
+	}
+
+	cfg, configDir, err := loadBackupConfig(*configPath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "vault rotate-admin-token: %v\n", err)
+		return 1
+	}
+
+	// Sole-writer: the daemon is the only writer of the vault. Rotation is local and
+	// key-touching, so refuse if the daemon holds the PID lock; holding it for the op
+	// also stops a daemon starting mid-rotation.
+	pidLock, err := lock.AcquirePIDLock(getPIDLockPath(cfg))
+	if err != nil {
+		fmt.Fprintf(os.Stderr,
+			"vault rotate-admin-token: the daemon appears to be running (could not take the lock): %v\n"+
+				"Stop the daemon before rotating the admin token — key-touching ops are local.\n", err)
+		return 1
+	}
+	defer func() { _ = pidLock.Release() }()
+
+	vaultPath := config.ResolveVaultPath(configDir, cfg)
+	keyPath := config.ResolveAgeKeyPath(configDir, cfg)
+	if keyPath == "" {
+		fmt.Fprintln(os.Stderr,
+			"vault rotate-admin-token: no age key file resolved (set secrets.age_key_file or DUCTILE_AGE_KEY_FILE)")
+		return 1
+	}
+
+	kr, err := secrets.LoadKeyringFromFile(keyPath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "vault rotate-admin-token: load key: %v\n", err)
+		return 1
+	}
+	v, err := vault.Load(vaultPath, kr)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "vault rotate-admin-token: load vault: %v\n", err)
+		return 1
+	}
+
+	newToken, err := v.RotateAdminToken(time.Now())
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "vault rotate-admin-token: %v\n", err)
+		return 1
+	}
+
+	// Best-effort audit, alongside the API-side mutations — the op + outcome only,
+	// never the value (parity with the value-free API audit).
+	auditVaultRotateAdminToken(cfg)
+
+	fmt.Fprintln(os.Stderr, "Rotated the vault admin token; the previous token no longer authenticates.")
+	fmt.Fprintln(os.Stderr, "New admin token (shown once — store it in 0600 custody and update any API clients):")
+	// Soft warning if the value would land in a terminal's scrollback.
+	if fi, statErr := os.Stdout.Stat(); statErr == nil && fi.Mode()&os.ModeCharDevice != 0 {
+		fmt.Fprintln(os.Stderr,
+			"vault rotate-admin-token: warning — writing a secret value to a terminal; redirect or capture it instead.")
+	}
+	// The token itself goes to stdout so it can be captured/piped cleanly.
+	fmt.Println(newToken)
+	return 0
+}
+
+// auditVaultRotateAdminToken best-effort records an admin-token rotation to the
+// vault audit log — the op and outcome only, NEVER the value, mirroring the API's
+// value-free audit. Best-effort per the audit fault model (state/vault_audit.go):
+// rotation is never failed because the row could not be written, and it does NOT
+// bootstrap the state DB (a host where no daemon has run has nothing to audit into).
+func auditVaultRotateAdminToken(cfg *config.Config) {
+	if cfg == nil || cfg.State.Path == "" {
+		return
+	}
+	if _, err := os.Stat(cfg.State.Path); err != nil {
+		return // no state DB yet — skip rather than create one on a rotation
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	db, err := storage.OpenSQLite(ctx, cfg.State.Path)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "vault rotate-admin-token: warning — not audited (open state db: %v)\n", err)
+		return
+	}
+	defer func() { _ = db.Close() }()
+	if err := state.NewStore(db).AppendVaultAudit(ctx, state.VaultAuditEvent{
+		Op:         "rotate-admin-token",
+		SecretName: vault.AdminTokenSecret,
+		Actor:      "cli",
+		Outcome:    "ok",
+		Detail:     "local key-holder rotation",
+	}); err != nil {
+		fmt.Fprintf(os.Stderr, "vault rotate-admin-token: warning — not audited: %v\n", err)
+	}
 }
 
 // runVaultSet sets a secret through the daemon's authenticated management API.

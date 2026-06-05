@@ -186,9 +186,9 @@ That splits the CLI into two classes (see `ductile vault --help`):
   `purge-principal`, `roll-principal`, `register-principal`. These hold no age key and
   decrypt nothing; they POST to the daemon's authenticated management API with the
   vault admin token (`--token` or `DUCTILE_VAULT_TOKEN`). They can run any time.
-- **Local, key-touching ops** — `init`, `import`, `rotate-key`. These read the age key
-  directly and operate on the blob, so the daemon must be **stopped** (they refuse via
-  the PID lock if it is running).
+- **Local, key-touching ops** — `init`, `import`, `rotate-key`, `rotate-admin-token`.
+  These read the age key directly and operate on the blob, so the daemon must be
+  **stopped** (they refuse via the PID lock if it is running).
 
 ### Genesis and lifecycle
 
@@ -225,6 +225,29 @@ re-encrypts the store, retires the old key). It is local and key-touching — th
 must be down. The full crash-safe procedure and the **back-up-the-key** discipline are
 in [OPERATOR_GUIDE.md](OPERATOR_GUIDE.md) § "Rotating the vault key". Note: `secrets
 rotate` (above) is for config bundles and must **not** be pointed at `vault.age`.
+
+### Rotating the admin token
+
+The genesis admin token (`core-admin-token`) is the management-API credential — it is
+printed **once** at `vault init` and authenticates every `/vault/*` write. If it is
+exposed (captured from `genesis.out`, leaked to a client log), roll it **in place** with:
+
+```bash
+ductile system stop                                  # key-touching: daemon must be down
+ductile vault rotate-admin-token --config "$CFG"     # mints + prints the NEW token once
+ductile system start
+```
+
+It mints a fresh CSPRNG token, persists the blob, and prints the new value once to
+**stdout** (notices go to stderr; capture it: `T=$(ductile vault rotate-admin-token …)`).
+The **old token stops authenticating immediately** — update `DUCTILE_VAULT_TOKEN` and any
+API client before the next write. The op is recorded in `vault_audit`
+(`op=rotate-admin-token`, **value never logged**); it does **not** re-genesis the vault or
+touch the age key, and the token is never grantable to a principal.
+
+Rotation surfaces a secret value, so — like `vault get` and `init` — it is a **local,
+key-touching** op, never over the API: the management API stays value-free (it never
+emits a secret value over HTTP). There is deliberately no API route for this.
 
 ### Plugin attestation (secret delivery is gated)
 

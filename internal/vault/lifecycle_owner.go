@@ -63,6 +63,27 @@ func (v *Vault) PurgePrincipal(name string) error {
 	return v.mutate(func(s *Store) error { return s.PurgePrincipal(name) })
 }
 
+// RotateAdminToken mints a fresh management-API admin token and applies it via
+// the sanctioned store.RotateAdminToken writer, as a guarded, persisted mutation.
+// It returns the new plaintext token, which the caller must surface ONCE — it is
+// not recoverable in plaintext afterward without the key, exactly like genesis.
+// Minting is the owner's job (randomness lives here, not in the pure model). This
+// is the only operator path to roll the reserved credential IN PLACE without
+// re-genesis; the previous value stops authenticating the moment the blob is saved.
+// On a mint failure no mutation is attempted, so the resident token is untouched.
+func (v *Vault) RotateAdminToken(now time.Time) (string, error) {
+	newToken, err := secrets.GenerateToken(rolledSecretBytes)
+	if err != nil {
+		return "", fmt.Errorf("mint admin token: %w", err)
+	}
+	if err := v.mutate(func(s *Store) error {
+		return s.RotateAdminToken(newToken, now)
+	}); err != nil {
+		return "", err
+	}
+	return newToken, nil
+}
+
 // RollPrincipal rolls every auto-pattern secret the principal is authorized for,
 // minting a fresh value for each, in one atomic persisted batch. Manual secrets
 // cannot be auto-rolled (they need an operator value) and are returned in

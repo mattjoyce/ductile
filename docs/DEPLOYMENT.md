@@ -396,6 +396,12 @@ systemctl --user stop ductile-local
 "$NEW" vault init --vault "$CFG/vault.age" --key "$KEY" \
   > ~/.config/secrets/ductile/genesis.out 2>&1  # admin token printed ONCE
 chmod 600 ~/.config/secrets/ductile/genesis.out # capture the token from here; it is the API credential
+# Capture-and-rotate hygiene: lift the token into 0600/0700 custody (or a password
+# manager), then SHRED genesis.out. If the token was ever exposed (shared channel,
+# client log, screen), roll it in place — no re-genesis — while the daemon is stopped:
+#   ductile vault rotate-admin-token --config "$CFG"   # mints + prints the NEW token once
+# The old token dies immediately; update DUCTILE_VAULT_TOKEN before any API write.
+# See SECRETS.md § "Rotating the admin token".
 
 # 4. Reconcile config.yaml, then validate. Set:
 #      secrets.age_key_file: <path to $KEY>
