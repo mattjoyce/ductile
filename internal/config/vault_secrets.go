@@ -57,7 +57,7 @@ func projectVaultSecrets(cfg *Config, configDir string, kr *secrets.Keyring) (*v
 // both the spawn-time read path (Compose) and management writes (SetSecret)
 // through it.
 //
-// Degradation mirrors graftVaultSecrets: no vault file or a keyless caller
+// Degradation mirrors projectVaultSecrets: no vault file or a keyless caller
 // yields (nil, nil); a present-but-broken vault is a hard error (fail-closed).
 func LoadVault(configDir string, cfg *Config) (*vault.Vault, error) {
 	kr, err := resolveKeyring(configDir, cfg)
@@ -69,7 +69,7 @@ func LoadVault(configDir string, cfg *Config) (*vault.Vault, error) {
 
 // loadVaultOwner loads the vault owner given an already-resolved keyring. It is
 // the single home for the vault's load-time degradation rules (see
-// graftVaultSecrets for the rationale), shared by the graft and LoadVault.
+// projectVaultSecrets for the rationale), shared by the projection and LoadVault.
 func loadVaultOwner(configDir string, cfg *Config, kr *secrets.Keyring) (*vault.Vault, error) {
 	path := resolveVaultPath(configDir, cfg)
 	if path == "" {
@@ -94,13 +94,14 @@ func loadVaultOwner(configDir string, cfg *Config, kr *secrets.Keyring) (*vault.
 
 
 // activeVaultSecrets projects the store's active, gateway-visible secrets into a
-// name->value map for the load-time graft, plus any blast-radius warnings. Two
-// exclusions:
+// name->value map for the load-time projection, plus any blast-radius warnings.
+// Two exclusions:
 //   - revoked secrets — a revoked secret must not resolve.
 //   - exclusively plugin-scoped secrets — these reach their consumer at *spawn*
-//     via Compose (#14), so grafting them into cfg.Tokens would leak them to
-//     every gateway/load-time consumer. The graft serves only the gateway's own
-//     consumers (webhook/relay HMAC); plugin delivery is the dispatcher's job.
+//     via Compose (#14), so projecting them into cfg.ResolvedSecrets would leak
+//     them to every gateway/load-time consumer. The projection serves only the
+//     gateway's own consumers (webhook/relay HMAC); plugin delivery is the
+//     dispatcher's job.
 //
 // Warn-only blast-radius guard (#41, Hickey-Armstrong Rev2 §1.2): a grant naming
 // an UNREGISTERED principal keeps the secret gateway-visible (fail toward
@@ -144,7 +145,7 @@ func unregisteredGrantee(s *vault.Store, sec *vault.Secret) string {
 
 // pluginScopedSecret reports whether a secret is authorized *exclusively* to
 // plugin principals — the case where delivery happens at spawn, not load time.
-// A secret with no principals (e.g. a migrated tokens.yaml value) is NOT
+// A secret with no principals (e.g. a value set directly in the vault) is NOT
 // plugin-scoped: gateway consumers resolve it via secret_ref. A grant to an
 // unregistered or non-plugin principal also keeps it gateway-visible — we never
 // hide a secret on a grant we cannot confirm is plugin-only (fail toward the
@@ -172,7 +173,7 @@ func vaultBlind(configDir string, cfg *Config, kr *secrets.Keyring) bool {
 		return false
 	}
 	if _, err := os.Stat(path); err != nil {
-		return false // no vault → tokens.yaml is authoritative
+		return false // no vault present → not blind (nothing to read)
 	}
 	return kr == nil || kr.Empty()
 }
@@ -197,9 +198,9 @@ func resolveVaultPath(configDir string, cfg *Config) string {
 	return filepath.Join(configDir, "vault.age")
 }
 
-// logGraftWarnings surfaces coexistence-window collision warnings to the
-// operator. Kept here (not in load) so the warning text has one home.
-func logGraftWarnings(warnings []string) {
+// logSecretProjectionWarnings surfaces the secret projection's blast-radius
+// warnings to the operator. Kept here (not in load) so the text has one home.
+func logSecretProjectionWarnings(warnings []string) {
 	for _, w := range warnings {
 		slog.Warn(w)
 	}

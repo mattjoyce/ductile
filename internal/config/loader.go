@@ -29,10 +29,10 @@ func Load(configPath string) (*Config, error) {
 }
 
 // LoadWithVault reads configuration AND returns the vault owner decrypted during
-// the load-time graft, so the daemon can reuse that single decryption as its
+// the load-time projection, so the daemon can reuse that single decryption as its
 // live owner instead of decrypting the blob a second time at runtime
 // construction (#43 redundant decrypt; epic #48 slice 2). The returned owner is
-// nil when there is no vault or no key (coexistence window / keyless callers) —
+// nil when there is no vault or no key (early-deploy / keyless callers) —
 // callers fall back to LoadVault. The *Config is identical to what Load returns.
 func LoadWithVault(configPath string) (*Config, *vault.Vault, error) {
 	return load(configPath, true, true)
@@ -121,14 +121,14 @@ func load(configPath string, verifyScopes bool, validateConfig bool) (*Config, *
 	cfg = applyConfigDefaults(cfg)
 	resolveStatePath(cfg, filepath.Dir(absPath))
 
-	// Graft vault secrets into the legacy resolution table before validation, so
-	// a secret_ref to a vault-only secret passes the existence checks. No-ops
-	// when there is no vault or no key (coexistence window / keyless callers).
+	// Project vault secrets into cfg.ResolvedSecrets before validation, so a
+	// secret_ref to a vault-only secret passes the existence checks. No-ops when
+	// there is no vault or no key (early-deploy / keyless callers).
 	owner, warnings, err := projectVaultSecrets(cfg, configDir, kr)
 	if err != nil {
 		return nil, nil, err
 	}
-	logGraftWarnings(warnings)
+	logSecretProjectionWarnings(warnings)
 
 	if verifyScopes {
 		// Hash-verify scope files (tokens.yaml, webhooks.yaml)

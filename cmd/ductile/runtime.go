@@ -69,9 +69,9 @@ type runtimeBuildOptions struct {
 	snapshotReason     string
 	existingSnapshotID string
 	// vaultOwner, when non-nil, is the vault owner already decrypted by the
-	// load-time graft (config.LoadWithVault). buildRuntime reuses it as the live
-	// owner instead of decrypting the blob again (#43 redundant decrypt; epic #48
-	// slice 2). nil — reload, restore, or no vault — falls back to a fresh load.
+	// load-time projection (config.LoadWithVault). buildRuntime reuses it as the
+	// live owner instead of decrypting the blob again (#43 redundant decrypt; epic
+	// #48 slice 2). nil — restore or no vault — falls back to a fresh load.
 	vaultOwner *vault.Vault
 }
 
@@ -745,8 +745,8 @@ func runStart(args []string) int {
 		*configPath = discovered
 	}
 
-	// LoadWithVault also returns the owner decrypted by the load-time graft, so the
-	// daemon reuses that single decryption as its live owner (epic #48 slice 2).
+	// LoadWithVault also returns the owner decrypted by the load-time projection, so
+	// the daemon reuses that single decryption as its live owner (epic #48 slice 2).
 	cfg, vaultOwner, err := config.LoadWithVault(*configPath)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to load config: %v\n", err)

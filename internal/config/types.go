@@ -353,11 +353,6 @@ type WebhookEndpoint struct {
 	MaxBodySize     string `yaml:"max_body_size"`
 }
 
-// TokensConfig defines sensitive authentication tokens (separate file for security).
-type TokensConfig struct {
-	Tokens map[string]string `yaml:",inline"` // Flat key-value map
-}
-
 // ChecksumManifest stores BLAKE3 hashes for scope files (tokens.yaml, webhooks.yaml)
 // and plugin identity fingerprints (manifest.yaml + entrypoint bytes) for each
 // configured plugin when the operator runs `ductile config lock`.

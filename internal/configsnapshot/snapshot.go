@@ -21,7 +21,9 @@ import (
 
 const (
 	// SnapshotFormat is the serialization version for config_snapshots payloads.
-	SnapshotFormat = 1
+	// v2: secret-use entries serialize as {name, key} sourced from the vault
+	// (epic #48 retired the tokens.yaml shape: scopes_file/scopes_hash/created_at).
+	SnapshotFormat = 2
 
 	ReasonStartup = "startup"
 	ReasonReload  = "reload"

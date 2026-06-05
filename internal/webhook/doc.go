@@ -22,7 +22,7 @@
 //	    - path: /webhook/github
 //	      plugin: github-handler
 //	      command: handle
-//	      secret_ref: github_webhook_secret  # References tokens.yaml
+//	      secret_ref: github_webhook_secret  # References a vault secret
 //	      signature_header: X-Hub-Signature-256
 //	      max_body_size: 1048576  # 1MB
 //
