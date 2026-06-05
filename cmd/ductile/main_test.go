@@ -10,7 +10,6 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
-	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -163,12 +162,12 @@ func TestRunConfigHashUpdateVerboseDryRunShortFlag(t *testing.T) {
 	configPath := filepath.Join(tmpDir, "config.yaml")
 	configYAML := `
 include:
-  - tokens.yaml
+  - webhooks.yaml
 `
 	if err := os.WriteFile(configPath, []byte(configYAML), 0644); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(tmpDir, "tokens.yaml"), []byte("tokens:\n  - name: test\n    key: test\n    scopes_file: scopes/test.json\n    scopes_hash: blake3:deadbeef\n"), 0600); err != nil {
+	if err := os.WriteFile(filepath.Join(tmpDir, "webhooks.yaml"), []byte("webhooks:\n  listen: \"127.0.0.1:8091\"\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
 
@@ -201,12 +200,12 @@ func TestRunConfigHashUpdateVerboseLongFlagWritesChecksums(t *testing.T) {
 	configPath := filepath.Join(tmpDir, "config.yaml")
 	configYAML := `
 include:
-  - tokens.yaml
+  - webhooks.yaml
 `
 	if err := os.WriteFile(configPath, []byte(configYAML), 0644); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(tmpDir, "tokens.yaml"), []byte("tokens:\n  - name: test\n    key: test\n    scopes_file: scopes/test.json\n    scopes_hash: blake3:deadbeef\n"), 0600); err != nil {
+	if err := os.WriteFile(filepath.Join(tmpDir, "webhooks.yaml"), []byte("webhooks:\n  listen: \"127.0.0.1:8091\"\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
 
@@ -1288,129 +1287,6 @@ func TestRunRelaySendAcceptsInstanceFirstOrdering(t *testing.T) {
 	if !bytes.Contains(observedBody, []byte(`"withings.measurement_recorded"`)) {
 		t.Fatalf("relay body did not carry underscored event type: %s", string(observedBody))
 	}
-}
-
-func TestRunConfigTokenCreateAndInspectJSON(t *testing.T) {
-	tmpDir := t.TempDir()
-	writeConfigDirFixture(t, tmpDir)
-
-	createCode, createStdout, createStderr := captureOutputWithExitCode(t, func() int {
-		return runConfigTokenCreate([]string{
-			"--config-dir", tmpDir,
-			"--name", "github-integration",
-			"--scopes", "read:jobs,read:events",
-			"--format", "json",
-		})
-	})
-	if createCode != 0 {
-		t.Fatalf("runConfigTokenCreate() code = %d, stderr: %s", createCode, createStderr)
-	}
-
-	var createOut struct {
-		Status string `json:"status"`
-		Token  struct {
-			Name       string `json:"name"`
-			ScopesFile string `json:"scopes_file"`
-			ScopesHash string `json:"scopes_hash"`
-		} `json:"token"`
-		EnvVar string `json:"env_var"`
-	}
-	if err := json.Unmarshal([]byte(createStdout), &createOut); err != nil {
-		t.Fatalf("failed to parse create json: %v\noutput=%s", err, createStdout)
-	}
-	if createOut.Status != "success" {
-		t.Fatalf("status = %q, want success", createOut.Status)
-	}
-	if createOut.Token.Name != "github-integration" {
-		t.Fatalf("token.name = %q", createOut.Token.Name)
-	}
-	if !strings.HasPrefix(createOut.Token.ScopesHash, "blake3:") {
-		t.Fatalf("token.scopes_hash missing blake3 prefix: %q", createOut.Token.ScopesHash)
-	}
-	if createOut.EnvVar != "GITHUB_INTEGRATION_TOKEN" {
-		t.Fatalf("env_var = %q, want %q", createOut.EnvVar, "GITHUB_INTEGRATION_TOKEN")
-	}
-
-	if _, err := os.Stat(filepath.Join(tmpDir, "tokens.yaml")); err != nil {
-		t.Fatalf("tokens.yaml not written: %v", err)
-	}
-	if _, err := os.Stat(filepath.Join(tmpDir, "scopes", "github-integration.json")); err != nil {
-		t.Fatalf("scope file not written: %v", err)
-	}
-	if _, err := os.Stat(filepath.Join(tmpDir, ".checksums")); err != nil {
-		t.Fatalf(".checksums not written: %v", err)
-	}
-
-	inspectCode, inspectStdout, inspectStderr := captureOutputWithExitCode(t, func() int {
-		return runConfigTokenInspect([]string{
-			"github-integration",
-			"--config-dir", tmpDir,
-			"--format", "json",
-		})
-	})
-	if inspectCode != 0 {
-		t.Fatalf("runConfigTokenInspect() code = %d, stderr: %s", inspectCode, inspectStderr)
-	}
-
-	var inspectOut struct {
-		Name        string `json:"name"`
-		HashMatches bool   `json:"hash_matches"`
-	}
-	if err := json.Unmarshal([]byte(inspectStdout), &inspectOut); err != nil {
-		t.Fatalf("failed to parse inspect json: %v\noutput=%s", err, inspectStdout)
-	}
-	if inspectOut.Name != "github-integration" {
-		t.Fatalf("inspect name = %q", inspectOut.Name)
-	}
-	if !inspectOut.HashMatches {
-		t.Fatalf("inspect hash_matches = false, output=%s", inspectStdout)
-	}
-}
-
-func TestRunConfigScopeAddWithPositionalBeforeFlags(t *testing.T) {
-	tmpDir := t.TempDir()
-	writeConfigDirFixture(t, tmpDir)
-
-	createCode, _, createStderr := captureOutputWithExitCode(t, func() int {
-		return runConfigTokenCreate([]string{
-			"--config-dir", tmpDir,
-			"--name", "github-integration",
-			"--scopes", "read:jobs",
-		})
-	})
-	if createCode != 0 {
-		t.Fatalf("runConfigTokenCreate() code = %d, stderr: %s", createCode, createStderr)
-	}
-
-	scopeCode, _, scopeStderr := captureOutputWithExitCode(t, func() int {
-		return runConfigScopeAdd([]string{
-			"github-integration",
-			"echo:ro",
-			"--config-dir", tmpDir,
-		})
-	})
-	if scopeCode != 0 {
-		t.Fatalf("runConfigScopeAdd() code = %d, stderr: %s", scopeCode, scopeStderr)
-	}
-
-	raw, err := os.ReadFile(filepath.Join(tmpDir, "scopes", "github-integration.json"))
-	if err != nil {
-		t.Fatalf("read scope file: %v", err)
-	}
-	var doc struct {
-		Scopes []string `json:"scopes"`
-	}
-	if err := json.Unmarshal(raw, &doc); err != nil {
-		t.Fatalf("parse scope file: %v", err)
-	}
-
-	if !containsString(doc.Scopes, "read:jobs") || !containsString(doc.Scopes, "echo:ro") {
-		t.Fatalf("scope file missing expected scopes: %v", doc.Scopes)
-	}
-}
-
-func containsString(list []string, value string) bool {
-	return slices.Contains(list, value)
 }
 
 func writeRouteFixture(t *testing.T, dir string) {

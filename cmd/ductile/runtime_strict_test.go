@@ -16,7 +16,7 @@ func writeStrictTestFile(t *testing.T, path, content string) {
 	}
 }
 
-// setupStrictReloadFixture writes a minimal locked config dir (config.yaml + tokens.yaml + routes.yaml)
+// setupStrictReloadFixture writes a minimal locked config dir (config.yaml + webhooks.yaml + routes.yaml)
 // with a valid .checksums manifest. The caller can subsequently tamper with files to simulate drift.
 func setupStrictReloadFixture(t *testing.T) string {
 	t.Helper()
@@ -25,8 +25,8 @@ func setupStrictReloadFixture(t *testing.T) string {
 		"service:\n  name: test\n  tick_interval: 60s\n"+
 			"state:\n  path: ./test.db\n"+
 			"plugin_roots:\n  - ./plugins\n")
-	writeStrictTestFile(t, filepath.Join(dir, "tokens.yaml"),
-		"tokens:\n  - name: admin\n    key: secret123\n")
+	writeStrictTestFile(t, filepath.Join(dir, "webhooks.yaml"),
+		"webhooks:\n  listen: \"127.0.0.1:8091\"\n")
 	writeStrictTestFile(t, filepath.Join(dir, "routes.yaml"),
 		"routes:\n  - name: sample\n")
 	files, err := config.DiscoverConfigFiles(dir)
@@ -86,9 +86,9 @@ func TestVerifyReloadIntegrityHighSecMismatchAlwaysRejects(t *testing.T) {
 	dir := setupStrictReloadFixture(t)
 	configPath := filepath.Join(dir, "config.yaml")
 
-	// Tamper with tokens.yaml (high-security).
-	writeStrictTestFile(t, filepath.Join(dir, "tokens.yaml"),
-		"tokens:\n  - name: tampered\n    key: hacked\n")
+	// Tamper with webhooks.yaml (high-security).
+	writeStrictTestFile(t, filepath.Join(dir, "webhooks.yaml"),
+		"webhooks:\n  listen: \"127.0.0.1:9999\"\n")
 
 	if err := verifyReloadIntegrity(configPath, false); err == nil {
 		t.Fatal("expected high-security mismatch to reject reload even in permissive mode")

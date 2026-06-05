@@ -1,12 +1,33 @@
 ---
 id: 72
-status: backlog
+status: doing
 priority: Normal
 blocked_by: [48]
 tags: [vault, tokens-yaml, decomplect, cleanup, cli]
 ---
 
 # Retire the tokens.yaml *file* surface (config token CLI + file types) — #48 slice 3b
+
+## DONE (2026-06-06) — user-facing surface deleted
+- Deleted the `ductile config token` + `config scope` CLIs (both managed tokens.yaml) and their routing,
+  help, and ~700 lines of handlers/helpers in `config_manage.go`.
+- Deleted `config.TokenEntry`, `config.TokensFileConfig`, the `ConfigFiles.Tokens` field + its discovery
+  and FileTier/AllFiles/HighSecurityFiles uses.
+- Fixed the user-facing validator error: `secret_ref … not found in the vault` (dropped "or tokens.yaml").
+- Snapshot secret-use source label `tokens.yaml` → `vault`.
+- Tests reworked onto webhooks.yaml as the high-security fixture (integrity/strict-reload/hash tests);
+  `go test ./...` green, `golangci-lint ./...` 0 issues.
+
+## DELIBERATELY RETAINED — deploy-safety shim (remove in final step)
+- `dedicatedScopeDomains["tokens"]` (strict_decode.go) + the loader's scope-file recognition of tokens.yaml:
+  these keep a lingering tokens.yaml *include* a harmless no-op so the prod boxes (armed
+  `validate_config_on_boot`) don't crash-loop. Remove ONLY after each instance drops the include + file.
+
+## REMAINING (cosmetic, for full `grep -r tokens.yaml` cleanliness)
+- Stale comments mentioning tokens.yaml (webhook docs, types.go, secrets/age.go, vault_secrets.go).
+- A few tests use "tokens.yaml" as a *sample* filename for generic file handling (encrypted-include decrypt,
+  config backup/restore) — rename to another file.
+- Per-instance: drop the tokens.yaml include + file, then remove the shim above. Then acceptance is met.
 
 **Origin ([[48-epic-retire-tokens-yaml]] slice 3a, 2026-06-06):** slice 3a removed tokens.yaml as a
 *runtime* secret source (the vault is now sole source). But the tokens.yaml *file* machinery still exists

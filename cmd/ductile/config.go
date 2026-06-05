@@ -97,10 +97,6 @@ func runConfigNoun(args []string) int {
 			return 0
 		}
 		return runConfigSet(actionArgs)
-	case "token":
-		return runConfigToken(actionArgs)
-	case "scope":
-		return runConfigScope(actionArgs)
 	case "plugin":
 		return runConfigPlugin(actionArgs)
 	case "route":
@@ -404,7 +400,7 @@ func hasHelpFlag(args []string) bool {
 
 func printConfigNounHelp(w *os.File) {
 	_, _ = fmt.Fprintln(w, "Usage: ductile config <action> [flags]")
-	_, _ = fmt.Fprintln(w, "Actions: lock, check, schema, validate, show, get, set, token, scope, plugin, route, webhook, init, backup, restore")
+	_, _ = fmt.Fprintln(w, "Actions: lock, check, schema, validate, show, get, set, plugin, route, webhook, init, backup, restore")
 }
 
 func printConfigLockHelp() {
@@ -636,7 +632,7 @@ func runConfigHashUpdate(args []string) int {
 			return 1
 		}
 
-		scopeFiles := []string{"tokens.yaml", "webhooks.yaml"}
+		scopeFiles := []string{"webhooks.yaml"}
 		report, err := config.GenerateChecksumsWithReport(dir, scopeFiles, dryRun)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Failed to lock config in %s: %v\n", dir, err)

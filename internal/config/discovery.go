@@ -33,9 +33,6 @@ func DiscoverConfigFiles(configDir string) (*ConfigFiles, error) {
 	if path := filepath.Join(absDir, "webhooks.yaml"); fileExists(path) {
 		cf.Webhooks = path
 	}
-	if path := filepath.Join(absDir, "tokens.yaml"); fileExists(path) {
-		cf.Tokens = path
-	}
 	if path := filepath.Join(absDir, "routes.yaml"); fileExists(path) {
 		cf.Routes = path
 	}

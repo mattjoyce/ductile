@@ -33,9 +33,6 @@ func TestDiscoverConfigFiles(t *testing.T) {
 	if cf.Config != filepath.Join(tmpDir, "config.yaml") {
 		t.Errorf("Config = %q", cf.Config)
 	}
-	if cf.Tokens != filepath.Join(tmpDir, "tokens.yaml") {
-		t.Errorf("Tokens = %q", cf.Tokens)
-	}
 	if cf.Webhooks != filepath.Join(tmpDir, "webhooks.yaml") {
 		t.Errorf("Webhooks = %q", cf.Webhooks)
 	}
@@ -77,9 +74,6 @@ func TestDiscoverConfigFilesMinimal(t *testing.T) {
 		t.Fatalf("DiscoverConfigFiles() failed: %v", err)
 	}
 
-	if cf.Tokens != "" {
-		t.Errorf("Tokens should be empty, got %q", cf.Tokens)
-	}
 	if len(cf.Plugins) != 0 {
 		t.Errorf("Plugins should be empty, got %d", len(cf.Plugins))
 	}
@@ -88,14 +82,10 @@ func TestDiscoverConfigFilesMinimal(t *testing.T) {
 func TestConfigFilesFileTier(t *testing.T) {
 	cf := &ConfigFiles{
 		Config:   "/etc/ductile/config.yaml",
-		Tokens:   "/etc/ductile/tokens.yaml",
 		Webhooks: "/etc/ductile/webhooks.yaml",
 		Scopes:   []string{"/etc/ductile/scopes/admin.json"},
 	}
 
-	if cf.FileTier(cf.Tokens) != TierHighSecurity {
-		t.Error("tokens.yaml should be high security")
-	}
 	if cf.FileTier(cf.Webhooks) != TierHighSecurity {
 		t.Error("webhooks.yaml should be high security")
 	}
@@ -110,7 +100,6 @@ func TestConfigFilesFileTier(t *testing.T) {
 func TestConfigFilesAllFiles(t *testing.T) {
 	cf := &ConfigFiles{
 		Config:         "/etc/ductile/config.yaml",
-		Tokens:         "/etc/ductile/tokens.yaml",
 		Webhooks:       "/etc/ductile/webhooks.yaml",
 		Routes:         "/etc/ductile/routes.yaml",
 		RelayInstances: "/etc/ductile/relay-instances.yaml",
@@ -119,8 +108,8 @@ func TestConfigFilesAllFiles(t *testing.T) {
 	}
 
 	all := cf.AllFiles()
-	if len(all) != 7 {
-		t.Errorf("AllFiles() returned %d files, want 7", len(all))
+	if len(all) != 6 {
+		t.Errorf("AllFiles() returned %d files, want 6", len(all))
 	}
 }
 

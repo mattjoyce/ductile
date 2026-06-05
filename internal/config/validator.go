@@ -30,7 +30,7 @@ func (v *ConfigValidator) checkSecretRef(ref, where string) error {
 			"(validate with the key or via the daemon to confirm)", "secret_ref", ref, "at", where)
 		return nil
 	}
-	return fmt.Errorf("%s: secret_ref %q not found in the vault or tokens.yaml", where, ref)
+	return fmt.Errorf("%s: secret_ref %q not found in the vault", where, ref)
 }
 
 // ValidateCrossReferences checks that all cross-file references are valid.
@@ -154,7 +154,7 @@ func (v *ConfigValidator) validatePluginTokenRefs() error {
 						pluginName, key)
 				}
 
-				// Validate the referenced secret exists (vault or tokens.yaml).
+				// Validate the referenced secret exists (vault).
 				if err := v.checkSecretRef(strValue, fmt.Sprintf("plugin %q config field %q", pluginName, key)); err != nil {
 					return err
 				}

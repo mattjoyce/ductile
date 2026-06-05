@@ -311,7 +311,7 @@ func sanitizeConfig(cfg *config.Config) (map[string]any, []SecretUse) {
 				if endpoint.Name == "" {
 					purpose = "webhooks." + endpoint.Path + ".secret_ref"
 				}
-				secretUses = append(secretUses, secretUsePresent(purpose, endpoint.SecretRef, "tokens.yaml", value, present))
+				secretUses = append(secretUses, secretUsePresent(purpose, endpoint.SecretRef, "vault", value, present))
 			}
 			endpoints = append(endpoints, map[string]any{
 				"name":             endpoint.Name,

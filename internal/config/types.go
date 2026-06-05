@@ -406,21 +406,6 @@ type RelayIngressFileConfig struct {
 	RemoteIngress RemoteIngressConfig `yaml:"remote_ingress"`
 }
 
-// TokenEntry defines an API token with scoped permissions (directory mode tokens.yaml).
-type TokenEntry struct {
-	Name        string `yaml:"name" json:"name"`
-	Key         string `yaml:"key" json:"key"`
-	ScopesFile  string `yaml:"scopes_file,omitempty" json:"scopes_file,omitempty"`
-	ScopesHash  string `yaml:"scopes_hash,omitempty" json:"scopes_hash,omitempty"`
-	CreatedAt   string `yaml:"created_at,omitempty" json:"created_at,omitempty"`
-	Description string `yaml:"description,omitempty" json:"description,omitempty"`
-}
-
-// TokensFileConfig wraps token entries for standalone tokens.yaml.
-type TokensFileConfig struct {
-	Tokens []TokenEntry `yaml:"tokens"`
-}
-
 // WebhooksFileConfig wraps webhook endpoints for standalone webhooks.yaml.
 // It accepts the documented nested form:
 //
@@ -533,7 +518,6 @@ type ConfigFiles struct {
 	Plugins        []string // plugins/*.yaml paths (absolute, sorted)
 	Pipelines      []string // pipelines/*.yaml paths (absolute, sorted)
 	Webhooks       string   // webhooks.yaml path (absolute, empty if missing)
-	Tokens         string   // tokens.yaml path (absolute, empty if missing)
 	Routes         string   // routes.yaml path (absolute, empty if missing)
 	RelayInstances string   // relay-instances.yaml path (absolute, empty if missing)
 	RelayIngress   string   // relay-ingress.yaml path (absolute, empty if missing)
@@ -542,7 +526,7 @@ type ConfigFiles struct {
 
 // FileTier returns the integrity tier for a given file path.
 func (cf *ConfigFiles) FileTier(path string) IntegrityTier {
-	if path == cf.Tokens || path == cf.Webhooks {
+	if path == cf.Webhooks {
 		return TierHighSecurity
 	}
 	if slices.Contains(cf.Scopes, path) {
@@ -560,9 +544,6 @@ func (cf *ConfigFiles) AllFiles() []string {
 	if cf.Webhooks != "" {
 		files = append(files, cf.Webhooks)
 	}
-	if cf.Tokens != "" {
-		files = append(files, cf.Tokens)
-	}
 	if cf.Routes != "" {
 		files = append(files, cf.Routes)
 	}
@@ -579,9 +560,6 @@ func (cf *ConfigFiles) AllFiles() []string {
 // HighSecurityFiles returns only high-security tier file paths.
 func (cf *ConfigFiles) HighSecurityFiles() []string {
 	var files []string
-	if cf.Tokens != "" {
-		files = append(files, cf.Tokens)
-	}
 	if cf.Webhooks != "" {
 		files = append(files, cf.Webhooks)
 	}
