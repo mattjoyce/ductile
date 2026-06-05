@@ -1,0 +1,4 @@
+## 2025-02-28 - [CRITICAL] Fix SQL injection in SQLite PRAGMA table_info query
+**Vulnerability:** The `sqliteColumnExists` function in `internal/storage/sqlite.go` was vulnerable to SQL injection because it used `fmt.Sprintf` to directly interpolate a table name into a `PRAGMA table_info(%s)` string query.
+**Learning:** PRAGMA statements cannot accept parameterized inputs natively. If user input reaches this function, an attacker could terminate the string and inject arbitrary SQL.
+**Prevention:** Instead of string formatting with `PRAGMA table_info`, always use SQLite's table-valued function `pragma_table_info(?)` which safely supports query parameterization (`SELECT ... FROM pragma_table_info(?)`). Note that when doing this, columns like `notnull` must be escaped with double quotes (e.g., `"notnull"`) as they are reserved SQL keywords.
