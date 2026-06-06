@@ -236,6 +236,29 @@ the `0600` root-owned age key — exactly as intended.
 **macOS (launchd)** follows the same shape and is rolled out *after* the Linux host
 is observed stable (card #88); see [MACOS_INSTALLATION.md](MACOS_INSTALLATION.md).
 
+### Docker / Unraid — hygiene-only by default (decision, card #89)
+
+**The Docker/Unraid image stays hygiene-only (ADR Layer 1a) — no worker drop.** The
+image runs `USER ductile` (unprivileged), and adopting full privsep there would
+*raise* the container's privilege (run as root or with `SETUID`/`SETGID` caps),
+which is the worst trade on the one host where a privileged container is most
+costly. The ADR explicitly allows hygiene-only as a legitimate per-host default,
+and at one author it is the honest choice.
+
+You lose nothing silently: with **no `workers:` map configured**, the boot gate runs
+the gateway `unconfined` — exactly today's behaviour — and 1a still bounds the spawn
+(env allowlist + secrets only over stdin). And the gate is **fail-closed against
+misconfiguration**: if you *do* add a `workers:` map to a container that lacks the
+drop capability, the gateway **refuses to start** rather than presenting a wall it
+cannot enforce. So "hygiene-only" here is a deliberate, safe state, not a silent gap.
+
+*If you ever want full uid separation in a container* (e.g. running `sys_exec` on
+Unraid): run it `--cap-add=SETUID --cap-add=SETGID` (prefer caps over root), bake
+the worker uids into the image, provision the per-worker `0700` dirs on a persistent
+volume (the tmpfiles.d equivalent), and bind-mount the `0600` age key from the host
+(no TPM/Keychain in a container). That is opt-in and intentionally undocumented as a
+default — the homelab floor is hygiene-only.
+
 ---
 
 ## 6. Verification Checklist

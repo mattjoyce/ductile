@@ -1,6 +1,6 @@
 ---
 id: 90
-status: backlog
+status: done
 priority: Normal
 blocked_by: [86, 87]
 tags: [privsep, testing, acceptance]
@@ -34,6 +34,19 @@ fell). This card is the *aggregation* + the CI gate that keeps them all green.
 
 **Acceptance:** every §9 assertion has an executable test that fails if breached; the suite is
 a CI gate; on a non-privileged host the privsep tests report *skipped*, never *passed*.
+
+## Done (2026-06-06)
+- **Aggregate spawn test** `TestPrivsepNegativeSuite` (`privsep_negative_suite_linux_test.go`): one
+  dropped worker probes age key / config / state DB / a **sibling worker's dir** → all EACCES, plus a
+  positive control (own dir writable). Uses two DIFFERENT workers so the cross-worker probe can't pass
+  trivially; within-`default` residual explicitly noted, not claimed (B4). Verified on the Dell.
+- **CI gate** (`.github/workflows/test.yml`): builds the dispatch test binary and runs the privileged
+  privsep tests under `sudo` — they skip as the non-root `./scripts/test-fast` user (skip ≠ pass), so
+  the sudo step is where the wall is actually exercised. Worker uids are numeric (no account provisioning).
+- **§9 coverage map:** key/config/db/sibling-dir (here, spawn-based) · drop+groups-reset (#86) ·
+  env allowlist (env_test, 1a) · token scoping (vault/secret_delivery) · fingerprint downgrade (#93).
+- **Note:** cross-uid `ptrace` proper is kernel-enforced once uids differ (+ Yama `ptrace_scope`); the
+  ductile-level wall is the distinct uid + 0700 dir, which this suite exercises via the filesystem probe.
 
 ## Narrative
 - **Source:** PrivSec ADR §9, **re-sliced by the Brooks×Beck review** so tests ship with their

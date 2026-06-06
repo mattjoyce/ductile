@@ -1,6 +1,6 @@
 ---
 id: 93
-status: backlog
+status: done
 priority: Normal
 blocked_by: [85]
 tags: [privsep, attestation, authority]
@@ -29,6 +29,18 @@ grant mechanism works, not bundled into it.
 **Acceptance:** a plugin whose bytes changed since its grant no longer runs as the granted
 worker (downgrade or deny); an unchanged plugin runs as granted; behaviour matches #12's
 fail-closed attestation path.
+
+## Done (2026-06-06)
+- `bindWorkerToFingerprint` (`internal/dispatch/fingerprint.go`), wired into `spawnPlugin` after
+  resolution: reuses #12's `PluginVerifier`. On mismatch → downgrade to the most-restricted tier
+  (`untrusted` by convention; `WorkerDowngraded` source + `plugin.worker_downgraded` event); if no
+  such tier → fail closed (`ErrWorkerDropFailed`, terminal). Match/unconfined/nil-verifier pass through.
+- **Blast-radius, not execution gate (B5):** downgrades the identity, doesn't decide whether the
+  binary runs — the execution gate stays in the registry/.checksums path.
+- Unit-tested with a fake verifier (keep / downgrade / fail-closed / unconfined / nil). No Dell cycle
+  needed — pure logic; the real attestation is #12's tested machinery.
+- **Convention note:** most-restricted = the `untrusted` tier by name; a future card can generalize
+  to explicit privilege ordering if a third isolated tier ever needs it.
 
 ## Narrative
 - **Source:** Brooks×Beck review — unbundled from #85 so each card carries one decision (if

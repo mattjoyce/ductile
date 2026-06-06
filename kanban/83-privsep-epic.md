@@ -8,12 +8,14 @@ tags: [privsep, epic]
 # Privsep — uid separation (worker users) (EPIC)
 
 > [!status] WHERE WE'RE UP TO  *(a resuming agent reads this first; keep it current)*
-> - **State:** ADR accepted; **#92, #84, #85, #86, #87, #88 DONE.** Mechanism + Linux systemd deploy
->   complete; drop **proven under only CAP_SETUID+CAP_SETGID** (not root) on real systemd. Mac/launchd
->   + live rollout carved to [[95-privsep-launchd-and-live-rollout]].
-> - **Next action:** [[93-privsep-fingerprint-bind-grant]] (bind grant→fingerprint, reuse #12), then
->   [[90-privsep-negative-test-suite]] (CI aggregate), [[89-privsep-deploy-docker-unraid]] (last).
-> - **Done:** #92, #84, #85, #86, #87, #88 — **Doing:** — **Branch:** `feat/privsep-uid-separation` (pushed).
+> - **State:** ADR accepted; **all build/decision cards DONE — #92, #84, #85, #86, #87, #88(Linux),
+>   #93, #90, #89.** The privsep mechanism is complete, proven on macOS (units) + privileged Linux
+>   (Dell: wall, cap-only drop under exactly the two caps, fs reconciliation, negative suite). CI gates
+>   the wall under sudo. Docker/Unraid decided hygiene-only.
+> - **Only remaining:** [[95-privsep-launchd-and-live-rollout]] — Mac/launchd port + live-host rollout
+>   (ops/observation, blocked on observing the Linux host first; not code).
+> - **Done:** #92, #84, #85, #86, #87, #88, #89, #90, #93 — **Doing:** — **Branch:** `feat/privsep-uid-separation` (pushed).
+> - **PR:** not opened yet — branch ready for review/merge once #95 rollout is planned.
 > - **Update rule:** when a card's `status:` changes, update this block + the table below.
 
 Make the secret-scoping wall **real**. Today plugins run as the gateway's own OS user
@@ -40,13 +42,13 @@ privileged (`CAP_SETUID`) gateway dropping privilege at spawn.
 | 92 | [[92-privsep-tracer-wall-off-sys-exec]] — wall off `sys_exec` (1 worker/1 plugin/1 host/1 test) | **done** | — |
 | 84 | [[84-privsep-workers-table]] — two worker tiers in config (table deferred) | **done** | 92 |
 | 85 | [[85-privsep-per-plugin-worker-grant]] — per-plugin `worker:` grant (*which-worker*) | **done** | 84 |
-| 93 | [[93-privsep-fingerprint-bind-grant]] — bind grant to fingerprint (swap defence) | backlog | 85 |
+| 93 | [[93-privsep-fingerprint-bind-grant]] — bind grant to fingerprint (swap defence) | **done** | 85 |
 | 86 | [[86-privsep-spawn-uid-drop]] — uid/gid drop, fail-closed + group-reset | **done** | 84, 85 |
 | 87 | [[87-privsep-filesystem-permissions]] — full secrets surface + per-worker dirs | **done** | 86 |
 | 88 | [[88-privsep-deploy-systemd-launchd]] — deploy host 1 (caps, never setuid) | **done** (Linux) | 86 |
 | 95 | [[95-privsep-launchd-and-live-rollout]] — launchd (Mac) + live rollout (observe-then-next) | backlog | 88 |
-| 90 | [[90-privsep-negative-test-suite]] — CI gate aggregating the negative tests | backlog | 86, 87 |
-| 89 | [[89-privsep-deploy-docker-unraid]] — Docker/Unraid LAST, maybe hygiene-only | backlog | 88 |
+| 90 | [[90-privsep-negative-test-suite]] — CI gate aggregating the negative tests | **done** | 86, 87 |
+| 89 | [[89-privsep-deploy-docker-unraid]] — Docker/Unraid LAST, maybe hygiene-only | **done** (hygiene-only) | 88 |
 
 **Operator decisions (2026-06-06):**
 - **Scope:** full Layer 1b — adopt the `CAP_SETUID` gateway (ADR §10 Q1 = yes).

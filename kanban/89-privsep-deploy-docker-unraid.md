@@ -1,6 +1,6 @@
 ---
 id: 89
-status: backlog
+status: done
 priority: Low
 blocked_by: [88]
 tags: [privsep, deploy, docker, unraid, deferred]
@@ -27,6 +27,18 @@ isolation is worth a privileged container here.
 **Acceptance:** Unraid container boots with worker uids + SETUID/SETGID, drops plugins to
 workers, worker state dirs persist across recreation. **OR** an explicit decision that Unraid
 **stays hygiene-only (1a)** — the ADR allows hygiene-only as a legitimate per-host default.
+
+## Decided (2026-06-06): hygiene-only — no code change
+- **Decision:** Docker/Unraid **stays hygiene-only (1a)**. The image keeps `USER ductile`
+  (unprivileged); adopting full privsep would *raise* the container's privilege — the worst trade on
+  the costliest host. The ADR allows hygiene-only as a legitimate per-host default; at one author it's honest.
+- **Safe by construction:** no `workers:` map → boot gate runs `unconfined` (today's behaviour, 1a still
+  bounds the spawn). If workers were added to a no-capability container, the boot gate **refuses to start**
+  (fail-closed) — never a false wall. So hygiene-only is a deliberate state, not a silent gap.
+- **Documented:** `docs/DEPLOYMENT.md §5b` (Docker/Unraid subsection), including the opt-in path for full
+  container privsep (`--cap-add=SETUID/SETGID`, bake uids, persistent 0700 volumes, bind-mount the key) if
+  ever wanted — deliberately not the default.
+- **No Dockerfile change.** Live Unraid host (#68) re-deploy is part of [[95-privsep-launchd-and-live-rollout]].
 
 ## Narrative
 - **Source:** PrivSec ADR §5 "Per-host reality — Unraid/Docker" (the explicit hard case).
