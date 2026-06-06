@@ -15,12 +15,28 @@ tags: [privsep, epic]
 > - **Rename + rebase (2026-06-07):** branch **renamed worker→account / run_as** (commit `5590091`) to
 >   decouple from concurrency `workers`/vault `principal`; **rebased onto main** (gosec fix included).
 >   Full repo suite green, gofmt-clean.
-> - **Next action:** [[96-privsep-adr-vocab-sync]] (sync ADR vocab to the rename — **prereq for luminary
->   code review**). Then **review order: code → docs** (design already grilled; code review may change
->   impl, so docs reviewed last vs final code).
-> - **Open:** #96 (todo, review prereq), [[95-privsep-launchd-and-live-rollout]] (backlog, deferred ops).
-> - **Done:** #92, #84, #85, #86, #87, #88, #89, #90, #93 — **Branch:** `feat/privsep-uid-separation` (pushed, rebased on main).
-> - **PR:** not opened yet — ready for review after #96.
+> - **Luminary code review DONE (2026-06-07):** 4 panels (Brooks×Beck, Hickey×Armstrong,
+>   Ousterhout×Liskov, Thompson×Feathers) — **unanimous approve, ZERO merge-blockers.** Synthesis +
+>   triage: `~/Obsidian/Personal1/ductile/privsep/PrivSep-Branch-Review_SYNTHESIS.md` (17 themes).
+> - **Tier A+B review changes FOLDED (2026-06-07):** boot-time grant-resolution (`validateAccountGrants`,
+>   the 4/4 headline) + `default`/`untrusted` tier-absence boot warns; named `SecretSurfacePaths`
+>   reconciling the config *directory* (closes file-form sibling-secret gap); `ErrNoDowngradeTarget`
+>   split from `ErrAccountDropFailed` (both terminal/no-retry); #96 vocab residue cleaned from CODE
+>   (log keys/comments/`a account` strings, `workersConfigured`→`accountsConfigured`). Suite green,
+>   gofmt/golangci-lint/gosec clean; independent review confirmed **no fail-open regression**.
+>   **Deferred → [[97-privsep-review-followups]]:** T3 (ResolvedAccount sum-type — naive `Confined()`
+>   is a zero-value footgun), T5 (once-per-spawn attestation — risky refactor, minor), T9, T15, vocab lint.
+> - **T7 finding (#93 activeness):** live gateway (`~/.config/ductile`) loads a vault (age key + `vault.age`;
+>   logs "compose-time attestation on") → the **secret-path swap-defence is ACTIVE**. BUT there is **no
+>   `accounts:` map** → boot gate → `unconfined` (no CAP_SETUID on macOS launchd) → privsep is **NOT
+>   enforcing on the live host**, so the #93 *downgrade* path isn't reached there. Enforce mode is
+>   macOS-pending ([[95-privsep-launchd-and-live-rollout]]) — must be stated in the PR body.
+> - **Next action:** **documentation review** (docs vs the now-folded code) — last in the review order.
+>   Tier D doc items (T5c ADR principal-asymmetry, T11 deploy SSOT, T12 macOS-pending, T13, T14, T17)
+>   land there. Then open the PR.
+> - **Open:** [[97-privsep-review-followups]] (todo), [[95-privsep-launchd-and-live-rollout]] (backlog).
+> - **Done:** #92, #84, #85, #86, #87, #88, #89, #90, #93, #96 — **Branch:** `feat/privsep-uid-separation` (pushed, rebased on main).
+> - **PR:** not opened yet — ready after the doc review (state macOS-pending enforce per T7/T12).
 > - **Update rule:** when a card's `status:` changes, update this block + the table below.
 
 Make the secret-scoping wall **real**. Today plugins run as the gateway's own OS user
@@ -84,6 +100,14 @@ privileged (`CAP_SETUID`) gateway dropping privilege at spawn.
 - **Stated, not hidden:** [[90-privsep-negative-test-suite]]'s cross-uid `ptrace` test must run **two
   plugins on *different* workers** (a `default`/`default` pair shares a uid and passes trivially), and
   must note that sibling isolation *within* `default` is explicitly not claimed.
+
+**Renamed `worker` → `account` / `run_as` (2026-06-07, commit `5590091`; ADR vocab synced #96):**
+- Everywhere this epic and its cards say *worker*, the shipped code/config/ADR now say **account**:
+  config map `workers:`→`accounts:`, per-plugin grant `worker:`→`run_as:`, Go `WorkerConf`→`AccountConf` etc.
+- Renamed to stop colliding with dispatch **concurrency** *workers* (`service.max_workers`, the pool) and
+  the vault ***principal*** — both distinct concepts, **unchanged**.
+- Historical card prose below and the card titles (e.g. [[84-privsep-workers-table]]) are left
+  as-written for the record; read *worker*→*account*, *`worker:`*→*`run_as:`*, *`workers` table*→*`accounts` table*.
 
 **Vocabulary + boot gate — `default` ≠ `unconfined` (ADR §5, resolved 2026-06-06):**
 - **`default`** = a *configured, unprivileged* worker uid a plugin is dropped to (a real wall) — the
