@@ -1,6 +1,6 @@
 ---
 id: 87
-status: backlog
+status: done
 priority: Normal
 blocked_by: [86]
 tags: [privsep, filesystem, deploy]
@@ -31,6 +31,21 @@ surface and give every worker its own writable space, so uid separation actually
 own `0700` dir; plugin code dirs stay executable; boot reconciles worker dir ownership/mode and
 **refuses to start** if any secrets-surface check or worker-dir reconciliation step fails while
 workers are configured (warn-and-continue only under `unconfined`).
+
+## Done (2026-06-06)
+- `ReconcileWorkerFilesystem` (`internal/dispatch/fsreconcile_unix.go`), wired into `buildRuntime`'s
+  enforce path: runs only when the boot gate says enforce, **all-or-refuse** (a failure aborts boot).
+- **Secrets surface** (`config` + state DB passed in; age key already fail-closed at *load* via the
+  keyring `0077` check): a gateway-owned loose file is tightened in place (0644→0600, dir→0700); a
+  **foreign-owned or still-loose** path **fails closed**.
+- **Per-worker dirs:** created + chowned to the worker uid/gid + chmod `0700`; distinct ownership +
+  0700 is the cross-worker wall. Never widened.
+- **Verified:** secret-path tightening + foreign-owned-refuse on macOS (`euid+1` trick);
+  `TestReconcileWorkerFilesystemAsRoot` on the Dell (dirs 0700 owned by their uids, secret tightened).
+- **Scope honesty:** the spawn-based cross-worker *read* negative test (one worker reading another's
+  dir) is left to [[90-privsep-negative-test-suite]]; here the dir's `0700`+owner is asserted as the wall.
+- **Next:** [[88-privsep-deploy-systemd-launchd]] (prove under only CAP_SETUID + sysusers.d),
+  [[93-privsep-fingerprint-bind-grant]], [[90-privsep-negative-test-suite]] (CI aggregate).
 
 ## Narrative
 - **Source:** PrivSec ADR §3 Layer 1b + §5.
