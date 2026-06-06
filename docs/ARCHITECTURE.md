@@ -354,7 +354,11 @@ why attestation (`plugin lock`) is decoupled from config integrity (`config lock
 unrelated config edit must never silently bless a swapped binary.
 
 Secrets themselves live in the **vault** — an age-encrypted store the daemon alone reads and writes (the
-sole-writer owner; see `docs/SECRETS.md` for the operator model and lifecycle). The trust idea: a secret is
+sole-writer owner; see `docs/SECRETS.md` for the operator model and lifecycle). The daemon decrypts the
+blob **once** at startup into that single in-memory owner; boot integrity-verification, the attestation
+nonce, and secret delivery all read from that one snapshot — so a plugin's fingerprint is verified against
+the exact vault state that later releases its secrets, with no decrypt-twice window between the two. The
+trust idea: a secret is
 bound to an *attested plugin identity*, delivered out-of-band from config and environment, so a swapped or
 unattested binary cannot inherit credentials. Operators register a plugin as a **principal** and grant it
 named secrets; at spawn the core **Composes** that principal's authorized, active secrets and delivers them
