@@ -80,28 +80,41 @@ func reconcileSecretPath(path string, euid int) error {
 	return nil
 }
 
-// reconcileWorkerDir gives one worker a private 0700 state_dir it owns: created if
-// missing, then chowned and chmod'd. Any failure fails closed (all-or-refuse).
+// reconcileWorkerDir ensures one worker has a private 0700 state_dir it owns.
+//
+// It is deliberately provision-best-effort, verify-fail-closed. A privileged
+// gateway (root / dev) self-heals: create, chown to the worker, chmod 0700. But a
+// cap-only gateway (CAP_SETUID+CAP_SETGID, the ADR §5 "two caps, nothing more")
+// holds NEITHER CAP_CHOWN nor ownership of a worker-owned dir, so its chown/chmod
+// EPERM — and that is fine *iff* the init layer already provisioned the dir
+// (sysusers.d + tmpfiles.d, #88). The final stat is the real wall: 0700, owned by
+// the worker, or fail closed. So the same code is correct under both root and the
+// minimal two-cap deploy.
 func reconcileWorkerDir(name string, w config.WorkerConf) error {
-	info, err := os.Stat(w.StateDir)
-	switch {
-	case errors.Is(err, fs.ErrNotExist):
-		if err := os.MkdirAll(w.StateDir, 0o700); err != nil {
-			return fmt.Errorf("privsep: create worker %q state_dir %q: %w", name, w.StateDir, err)
+	if _, err := os.Stat(w.StateDir); errors.Is(err, fs.ErrNotExist) {
+		if mkErr := os.MkdirAll(w.StateDir, 0o700); mkErr != nil {
+			return fmt.Errorf("privsep: worker %q state_dir %q is missing and cannot be created (provision it via tmpfiles.d, #88): %w", name, w.StateDir, mkErr)
 		}
-	case err != nil:
+	}
+	// Best-effort ownership/mode — succeeds as root/dev, EPERMs (ignored) under a
+	// cap-only gateway where the init layer is expected to have provisioned the dir.
+	_ = os.Chown(w.StateDir, w.UID, w.GID)
+	_ = os.Chmod(w.StateDir, 0o700)
+
+	// Verify — fail-closed regardless of who provisioned the dir.
+	info, err := os.Stat(w.StateDir)
+	if err != nil {
 		return fmt.Errorf("privsep: stat worker %q state_dir %q: %w", name, w.StateDir, err)
-	case !info.IsDir():
+	}
+	if !info.IsDir() {
 		return fmt.Errorf("privsep: worker %q state_dir %q exists but is not a directory", name, w.StateDir)
 	}
-	// Own it: the worker (not the gateway) must own its dir so it can read/write
-	// there; 0700 keeps every other worker out. MkdirAll is umask-subject, so the
-	// explicit chmod guarantees the mode.
-	if err := os.Chown(w.StateDir, w.UID, w.GID); err != nil {
-		return fmt.Errorf("privsep: chown worker %q state_dir %q to %d:%d: %w", name, w.StateDir, w.UID, w.GID, err)
+	if info.Mode().Perm() != 0o700 {
+		return fmt.Errorf("privsep: worker %q state_dir %q has mode %#o, want 0700", name, w.StateDir, info.Mode().Perm())
 	}
-	if err := os.Chmod(w.StateDir, 0o700); err != nil {
-		return fmt.Errorf("privsep: chmod worker %q state_dir %q 0700: %w", name, w.StateDir, err)
+	st, ok := info.Sys().(*syscall.Stat_t)
+	if !ok || int(st.Uid) != w.UID || int(st.Gid) != w.GID {
+		return fmt.Errorf("privsep: worker %q state_dir %q owned by %d:%d, want %d:%d (provision it owned by the worker via sysusers.d/tmpfiles.d, #88)", name, w.StateDir, st.Uid, st.Gid, w.UID, w.GID)
 	}
 	return nil
 }

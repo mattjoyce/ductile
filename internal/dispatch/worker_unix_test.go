@@ -85,8 +85,8 @@ func TestHasDropCapabilityAsRoot(t *testing.T) {
 // cmd.Start() errors — exactly the "no false wall" guarantee. This runs where the
 // privileged Linux wall test skips, so the two are complementary.
 func TestPrivsepConfinedSpawnFailsClosedWithoutPrivilege(t *testing.T) {
-	if os.Geteuid() == 0 {
-		t.Skip("this test asserts the unprivileged failure mode; as root the drop would actually succeed")
+	if hasDropCapability() {
+		t.Skip("asserts the failure mode when the gateway CANNOT drop; skipping where it can (root or CAP_SETUID)")
 	}
 
 	scriptPath := writeDispatchTestScript(t, "#!/bin/sh\necho '{\"protocol\":2}'\n")

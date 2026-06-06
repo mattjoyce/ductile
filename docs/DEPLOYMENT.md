@@ -187,6 +187,57 @@ journalctl --user -u ductile-local -f
 
 ---
 
+## 5b. Privsep — system service with worker users (opt-in)
+
+The `--user` service above runs every plugin as your own uid (hygiene-only, ADR
+Layer 1a). To contain a *popped* plugin — so it cannot read the gateway's secrets
+or another plugin's memory — run the gateway as a **system service holding only
+`CAP_SETUID`+`CAP_SETGID`** and drop each plugin to an unprivileged **worker** user
+(ADR Layer 1b). Templates live in [`deploy/systemd/`](../deploy/systemd/).
+
+**The model:** the binary is never setuid — privilege is *init-conferred*. The
+gateway runs as the unprivileged `ductile` account with exactly the two capabilities,
+just enough to setuid each plugin to its worker at spawn. A cap-only gateway holds
+**no `CAP_CHOWN`**, so the worker accounts and their `0700` state dirs are provisioned
+by the init layer (`sysusers.d` + `tmpfiles.d`); the gateway only **verifies** them
+at boot and **refuses to start** if they are wrong (fail-closed).
+
+Install once, as root:
+
+```bash
+sudo install -m0644 deploy/systemd/ductile-workers.sysusers.conf  /etc/sysusers.d/ductile-workers.conf
+sudo install -m0644 deploy/systemd/ductile-workers.tmpfiles.conf  /etc/tmpfiles.d/ductile-workers.conf
+sudo systemd-sysusers                                              # create ductile + worker accounts
+sudo systemd-tmpfiles --create /etc/tmpfiles.d/ductile-workers.conf  # create 0700 worker dirs
+sudo install -m0644 deploy/systemd/ductile.service                /etc/systemd/system/ductile.service
+sudo systemctl daemon-reload && sudo systemctl enable --now ductile
+```
+
+Match the config `workers:` map to the provisioned uids/dirs:
+
+```yaml
+workers:
+  default:   { uid: 1001, gid: 1001, state_dir: /var/lib/ductile/workers/default }
+  untrusted: { uid: 1002, gid: 1002, state_dir: /var/lib/ductile/workers/untrusted }
+plugins:
+  sys_exec:  { worker: untrusted }   # arbitrary-command → isolated tier
+  # ungranted first-party plugins fall back to the shared `default` tier
+```
+
+**The boot gate is fail-closed (ADR §5):** capability and a configured `workers`
+map must agree. A privileged gateway with no workers, or workers configured on a
+host without the capability, **refuses to start** — never a silent run at gateway
+privilege. The one escape hatch is an explicit `service.unconfined: true`.
+
+**Utility subcommands stay unprivileged:** `ductile config validate`, `secrets
+keygen`, etc. run as the *caller* (the binary is not setuid), so they cannot read
+the `0600` root-owned age key — exactly as intended.
+
+**macOS (launchd)** follows the same shape and is rolled out *after* the Linux host
+is observed stable (card #88); see [MACOS_INSTALLATION.md](MACOS_INSTALLATION.md).
+
+---
+
 ## 6. Verification Checklist
 
 After starting the service, verify the following:
