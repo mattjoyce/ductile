@@ -64,9 +64,10 @@ type Engine interface {
 	// Hook pipelines declared with on-hook: are matched by signal name.
 	// plugin may be empty when no source plugin is known; routes that declare
 	// from_plugin: never match in that case.
-	// sourceContext is the upstream job's accumulated durable context, supplied
-	// to entry-route trigger predicates as Scope.Context.
-	NextHook(ctx context.Context, plugin, signal string, payload map[string]any, sourceContext map[string]any) ([]Dispatch, error)
+	// Hook entry-route predicates evaluate against the lifecycle payload only;
+	// there is no durable context at hook time (context.* in a hook if: is
+	// rejected at config load).
+	NextHook(ctx context.Context, plugin, signal string, payload map[string]any) ([]Dispatch, error)
 	// GetPipelineByTrigger returns the first pipeline matched by a trigger event.
 	GetPipelineByTrigger(trigger string) *PipelineInfo
 	// GetPipelineByName returns a pipeline by its unique name.

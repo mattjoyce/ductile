@@ -407,7 +407,7 @@ func TestRouterNextHookDispatch(t *testing.T) {
 	r := New(set, nil)
 
 	payload := map[string]any{"plugin": "claude_harvest", "status": "succeeded"}
-	out, err := r.NextHook(context.Background(), "claude_harvest", "job.completed", payload, nil)
+	out, err := r.NextHook(context.Background(), "claude_harvest", "job.completed", payload)
 	if err != nil {
 		t.Fatalf("NextHook: %v", err)
 	}
@@ -442,7 +442,7 @@ func TestRouterNextHookUnknownSignalReturnsEmpty(t *testing.T) {
 	}
 
 	r := New(set, nil)
-	out, err := r.NextHook(context.Background(), "", "job.failed", nil, nil)
+	out, err := r.NextHook(context.Background(), "", "job.failed", nil)
 	if err != nil {
 		t.Fatalf("NextHook: %v", err)
 	}
@@ -502,7 +502,7 @@ func TestRouterNextHookMultiplePipelines(t *testing.T) {
 	}
 
 	r := New(set, nil)
-	out, err := r.NextHook(context.Background(), "any_plugin", "job.completed", nil, nil)
+	out, err := r.NextHook(context.Background(), "any_plugin", "job.completed", nil)
 	if err != nil {
 		t.Fatalf("NextHook: %v", err)
 	}
@@ -535,7 +535,7 @@ func TestRouterNextHookExpandsCalledPipeline(t *testing.T) {
 	r := New(set, nil)
 
 	payload := map[string]any{"plugin": "claude_harvest", "status": "succeeded"}
-	out, err := r.NextHook(context.Background(), "claude_harvest", "job.completed", payload, nil)
+	out, err := r.NextHook(context.Background(), "claude_harvest", "job.completed", payload)
 	if err != nil {
 		t.Fatalf("NextHook: %v", err)
 	}
@@ -739,7 +739,7 @@ func TestRouterNextHookSkipsWhenIfFalse(t *testing.T) {
 	r := New(set, nil)
 
 	out, err := r.NextHook(context.Background(), "check_youtube", "job.failed",
-		map[string]any{"plugin": "check_youtube"}, nil)
+		map[string]any{"plugin": "check_youtube"})
 	if err != nil {
 		t.Fatalf("NextHook (false): %v", err)
 	}
@@ -748,7 +748,7 @@ func TestRouterNextHookSkipsWhenIfFalse(t *testing.T) {
 	}
 
 	out, err = r.NextHook(context.Background(), "fabric", "job.failed",
-		map[string]any{"plugin": "fabric"}, nil)
+		map[string]any{"plugin": "fabric"})
 	if err != nil {
 		t.Fatalf("NextHook (true): %v", err)
 	}
@@ -937,7 +937,7 @@ func TestRouterNextHookFromPluginMatches(t *testing.T) {
 	r := New(set, nil)
 
 	out, err := r.NextHook(context.Background(), "claude_harvest", "job.failed",
-		map[string]any{"plugin": "claude_harvest"}, nil)
+		map[string]any{"plugin": "claude_harvest"})
 	if err != nil {
 		t.Fatalf("NextHook: %v", err)
 	}
@@ -962,7 +962,7 @@ func TestRouterNextHookFromPluginDoesNotMatchOtherSourcePlugins(t *testing.T) {
 	r := New(set, nil)
 
 	out, err := r.NextHook(context.Background(), "fabric", "job.failed",
-		map[string]any{"plugin": "fabric"}, nil)
+		map[string]any{"plugin": "fabric"})
 	if err != nil {
 		t.Fatalf("NextHook: %v", err)
 	}
@@ -986,7 +986,7 @@ func TestRouterNextHookFromPluginRejectsEmptySourcePlugin(t *testing.T) {
 	r := New(set, nil)
 
 	out, err := r.NextHook(context.Background(), "", "job.failed",
-		map[string]any{"plugin": ""}, nil)
+		map[string]any{"plugin": ""})
 	if err != nil {
 		t.Fatalf("NextHook: %v", err)
 	}
@@ -1010,7 +1010,7 @@ func TestRouterNextHookEmptyFromPluginPreservesBehaviour(t *testing.T) {
 
 	for _, plugin := range []string{"claude_harvest", "fabric", ""} {
 		out, err := r.NextHook(context.Background(), plugin, "job.failed",
-			map[string]any{"plugin": plugin}, nil)
+			map[string]any{"plugin": plugin})
 		if err != nil {
 			t.Fatalf("NextHook(%q): %v", plugin, err)
 		}

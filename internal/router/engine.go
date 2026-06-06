@@ -209,10 +209,10 @@ func (r *Router) Next(ctx context.Context, req Request) ([]Dispatch, error) {
 // NextHook resolves hook pipeline dispatches for a lifecycle signal on a plugin.
 // Dispatches are root-level (no pipeline/step context) so hook jobs run independently.
 //
-// sourceContext is the upstream job's accumulated durable context, when available.
-// Entry-route predicates evaluate against payload + sourceContext so authors can
-// gate hook fan-out on baggage already claimed upstream.
-func (r *Router) NextHook(ctx context.Context, plugin, signal string, payload map[string]any, sourceContext map[string]any) ([]Dispatch, error) {
+// Hook entry-route predicates evaluate against the lifecycle event payload only.
+// There is no durable context at hook time — hooks fire for root jobs with none —
+// and a context.* predicate on an on-hook: trigger is rejected at config load.
+func (r *Router) NextHook(ctx context.Context, plugin, signal string, payload map[string]any) ([]Dispatch, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -244,14 +244,7 @@ func (r *Router) NextHook(ctx context.Context, plugin, signal string, payload ma
 			continue
 		}
 		if route.Source.If != nil {
-			if sourceContext == nil && conditions.ReferencesRoot(route.Source.If, "context") {
-				r.logger.Warn("hook trigger predicate references context.* but no source context is available at hook time; predicate cannot match",
-					"route_id", route.ID,
-					"pipeline", route.Pipeline,
-					"signal", signal,
-					"source_plugin", plugin)
-			}
-			ok, err := conditions.Eval(route.Source.If, conditions.Scope{Payload: payload, Context: sourceContext})
+			ok, err := conditions.Eval(route.Source.If, conditions.Scope{Payload: payload})
 			if err != nil {
 				// Fault isolation: one hook route's poison predicate must not
 				// suppress the other hook pipelines bound to this signal. Fail
@@ -273,7 +266,7 @@ func (r *Router) NextHook(ctx context.Context, plugin, signal string, payload ma
 			}
 		}
 		r.logger.Info("triggering hook pipeline", "name", route.Pipeline, "signal", signal, "source_plugin", plugin)
-		dispatches, err := r.resolveCompiledRoute(route, Request{Event: ev, SourcePlugin: plugin, SourceContext: sourceContext}, true)
+		dispatches, err := r.resolveCompiledRoute(route, Request{Event: ev, SourcePlugin: plugin}, true)
 		if err != nil {
 			return nil, err
 		}

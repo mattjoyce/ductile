@@ -1909,10 +1909,9 @@ func (d *Dispatcher) maybeFireHooks(ctx context.Context, job *queue.Job, signal 
 
 	// maybeFireHooks short-circuits when job.EventContextID != nil, so by the
 	// time we're here the upstream job has no accumulated durable context.
-	// Hook entry-route predicates therefore see Scope.Context as nil today.
-	// The plumbing is in place for future architectures that expose context
-	// at hook time.
-	dispatches, err := d.router.NextHook(ctx, job.Plugin, signal, payload, nil)
+	// Hook entry-route predicates evaluate against the lifecycle payload only;
+	// context.* in a hook if: is rejected at config load.
+	dispatches, err := d.router.NextHook(ctx, job.Plugin, signal, payload)
 	if err != nil {
 		d.logger.Error("hook routing error", "plugin", job.Plugin, "signal", signal, "error", err)
 		return

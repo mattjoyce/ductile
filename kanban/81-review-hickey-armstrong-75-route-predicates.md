@@ -20,15 +20,14 @@ Three findings are the same shape — *config that validates at load but silentl
 and the deepest single fix is to make an unsatisfiable predicate/selector a **loud failure** (load-
 or eval-time) instead of a quiet `false`.
 
-## Findings → cards
-- **76** (A4, Med) — `from_plugin:` not validated against the registry; typo = permanent dead route.
-- **77** (A1, High) — nil/absent `context` makes a predicate silently constant-false (no supervisor).
-- **78** (H1+H4, Med) — predicate resolvability is complected with dispatch path; make the context
-  requirement an explicit, load-validated contract.
-- **79** (A2, High) — one poison predicate aborts all co-triggered routes + later events; no per-route
-  fault isolation.
-- **80** (H2, Low) — `NextHook` `sourceContext` param is built/threaded/tested but has no producer
-  (passes `nil`); wire it or remove the speculative surface.
+## Findings → cards — ALL DONE 2026-06-06
+- **76** (A4, Med) ✅ — `from_plugin:` now validated against the registry at load; typo fails config-lock.
+- **77** (A1, High) ✅ — `Warn` when a `context.*` predicate runs with structurally-nil context.
+- **78** (H1+H4, Med) ✅ — `context.*` in an `on-hook:` predicate is rejected at config load.
+- **79** (A2, High) ✅ — per-route predicate-eval faults skip-with-warn instead of aborting the batch.
+- **80** (H2, Low) ✅ — dead `NextHook` `sourceContext` param removed (78 made it provably unreachable).
+
+Whole-suite `go build ./...` + `go test ./...` green (29 packages) after the five fixes.
 
 ## Noted, not carded
 - **H3** — `currentCtx.AccumulatedJSON` is decoded by 4 separate readers at `dispatcher.go:870-879`

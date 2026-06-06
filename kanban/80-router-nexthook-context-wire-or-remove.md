@@ -1,12 +1,22 @@
 ---
 id: 80
-status: backlog
+status: done
 priority: Low
 blocked_by: []
 tags: [router, hickey, yagni, speculative-generality, tech-debt, sprint-17]
 ---
 
 # `NextHook` sourceContext is built and threaded but has no producer — wire it or remove it
+
+**DONE 2026-06-06 — removed (the YAGNI branch).** With card 78 rejecting `context.*` in hook
+predicates at load, the `sourceContext` param was provably dead: no production producer (dispatcher
+passed `nil`) and no valid config could consume it. Removed `sourceContext map[string]any` from
+`NextHook` in `internal/router/interface.go` and `internal/router/engine.go`; hook predicates now
+evaluate against `Scope{Payload: payload}` only. Updated the sole production caller
+(`internal/dispatch/dispatcher.go`) and all `engine_test.go` call sites. Also fixed
+`internal/api/config_view_test.go` (a hook fixture that used `context.*`, now `payload.*` — fallout
+of the card-78 contract). Full `go build ./...` and `go test ./...` green (29 packages, 0 failures).
+If a future architecture surfaces context at hook time, re-add the seam with a real producer.
 
 **Origin: Hickey×Armstrong audit of #75, 2026-06-06. Finding H2 (Hickey: speculative generality).**
 
