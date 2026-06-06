@@ -1,12 +1,17 @@
 ---
 id: 30
-status: todo
+status: wontfix
 priority: Low
 blocked_by: [22, 13]
 tags: [vault, daemon, rotation, deferred, yagni]
 ---
 
 # Vault · live `rotate-key` while the daemon is serving (no downtime)
+
+**CANCELLED 2026-06-06 (operator call).** This is the no-downtime variant of `vault rotate-key`,
+tied to the `vaultd` daemon (#13) — which is `wontfix` ("maybe never"). With its prerequisite
+cancelled and the slim local daemon-down `rotate-key` (#22) already shipped, there's no reason to
+carry this. Reopen only if #13 is ever revived.
 
 **Deferred from #22 (slimming pass, 2026-06-03).** #22 ships `vault rotate-key` as a LOCAL,
 daemon-down, PID-guarded command (consistent with #8: key-touching ops are local, like `vault init`).
