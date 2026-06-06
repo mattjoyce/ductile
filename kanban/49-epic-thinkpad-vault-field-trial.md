@@ -1,12 +1,19 @@
 ---
 id: 49
-status: backlog
+status: done
 priority: High
 blocked_by: []
 tags: [vault, epic, deploy, thinkpad, age-secrets, spawn-hygiene, field-trial]
 ---
 
 # Field-trial the `feat/age-secrets-and-spawn-hygiene` branch on the Thinkpad (EPIC)
+
+**CLOSED 2026-06-06.** All 15 rungs done ([[50-rung0-thinkpad-deep-recon]]–[[64-rung14-closeout-docs]],
+plus [[65-validate-config-on-boot-rejects-split-config]] / [[66-redeploy-thinkpad-after-65-fix]]). The
+branch is live on **all three** hosts: Thinkpad (this epic), Mac m1 ([[67-deploy-vault-branch-macm1]]),
+and Unraid ([[68-deploy-vault-branch-unraid]]). Branch remains unmerged. Residual `claude_harvest`
+DUCTILE_LOCAL_TOKEN passthrough check folds into ongoing soak. Further deploys proceed as more cards
+clear.
 
 **Origin (2026-06-05):** rather than merge the vault/age-secrets + spawn-hygiene branch, run it
 as a field trial on the Thinkpad reference instance (`matt-ThinkPad-T14s-Gen-1`). Stepwise:
