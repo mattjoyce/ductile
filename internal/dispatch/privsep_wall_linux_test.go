@@ -36,9 +36,15 @@ func TestPrivsepWorkerCannotReadAgeKey(t *testing.T) {
 	// the root-created key file below.
 	const workerUID, workerGID = 65534, 65534
 
-	tmp := t.TempDir()
-	// The worker must be able to traverse tmp to reach both the key (to be denied
-	// by the file mode, not the dir) and its own output dir.
+	// Build the temp tree directly under /tmp rather than t.TempDir(): the latter
+	// nests under 0700 root-owned parents the dropped worker (65534) cannot
+	// traverse, which would make the plugin fail to exec for the wrong reason. A
+	// single 0755 dir under sticky-world /tmp is traversable end to end.
+	tmp, err := os.MkdirTemp("/tmp", "privsep-wall-")
+	if err != nil {
+		t.Fatalf("mkdtemp: %v", err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(tmp) })
 	if err := os.Chmod(tmp, 0o755); err != nil {
 		t.Fatalf("chmod tmp: %v", err)
 	}
@@ -83,8 +89,9 @@ while :; do sleep 1; done
 	d := &Dispatcher{events: events.NewHub(16), cfg: cfg}
 	req := &protocol.Request{Protocol: 2, JobID: "job-wall", Command: "poll"}
 	// The script idles after probing, so the spawn will hit the timeout; we only
-	// care about the verdict file it wrote as the dropped worker.
-	_, _, _, _, _, _, _ = d.spawnPlugin(context.Background(), "sys_exec", scriptPath, req, 1500*time.Millisecond, slog.Default())
+	// care about the verdict file it wrote as the dropped worker. Keep stderr/err
+	// for diagnostics if no verdict appears.
+	_, _, _, _, stderr, _, spawnErr := d.spawnPlugin(context.Background(), "sys_exec", scriptPath, req, 1500*time.Millisecond, slog.Default())
 
 	var got string
 	deadline := time.Now().Add(3 * time.Second)
@@ -102,6 +109,6 @@ while :; do sleep 1; done
 	case "READABLE":
 		t.Fatal("WALL BREACHED: worker read the 0600 age key (the drop did not bite)")
 	default:
-		t.Fatalf("no worker probe verdict (got %q) — the plugin may not have spawned as the worker; iterate perms/setup on the Linux host", got)
+		t.Fatalf("no worker probe verdict (got %q) — plugin may not have spawned as the worker.\n  spawnErr=%v\n  stderr=%q", got, spawnErr, stderr)
 	}
 }
