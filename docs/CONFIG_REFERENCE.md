@@ -230,6 +230,31 @@ Manifest interaction:
   `plugins.<name>.parallelism` to choose how much same-plugin concurrency to
   allow within the global `service.max_workers` cap.
 
+### 4.2.2 Inspecting effective plugin defaults
+
+Per-plugin `retry`, `timeouts`, `circuit_breaker`, `parallelism`, and
+`max_outstanding_polls` defaults live in code (single-sourced), and unset fields
+resolve to those defaults at runtime — so a plugin stanza that omits them (or sets
+only part of a block) does not show the values actually in force. Use the
+effective view to see what runs, with each value tagged `explicit` (set in your
+file) or `default` (inherited from code):
+
+```
+$ ductile config show --effective birda
+plugin: birda
+  enabled: true (explicit)
+  retry.max_attempts: 4 (default)
+  retry.backoff_base: 30s (default)
+  timeouts.poll: 1m0s (default)
+  timeouts.handle: 5m0s (explicit)
+  ...
+  parallelism: 8 (default)        # inherits service.max_workers
+```
+
+`ductile config get --effective birda.timeouts.handle` resolves a single field
+(`5m0s (explicit)`); add `--json` for `{ "value": ..., "source": ... }`. Plain
+`config show` (no `--effective`) is unchanged and renders the config as written.
+
 ### 4.3 webhooks.yaml (High Security - Experimental)
 
 > [!IMPORTANT]  

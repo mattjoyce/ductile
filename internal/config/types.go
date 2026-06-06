@@ -288,6 +288,94 @@ func MaxAttemptsForPlugin(pluginConf PluginConf) int {
 	return 0
 }
 
+// Provenance tags for an effective config value (see EffectivePluginConf).
+const (
+	SourceExplicit = "explicit" // value set in the operator's config file
+	SourceDefault  = "default"  // value inherited from DefaultPluginConf (code)
+)
+
+// EffectivePluginConf resolves a RAW (un-merged) plugin config into the values
+// actually in force at runtime, plus a per-field provenance map (field path →
+// SourceExplicit|SourceDefault). It mirrors the scattered runtime resolvers
+// field-by-field — MaxAttemptsForPlugin, dispatcher getTimeout/computeRetryDelay/
+// pluginParallelism, scheduler breakerThreshold/breakerResetAfter — so the view
+// matches what runs: a value is explicit when set (> 0) in the file, otherwise it
+// is the DefaultPluginConf value. Defaults are single-sourced from
+// DefaultPluginConf so this never re-hardcodes them (#71). maxWorkers is
+// service.max_workers, the default for parallelism (mergePluginDefaults semantics).
+//
+// Pass the raw conf (e.g. from LoadRaw); passing an already-merged conf would
+// report inherited block values as explicit.
+func EffectivePluginConf(raw PluginConf, maxWorkers int) (PluginConf, map[string]string) {
+	def := DefaultPluginConf()
+	src := make(map[string]string)
+	out := raw
+
+	// enabled is operator-declared by listing the plugin stanza.
+	src["enabled"] = SourceExplicit
+
+	pick := func(key string, value int, fallback int) int {
+		if value > 0 {
+			src[key] = SourceExplicit
+			return value
+		}
+		src[key] = SourceDefault
+		return fallback
+	}
+	pickDur := func(key string, value, fallback time.Duration) time.Duration {
+		if value > 0 {
+			src[key] = SourceExplicit
+			return value
+		}
+		src[key] = SourceDefault
+		return fallback
+	}
+
+	var rawRetry RetryConfig
+	if raw.Retry != nil {
+		rawRetry = *raw.Retry
+	}
+	out.Retry = &RetryConfig{
+		MaxAttempts: pick("retry.max_attempts", rawRetry.MaxAttempts, def.Retry.MaxAttempts),
+		BackoffBase: pickDur("retry.backoff_base", rawRetry.BackoffBase, def.Retry.BackoffBase),
+	}
+
+	var rawTimeouts TimeoutsConfig
+	if raw.Timeouts != nil {
+		rawTimeouts = *raw.Timeouts
+	}
+	effTimeouts := &TimeoutsConfig{
+		Poll:   pickDur("timeouts.poll", rawTimeouts.Poll, def.Timeouts.Poll),
+		Handle: pickDur("timeouts.handle", rawTimeouts.Handle, def.Timeouts.Handle),
+		Health: pickDur("timeouts.health", rawTimeouts.Health, def.Timeouts.Health),
+		Init:   pickDur("timeouts.init", rawTimeouts.Init, def.Timeouts.Init),
+	}
+	if len(rawTimeouts.Overrides) > 0 {
+		effTimeouts.Overrides = make(map[string]time.Duration, len(rawTimeouts.Overrides))
+		for cmd, d := range rawTimeouts.Overrides {
+			effTimeouts.Overrides[cmd] = d
+			src["timeouts."+cmd] = SourceExplicit
+		}
+	}
+	out.Timeouts = effTimeouts
+
+	var rawCB CircuitBreakerConfig
+	if raw.CircuitBreaker != nil {
+		rawCB = *raw.CircuitBreaker
+	}
+	out.CircuitBreaker = &CircuitBreakerConfig{
+		Threshold:  pick("circuit_breaker.threshold", rawCB.Threshold, def.CircuitBreaker.Threshold),
+		ResetAfter: pickDur("circuit_breaker.reset_after", rawCB.ResetAfter, def.CircuitBreaker.ResetAfter),
+	}
+
+	out.MaxOutstandingPolls = pick("max_outstanding_polls", raw.MaxOutstandingPolls, def.MaxOutstandingPolls)
+	// Parallelism's default is service.max_workers, not DefaultPluginConf().Parallelism
+	// — this matches mergePluginDefaults, the value the dispatcher actually sees.
+	out.Parallelism = pick("parallelism", raw.Parallelism, maxWorkers)
+
+	return out, src
+}
+
 // CircuitBreakerConfig defines circuit breaker settings.
 type CircuitBreakerConfig struct {
 	Threshold  int           `yaml:"threshold"`

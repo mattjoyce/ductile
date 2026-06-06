@@ -24,7 +24,17 @@ var envVarPattern = regexp.MustCompile(`\$\{([A-Za-z_][A-Za-z0-9_]*)\}`)
 // Load reads and parses configuration from a file.
 // Supports both single-file mode (all config in one file) and multi-file mode (via include array).
 func Load(configPath string) (*Config, error) {
-	cfg, _, err := load(configPath, true, true)
+	cfg, _, err := load(configPath, true, true, true)
+	return cfg, err
+}
+
+// LoadRaw reads and validates configuration exactly like Load but does NOT fold
+// per-plugin defaults into cfg.Plugins, so each PluginConf holds the operator's
+// raw values (nil blocks / zero fields where unset). The effective-config view
+// (`config show --effective`, EffectivePluginConf) needs this to distinguish
+// file-set values from inherited defaults — information Load destroys by merging.
+func LoadRaw(configPath string) (*Config, error) {
+	cfg, _, err := load(configPath, true, true, false)
 	return cfg, err
 }
 
@@ -35,18 +45,18 @@ func Load(configPath string) (*Config, error) {
 // nil when there is no vault or no key (early-deploy / keyless callers) —
 // callers fall back to LoadVault. The *Config is identical to what Load returns.
 func LoadWithVault(configPath string) (*Config, *vault.Vault, error) {
-	return load(configPath, true, true)
+	return load(configPath, true, true, true)
 }
 
 // LoadForLock reads configuration for `ductile config lock`. It intentionally
 // skips existing .checksums verification so an operator can create or refresh
 // the lock manifest from an unlocked state.
 func LoadForLock(configPath string) (*Config, error) {
-	cfg, _, err := load(configPath, false, false)
+	cfg, _, err := load(configPath, false, false, true)
 	return cfg, err
 }
 
-func load(configPath string, verifyScopes bool, validateConfig bool) (*Config, *vault.Vault, error) {
+func load(configPath string, verifyScopes bool, validateConfig bool, applyPluginDefaults bool) (*Config, *vault.Vault, error) {
 	// Resolve to absolute path for consistent relative path resolution
 	absPath, err := filepath.Abs(configPath)
 	if err != nil {
@@ -158,10 +168,14 @@ func load(configPath string, verifyScopes bool, validateConfig bool) (*Config, *
 		}
 	}
 
-	// Apply plugin defaults
-	for name, pluginConf := range cfg.Plugins {
-		merged := mergePluginDefaults(pluginConf, cfg.Service.MaxWorkers)
-		cfg.Plugins[name] = merged
+	// Apply plugin defaults. LoadRaw skips this so callers can see which values are
+	// operator-set vs inherited (the effective-config view, #71); every other load
+	// path folds defaults as before.
+	if applyPluginDefaults {
+		for name, pluginConf := range cfg.Plugins {
+			merged := mergePluginDefaults(pluginConf, cfg.Service.MaxWorkers)
+			cfg.Plugins[name] = merged
+		}
 	}
 
 	return cfg, owner, nil

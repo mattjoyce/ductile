@@ -1,10 +1,25 @@
 ---
 id: 71
-status: backlog
+status: done
 priority: Normal
 blocked_by: []
 tags: [config, observability, hickey, hidden-state, decomplect]
 ---
+
+### DONE (2026-06-06)
+Added `config show --effective [plugin]` and `config get --effective <plugin>[.<field>]`. New
+`config.EffectivePluginConf(raw, maxWorkers)` resolves each plugin field per *runtime* semantics
+(`>0 ? explicit : default`, defaults single-sourced from `DefaultPluginConf`) and returns a
+field→source map; `config.LoadRaw` provides the un-merged config so explicit-vs-default is real
+(plain `Load` folds block-level defaults, destroying the signal — and misrenders partial blocks
+like `retry:{max_attempts:6}` as `backoff_base: 0s`). Human output tags each field `(explicit)`/
+`(default)`; `--json` emits `{value,source}`. Plain `config show` is unchanged. Covers the silent
+majority (plugin retry/timeouts/breaker/parallelism); service/state/api defaults are already
+materialized by `applyConfigDefaults`. Tests in `internal/config/effective_test.go` +
+`cmd/ductile/config_effective_test.go`; docs in CONFIG_REFERENCE.md §4.2.2. Acceptance met:
+`config show --effective birda` → `retry.max_attempts: 4 (default)` / `timeouts.handle: 5m0s (explicit)`.
+Follow-up [[75-config-unify-plugin-default-resolvers]] tracks collapsing the duplicated runtime
+resolvers onto one source so the view can't drift.
 
 # `config show` should render the *effective* config (resolve plugin defaults), not just the source
 
