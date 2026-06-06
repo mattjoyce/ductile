@@ -1502,6 +1502,29 @@ func TestRunConfigInitBackupRestore(t *testing.T) {
 	}
 }
 
+func TestConfigBackupWarnsWhenVaultPresent(t *testing.T) {
+	tmpDir := t.TempDir()
+	writeConfigDirFixture(t, tmpDir)
+	// A vault blob lives in the config dir — config backup must NOT silently omit it.
+	if err := os.WriteFile(filepath.Join(tmpDir, "vault.age"), []byte("AGE-ENCRYPTED"), 0o600); err != nil {
+		t.Fatalf("write vault.age: %v", err)
+	}
+
+	backupPath := filepath.Join(t.TempDir(), "config-only.tar.gz")
+	code, _, stderr := captureOutputWithExitCode(t, func() int {
+		return runConfigBackup([]string{"--config-dir", tmpDir, "--output", backupPath})
+	})
+	if code != 0 {
+		t.Fatalf("runConfigBackup() code = %d, stderr: %s", code, stderr)
+	}
+	if !strings.Contains(stderr, "does NOT include the encrypted vault blob") {
+		t.Errorf("expected vault-omission warning when vault.age present; stderr:\n%s", stderr)
+	}
+	if !strings.Contains(stderr, "system backup") {
+		t.Errorf("warning should point to `system backup`; stderr:\n%s", stderr)
+	}
+}
+
 func TestRunConfigCheckSupportsConfigDirFlag(t *testing.T) {
 	tmpDir := t.TempDir()
 	writeConfigDirFixture(t, tmpDir)

@@ -35,10 +35,12 @@ KeePass so an archive can be paired to the key that decrypts it — needed once 
 produced more than one key. `newBackupUID` (`cmd/ductile/system_backup.go`), tested by
 `TestBackupUIDWrittenAndPaired`; documented in `docs/SECRETS.md` §"Backup and restore".
 
-**Follow-up (minor, not blocking):** the older `ductile config backup` (`createConfigBackup`,
-`config_manage.go:1396`) does **not** include `vault.age` — operators must use `system backup` for a
-recoverable vault archive. Worth either folding `config backup` into `system backup` or warning on it;
-captured here, not carded.
+**Follow-up FIXED 2026-06-06.** The older `ductile config backup` (`createConfigBackup`,
+`config_manage.go:1396`) is config-files-only — no DB, no `vault.age` — a recovery footgun on a
+vault-bearing system. Rather than duplicate `system backup`'s vault+manifest logic, `runConfigBackup`
+now **warns**: loudly ("does NOT include the encrypted vault blob … use `ductile system backup
+--scope all`") when a `vault.age` is present in the config dir, and a softer note otherwise. Test
+`TestConfigBackupWarnsWhenVaultPresent`. `system backup` remains the one recoverable-snapshot path.
 
 ---
 _Original framing retained below for the trail._

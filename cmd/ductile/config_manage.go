@@ -1137,6 +1137,22 @@ func runConfigBackup(args []string) int {
 
 	fmt.Printf("Created backup: %s\n", outputPath)
 	fmt.Printf("Includes: %s\n", strings.Join(files, ", "))
+
+	// config backup is config-files-only: no database, no vault blob. That makes
+	// it a footgun for a vault-bearing system — a restore from it is not a
+	// recoverable vault. Steer operators to `system backup` (which includes
+	// vault.age + a key-pairing manifest), and warn loudly when a vault blob
+	// exists that this archive silently omits.
+	if _, err := os.Stat(filepath.Join(resolvedDir, "vault.age")); err == nil {
+		fmt.Fprintln(os.Stderr,
+			"WARNING: this archive does NOT include the encrypted vault blob (vault.age) or the "+
+				"database — it is config files only, so a restore from it is NOT a recoverable vault. "+
+				"Use `ductile system backup --scope all` for a complete, recoverable snapshot.")
+	} else {
+		fmt.Fprintln(os.Stderr,
+			"Note: config backup captures config files only (no database, no vault). For a complete "+
+				"recoverable snapshot use `ductile system backup`.")
+	}
 	return 0
 }
 
