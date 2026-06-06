@@ -126,6 +126,7 @@ extra:
 
 nav:
   - Home: index.md
+  - Why: WHY.md
 
   - Introduction:
       - Getting Started: GETTING_STARTED.md
