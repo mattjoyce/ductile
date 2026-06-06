@@ -722,3 +722,118 @@ func TestPluginLockReattestsModifiedBytesCleanly(t *testing.T) {
 		}
 	}
 }
+
+// buildBootVerifyFixture is buildFingerprintFixture plus an admission block that
+// enables verify_integrity_on_boot, so buildRuntime actually runs the boot
+// integrity-verification path (and thus the #43 owner-threaded fingerprint
+// verify). The plugin + vault seeded by buildFingerprintFixture are retained.
+func buildBootVerifyFixture(t *testing.T) string {
+	t.Helper()
+	tmp := buildFingerprintFixture(t, true)
+	cfg := `
+plugin_roots:
+  - plugins
+service:
+  allow_symlinks: true
+  admission:
+    verify_integrity_on_boot: true
+plugins:
+  gmail:
+    enabled: true
+`
+	if err := os.WriteFile(filepath.Join(tmp, "config.yaml"), []byte(cfg), 0644); err != nil {
+		t.Fatalf("rewrite config.yaml with admission block: %v", err)
+	}
+	return tmp
+}
+
+// TestVerifyReloadIntegrityWithOwnerAcceptsCleanBytes covers the #43 happy path
+// that no prior test exercised: verifyReloadIntegrity called with a NON-nil vault
+// owner (the snapshot config.LoadWithVault decrypts at boot/reload). The nonce is
+// sourced from that owner; on unchanged bytes the keyed fingerprint verify passes.
+func TestVerifyReloadIntegrityWithOwnerAcceptsCleanBytes(t *testing.T) {
+	tmp := buildFingerprintFixture(t, true)
+	lockConfigAndPlugins(t, tmp, "gmail")
+	configPath := filepath.Join(tmp, "config.yaml")
+
+	_, owner, err := config.LoadWithVault(configPath)
+	if err != nil {
+		t.Fatalf("LoadWithVault: %v", err)
+	}
+	if owner == nil {
+		t.Fatal("expected a non-nil vault owner from LoadWithVault")
+	}
+	if err := verifyReloadIntegrity(configPath, false, owner); err != nil {
+		t.Fatalf("owner-nonce verify should pass on clean bytes: %v", err)
+	}
+}
+
+// TestVerifyReloadIntegrityWithOwnerRejectsTamper proves the owner-threaded
+// verify stays fail-closed: a plugin entrypoint tampered after attestation is
+// rejected even though the nonce now comes from the in-memory owner rather than a
+// fresh decrypt (#43 must not weaken attestation). Codifies Dell scenario C.
+func TestVerifyReloadIntegrityWithOwnerRejectsTamper(t *testing.T) {
+	tmp := buildFingerprintFixture(t, true)
+	lockConfigAndPlugins(t, tmp, "gmail")
+	configPath := filepath.Join(tmp, "config.yaml")
+
+	_, owner, err := config.LoadWithVault(configPath)
+	if err != nil {
+		t.Fatalf("LoadWithVault: %v", err)
+	}
+	if owner == nil {
+		t.Fatal("expected a non-nil vault owner from LoadWithVault")
+	}
+
+	entry := filepath.Join(tmp, "plugins", "gmail", "gmail")
+	if err := os.WriteFile(entry, []byte("#!/bin/sh\necho tampered\n"), 0755); err != nil {
+		t.Fatalf("tamper entrypoint: %v", err)
+	}
+
+	err = verifyReloadIntegrity(configPath, false, owner)
+	if err == nil {
+		t.Fatal("owner-nonce verify must reject a tampered attested entrypoint")
+	}
+	if !strings.Contains(err.Error(), "entrypoint") {
+		t.Fatalf("error should cite the entrypoint mismatch: %v", err)
+	}
+}
+
+// TestBuildRuntimeBootVerifyRejectsTamperWithOwner covers the boot wiring that
+// had no automated test: with verify_integrity_on_boot enabled, buildRuntime must
+// thread its opts.vaultOwner into the boot integrity check and fail closed when an
+// attested plugin is swapped. The integrity check runs before any DB/listener
+// setup, so buildRuntime returns the error early (no runtime to stop).
+func TestBuildRuntimeBootVerifyRejectsTamperWithOwner(t *testing.T) {
+	tmp := buildBootVerifyFixture(t)
+	lockConfigAndPlugins(t, tmp, "gmail")
+	configPath := filepath.Join(tmp, "config.yaml")
+
+	cfg, owner, err := config.LoadWithVault(configPath)
+	if err != nil {
+		t.Fatalf("LoadWithVault: %v", err)
+	}
+	if owner == nil {
+		t.Fatal("expected a non-nil vault owner from LoadWithVault")
+	}
+	if !cfg.Service.AdmissionPolicy().VerifyIntegrityOnBoot {
+		t.Fatal("fixture must enable verify_integrity_on_boot to exercise the boot-verify path")
+	}
+
+	// Swap the attested entrypoint after locking.
+	entry := filepath.Join(tmp, "plugins", "gmail", "gmail")
+	if err := os.WriteFile(entry, []byte("#!/bin/sh\necho tampered\n"), 0755); err != nil {
+		t.Fatalf("tamper entrypoint: %v", err)
+	}
+
+	rt, err := buildRuntime(cfg, configPath, "test", nil, make(chan error, 4), runtimeBuildOptions{vaultOwner: owner})
+	if rt != nil {
+		rt.Stop()
+	}
+	if err == nil {
+		t.Fatal("boot must fail closed when an attested plugin is tampered (verify_integrity_on_boot + owner)")
+	}
+	if !strings.Contains(err.Error(), "integrity check failed") && !strings.Contains(err.Error(), "fingerprint mismatch") {
+		t.Fatalf("boot error should cite an integrity/fingerprint failure, got: %v", err)
+	}
+}
