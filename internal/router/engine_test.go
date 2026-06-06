@@ -2,13 +2,60 @@ package router
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/mattjoyce/ductile/internal/plugin"
 	"github.com/mattjoyce/ductile/internal/protocol"
 	"github.com/mattjoyce/ductile/internal/router/conditions"
 	"github.com/mattjoyce/ductile/internal/router/dsl"
 )
+
+func TestValidateFromPluginExists(t *testing.T) {
+	compile := func(t *testing.T, fromPlugin string) *dsl.Set {
+		t.Helper()
+		set, err := dsl.CompileSpecs([]dsl.PipelineSpec{
+			{
+				Name:       "scoped",
+				On:         "event.start",
+				FromPlugin: fromPlugin,
+				Steps:      []dsl.StepSpec{{ID: "step_b", Uses: "plugin-b"}},
+			},
+		})
+		if err != nil {
+			t.Fatalf("CompileSpecs: %v", err)
+		}
+		return set
+	}
+
+	registry := plugin.NewRegistry()
+	if err := registry.Add(&plugin.Plugin{Name: "plugin-a"}); err != nil {
+		t.Fatalf("registry.Add: %v", err)
+	}
+
+	t.Run("known from_plugin loads", func(t *testing.T) {
+		if err := validateFromPluginExists(compile(t, "plugin-a"), registry); err != nil {
+			t.Fatalf("validateFromPluginExists: unexpected error %v", err)
+		}
+	})
+
+	t.Run("empty from_plugin loads", func(t *testing.T) {
+		if err := validateFromPluginExists(compile(t, ""), registry); err != nil {
+			t.Fatalf("validateFromPluginExists: unexpected error %v", err)
+		}
+	})
+
+	t.Run("unknown from_plugin is rejected at load", func(t *testing.T) {
+		err := validateFromPluginExists(compile(t, "plugin-ghost"), registry)
+		if err == nil {
+			t.Fatalf("expected error for unknown from_plugin")
+		}
+		if !strings.Contains(err.Error(), "from_plugin references unknown plugin") {
+			t.Fatalf("error = %v, want from_plugin unknown-plugin message", err)
+		}
+	})
+}
 
 func TestRouterNextRootTrigger(t *testing.T) {
 	set, err := dsl.CompileSpecs([]dsl.PipelineSpec{

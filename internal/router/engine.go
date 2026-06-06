@@ -36,6 +36,9 @@ func LoadFromConfigFiles(paths []string, registry *plugin.Registry, logger *slog
 		if err := validateUsesNodesExist(set, registry); err != nil {
 			return nil, err
 		}
+		if err := validateFromPluginExists(set, registry); err != nil {
+			return nil, err
+		}
 	}
 	return New(set, logger), nil
 }
@@ -521,6 +524,22 @@ func (r *Router) entryRoutesForPipeline(pipelineName string) []dsl.CompiledRoute
 		out = append(out, route)
 	}
 	return out
+}
+
+// validateFromPluginExists rejects any pipeline whose from_plugin: selector names
+// a plugin not in the registry. Without this an upstream-scoping typo compiles
+// clean and then silently matches nothing for every event — the dead-route trap
+// validateUsesNodesExist already closes for uses: steps.
+func validateFromPluginExists(set *dsl.Set, registry *plugin.Registry) error {
+	for pipelineName, pipeline := range set.Pipelines {
+		if pipeline.FromPlugin == "" {
+			continue
+		}
+		if _, ok := registry.Get(pipeline.FromPlugin); !ok {
+			return fmt.Errorf("pipeline %q: from_plugin references unknown plugin %q", pipelineName, pipeline.FromPlugin)
+		}
+	}
+	return nil
 }
 
 func validateUsesNodesExist(set *dsl.Set, registry *plugin.Registry) error {
