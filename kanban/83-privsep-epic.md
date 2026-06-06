@@ -8,9 +8,11 @@ tags: [privsep, epic]
 # Privsep — uid separation (worker users) (EPIC)
 
 > [!status] WHERE WE'RE UP TO  *(a resuming agent reads this first; keep it current)*
-> - **State:** not started — all 10 cards `backlog`.
-> - **Next action:** [[92-privsep-tracer-wall-off-sys-exec]] (the tracer; no blockers).
-> - **Done:** — **Doing:** — **Branch:** `feat/privsep-uid-separation`.
+> - **State:** ADR accepted (all §10 Qs resolved, 2026-06-06 grill); tracer in progress.
+> - **Next action:** finish [[92-privsep-tracer-wall-off-sys-exec]] — platform-independent core
+>   (config + resolver + credential builder) on macOS dev; privileged EACCES wall-test runs on the
+>   Dell Linux host (`CAP_SETUID`), not macOS.
+> - **Done:** — **Doing:** #92 (tracer) — **Branch:** `feat/privsep-uid-separation`.
 > - **Update rule:** when a card's `status:` changes, update this block + the table below.
 
 Make the secret-scoping wall **real**. Today plugins run as the gateway's own OS user
@@ -34,7 +36,7 @@ privileged (`CAP_SETUID`) gateway dropping privilege at spawn.
 
 | # | card | status | depends on |
 |---|------|--------|-----------|
-| 92 | [[92-privsep-tracer-wall-off-sys-exec]] — **START HERE**, wall off `sys_exec` (1 worker/1 plugin/1 host/1 test) | backlog | — |
+| 92 | [[92-privsep-tracer-wall-off-sys-exec]] — **START HERE**, wall off `sys_exec` (1 worker/1 plugin/1 host/1 test) | doing | — |
 | 84 | [[84-privsep-workers-table]] — two worker tiers in config (table deferred) | backlog | 92 |
 | 85 | [[85-privsep-per-plugin-worker-grant]] — per-plugin `worker:` grant (*which-worker*) | backlog | 84 |
 | 93 | [[93-privsep-fingerprint-bind-grant]] — bind grant to fingerprint (swap defence) | backlog | 85 |
