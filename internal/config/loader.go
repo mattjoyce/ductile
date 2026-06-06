@@ -2,6 +2,7 @@ package config
 
 import (
 	"bufio"
+	"bytes"
 	"fmt"
 	"maps"
 	"os"
@@ -13,6 +14,8 @@ import (
 	"time"
 
 	"github.com/mattjoyce/ductile/internal/scheduleexpr"
+	"github.com/mattjoyce/ductile/internal/secrets"
+	"github.com/mattjoyce/ductile/internal/vault"
 	"gopkg.in/yaml.v3"
 )
 
@@ -21,47 +24,86 @@ var envVarPattern = regexp.MustCompile(`\$\{([A-Za-z_][A-Za-z0-9_]*)\}`)
 // Load reads and parses configuration from a file.
 // Supports both single-file mode (all config in one file) and multi-file mode (via include array).
 func Load(configPath string) (*Config, error) {
-	return load(configPath, true, true)
+	cfg, _, err := load(configPath, true, true, true)
+	return cfg, err
+}
+
+// LoadRaw reads and validates configuration exactly like Load but does NOT fold
+// per-plugin defaults into cfg.Plugins, so each PluginConf holds the operator's
+// raw values (nil blocks / zero fields where unset). The effective-config view
+// (`config show --effective`, EffectivePluginConf) needs this to distinguish
+// file-set values from inherited defaults — information Load destroys by merging.
+func LoadRaw(configPath string) (*Config, error) {
+	cfg, _, err := load(configPath, true, true, false)
+	return cfg, err
+}
+
+// LoadWithVault reads configuration AND returns the vault owner decrypted during
+// the load-time projection, so the daemon can reuse that single decryption as its
+// live owner instead of decrypting the blob a second time at runtime
+// construction (#43 redundant decrypt; epic #48 slice 2). The returned owner is
+// nil when there is no vault or no key (early-deploy / keyless callers) —
+// callers fall back to LoadVault. The *Config is identical to what Load returns.
+func LoadWithVault(configPath string) (*Config, *vault.Vault, error) {
+	return load(configPath, true, true, true)
 }
 
 // LoadForLock reads configuration for `ductile config lock`. It intentionally
 // skips existing .checksums verification so an operator can create or refresh
 // the lock manifest from an unlocked state.
 func LoadForLock(configPath string) (*Config, error) {
-	return load(configPath, false, false)
+	cfg, _, err := load(configPath, false, false, true)
+	return cfg, err
 }
 
-func load(configPath string, verifyScopes bool, validateConfig bool) (*Config, error) {
+func load(configPath string, verifyScopes bool, validateConfig bool, applyPluginDefaults bool) (*Config, *vault.Vault, error) {
 	// Resolve to absolute path for consistent relative path resolution
 	absPath, err := filepath.Abs(configPath)
 	if err != nil {
-		return nil, fmt.Errorf("failed to resolve config path %q: %w", configPath, err)
+		return nil, nil, fmt.Errorf("failed to resolve config path %q: %w", configPath, err)
 	}
 
 	// Check if path is directory and resolve config.yaml
 	info, err := os.Stat(absPath)
 	if err != nil {
-		return nil, fmt.Errorf("config file not found: %s\n"+
+		return nil, nil, fmt.Errorf("config file not found: %s\n"+
 			"Hint: Check the path or run with --config flag", absPath)
 	}
 
 	if info.IsDir() {
 		absPath = filepath.Join(absPath, "config.yaml")
 		if _, err := os.Stat(absPath); err != nil {
-			return nil, fmt.Errorf("directory provided but config.yaml not found: %s", absPath)
+			return nil, nil, fmt.Errorf("directory provided but config.yaml not found: %s", absPath)
 		}
 	}
 
-	// Load main config file
-	cfg, err := loadConfigFile(absPath, make(map[string]bool))
+	// Resolve the age key before the first read. Only the env var and default
+	// locations are available pre-parse — the config's own secrets.age_key_file
+	// lives inside the file, so an encrypted root must use one of those.
+	configDir := filepath.Dir(absPath)
+	kr, err := resolveKeyring(configDir, nil)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
+	}
+
+	// Load main config file
+	cfg, err := loadConfigFile(absPath, make(map[string]bool), kr)
+	if err != nil {
+		return nil, nil, err
 	}
 	cfg.SourceFiles = make(map[string]*yaml.Node)
 
+	// If the root config names a key file and we didn't already resolve one
+	// (no env var, no default present), honour it for the encrypted includes.
+	if kr.Empty() && cfg.Secrets.AgeKeyFile != "" {
+		kr, err = resolveKeyring(configDir, cfg)
+		if err != nil {
+			return nil, nil, err
+		}
+	}
+
 	// Add root node to SourceFiles (manually since loadConfigFile returns a partial Config)
-	// #nosec G304 -- config paths are operator-controlled local inputs.
-	rootData, _ := os.ReadFile(absPath)
+	rootData, _ := readConfigBytes(kr, absPath)
 	var rootNode yaml.Node
 	if err := yaml.Unmarshal(rootData, &rootNode); err == nil {
 		cfg.SourceFiles[absPath] = &rootNode
@@ -70,7 +112,6 @@ func load(configPath string, verifyScopes bool, validateConfig bool) (*Config, e
 	// If include array exists, load and merge included files
 	var includedPaths []string
 	if len(cfg.Include) > 0 {
-		configDir := filepath.Dir(absPath)
 		visited := make(map[string]bool)
 		// Seed the root config's own path so an include cycle that runs
 		// back through the root is detected at the first back-edge —
@@ -78,8 +119,8 @@ func load(configPath string, verifyScopes bool, validateConfig bool) (*Config, e
 		// the root file (C-FRO-13: cycle/visited sets must include the
 		// origin).
 		visited[absPath] = true
-		if err := loadIncludes(cfg, cfg.Include, configDir, visited); err != nil {
-			return nil, err
+		if err := loadIncludes(cfg, cfg.Include, configDir, visited, kr); err != nil {
+			return nil, nil, err
 		}
 		for path := range visited {
 			includedPaths = append(includedPaths, path)
@@ -90,40 +131,54 @@ func load(configPath string, verifyScopes bool, validateConfig bool) (*Config, e
 	cfg = applyConfigDefaults(cfg)
 	resolveStatePath(cfg, filepath.Dir(absPath))
 
+	// Project vault secrets into cfg.ResolvedSecrets before validation, so a
+	// secret_ref to a vault-only secret passes the existence checks. No-ops when
+	// there is no vault or no key (early-deploy / keyless callers).
+	owner, warnings, err := projectVaultSecrets(cfg, configDir, kr)
+	if err != nil {
+		return nil, nil, err
+	}
+	logSecretProjectionWarnings(warnings)
+
 	if verifyScopes {
-		// Hash-verify scope files (tokens.yaml, webhooks.yaml)
+		// Hash-verify scope files (webhooks.yaml)
 		if err := verifyScopeFilesRecursively(includedPaths); err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 	}
 
 	if validateConfig {
 		// Validate configuration (including cross-file references if multi-file mode)
 		if len(cfg.Include) > 0 {
-			// Multi-file mode: extract tokens for cross-validation
-			tokens := extractTokensFromConfig(cfg)
+			// Multi-file mode: cross-validate secret_refs against the vault-projected
+			// resolved secrets (epic #48 — the vault is the sole secret source).
 			validator := &ConfigValidator{
-				config: cfg,
-				tokens: tokens,
+				config:     cfg,
+				tokens:     cfg.ResolvedSecrets,
+				vaultBlind: vaultBlind(configDir, cfg, kr),
 			}
 			if err := validator.ValidateCrossReferences(); err != nil {
-				return nil, fmt.Errorf("configuration validation failed: %w", err)
+				return nil, nil, fmt.Errorf("configuration validation failed: %w", err)
 			}
 		}
 
 		// Standard validation
 		if err := validate(cfg); err != nil {
-			return nil, fmt.Errorf("invalid configuration: %w", err)
+			return nil, nil, fmt.Errorf("invalid configuration: %w", err)
 		}
 	}
 
-	// Apply plugin defaults
-	for name, pluginConf := range cfg.Plugins {
-		merged := mergePluginDefaults(pluginConf, cfg.Service.MaxWorkers)
-		cfg.Plugins[name] = merged
+	// Apply plugin defaults. LoadRaw skips this so callers can see which values are
+	// operator-set vs inherited (the effective-config view, #71); every other load
+	// path folds defaults as before.
+	if applyPluginDefaults {
+		for name, pluginConf := range cfg.Plugins {
+			merged := mergePluginDefaults(pluginConf, cfg.Service.MaxWorkers)
+			cfg.Plugins[name] = merged
+		}
 	}
 
-	return cfg, nil
+	return cfg, owner, nil
 }
 
 // DiscoverConfigDir finds the config directory by checking standard locations.
@@ -157,7 +212,7 @@ func DiscoverConfigDir() (string, error) {
 // DiscoverScopeDirs returns config directories that need .checksums updates.
 // It accepts either a config file path or a directory containing config.yaml.
 // In include-based mode, it returns directories containing included scope files
-// (tokens.yaml, webhooks.yaml). If no scope includes are found, it falls back
+// (webhooks.yaml). If no scope includes are found, it falls back
 // to the root config directory for legacy single-directory behavior.
 func DiscoverScopeDirs(configPath string) ([]string, error) {
 	absPath, err := filepath.Abs(configPath)
@@ -177,23 +232,35 @@ func DiscoverScopeDirs(configPath string) ([]string, error) {
 		}
 	}
 
-	cfg, err := loadConfigFile(absPath, make(map[string]bool))
+	configDir := filepath.Dir(absPath)
+	kr, err := resolveKeyring(configDir, nil)
+	if err != nil {
+		return nil, err
+	}
+	cfg, err := loadConfigFile(absPath, make(map[string]bool), kr)
 	if err != nil {
 		return nil, err
 	}
 	cfg.SourceFiles = make(map[string]*yaml.Node)
 
+	if kr.Empty() && cfg.Secrets.AgeKeyFile != "" {
+		kr, err = resolveKeyring(configDir, cfg)
+		if err != nil {
+			return nil, err
+		}
+	}
+
 	scopeDirs := make(map[string]struct{})
 	if len(cfg.Include) > 0 {
 		visited := make(map[string]bool)
 		visited[absPath] = true // see C-FRO-13 note in load()
-		if err := loadIncludes(cfg, cfg.Include, filepath.Dir(absPath), visited); err != nil {
+		if err := loadIncludes(cfg, cfg.Include, filepath.Dir(absPath), visited, kr); err != nil {
 			return nil, err
 		}
 
 		for includePath := range visited {
 			basename := filepath.Base(includePath)
-			if basename == "tokens.yaml" || basename == "webhooks.yaml" {
+			if basename == "webhooks.yaml" {
 				scopeDirs[filepath.Dir(includePath)] = struct{}{}
 			}
 		}
@@ -215,7 +282,7 @@ func DiscoverScopeDirs(configPath string) ([]string, error) {
 
 // loadIncludes recursively loads and merges files from the include array.
 // visited tracks loaded files to prevent cycles.
-func loadIncludes(cfg *Config, includes []string, baseDir string, visited map[string]bool) error {
+func loadIncludes(cfg *Config, includes []string, baseDir string, visited map[string]bool, kr *secrets.Keyring) error {
 	for i, includePath := range includes {
 		// Apply env var interpolation to path
 		includePath = interpolateEnv(includePath)
@@ -250,14 +317,14 @@ func loadIncludes(cfg *Config, includes []string, baseDir string, visited map[st
 				return fmt.Errorf("include[%d] (%s): failed to read directory: %w", i, includePath, err)
 			}
 			for _, file := range files {
-				if err := loadIncludeFile(cfg, i, includePath, file, visited); err != nil {
+				if err := loadIncludeFile(cfg, i, includePath, file, visited, kr); err != nil {
 					return err
 				}
 			}
 			continue
 		}
 
-		if err := loadIncludeFile(cfg, i, includePath, absPath, visited); err != nil {
+		if err := loadIncludeFile(cfg, i, includePath, absPath, visited, kr); err != nil {
 			return err
 		}
 	}
@@ -265,30 +332,22 @@ func loadIncludes(cfg *Config, includes []string, baseDir string, visited map[st
 	return nil
 }
 
-func loadIncludeFile(cfg *Config, includeIndex int, includePath string, absPath string, visited map[string]bool) error {
+func loadIncludeFile(cfg *Config, includeIndex int, includePath string, absPath string, visited map[string]bool, kr *secrets.Keyring) error {
 	if visited[absPath] {
 		return fmt.Errorf("include[%d]: circular dependency detected: %s", includeIndex, absPath)
 	}
 	visited[absPath] = true
 
-	// Load included file
-	// #nosec G304 -- config include paths are operator-controlled local inputs.
-	includedData, _ := os.ReadFile(absPath)
+	// Load included file (decrypting if age-encrypted) for source tracking.
+	includedData, _ := readConfigBytes(kr, absPath)
 	var includedNode yaml.Node
 	if err := yaml.Unmarshal(includedData, &includedNode); err == nil {
 		cfg.SourceFiles[absPath] = &includedNode
 	}
 
-	includedCfg, err := loadConfigFile(absPath, visited)
+	includedCfg, err := loadConfigFile(absPath, visited, kr)
 	if err != nil {
 		return fmt.Errorf("include[%d] (%s): %w", includeIndex, includePath, err)
-	}
-
-	// Special handling for scope files with non-YAML-serialisable fields
-	if filepath.Base(absPath) == "tokens.yaml" {
-		if err := graftTokens(cfg, absPath); err != nil {
-			return fmt.Errorf("include[%d] (%s): %w", includeIndex, includePath, err)
-		}
 	}
 
 	// Deep merge included config into main config
@@ -299,7 +358,7 @@ func loadIncludeFile(cfg *Config, includeIndex int, includePath string, absPath 
 	// If included file has its own includes, recursively load them
 	if len(includedCfg.Include) > 0 {
 		includedBaseDir := filepath.Dir(absPath)
-		if err := loadIncludes(cfg, includedCfg.Include, includedBaseDir, visited); err != nil {
+		if err := loadIncludes(cfg, includedCfg.Include, includedBaseDir, visited, kr); err != nil {
 			return err
 		}
 	}
@@ -307,7 +366,7 @@ func loadIncludeFile(cfg *Config, includeIndex int, includePath string, absPath 
 	return nil
 }
 
-func loadEnvIncludes(path string, data []byte) error {
+func loadEnvIncludes(path string, data []byte, kr *secrets.Keyring) error {
 	var envCfg struct {
 		EnvironmentVars EnvironmentVarsConfig `yaml:"environment_vars"`
 	}
@@ -331,22 +390,23 @@ func loadEnvIncludes(path string, data []byte) error {
 		if _, err := os.Stat(absPath); err != nil {
 			return fmt.Errorf("environment_vars.include[%d]: file not found: %s", i, absPath)
 		}
-		if err := loadEnvFile(absPath); err != nil {
+		if err := loadEnvFile(absPath, kr); err != nil {
 			return fmt.Errorf("environment_vars.include[%d]: %w", i, err)
 		}
 	}
 	return nil
 }
 
-func loadEnvFile(path string) error {
-	// #nosec G304 -- env include paths are operator-controlled local inputs.
-	file, err := os.Open(path)
+func loadEnvFile(path string, kr *secrets.Keyring) error {
+	// Read through the decrypting reader: a .env that holds secrets may be
+	// stored age-encrypted, and (per CONFIG_REFERENCE) env files are the
+	// recommended home for secrets, so this is exactly what must decrypt.
+	data, err := readConfigBytes(kr, path)
 	if err != nil {
-		return fmt.Errorf("failed to open env file %s: %w", path, err)
+		return fmt.Errorf("failed to read env file %s: %w", path, err)
 	}
-	defer func() { _ = file.Close() }()
 
-	scanner := bufio.NewScanner(file)
+	scanner := bufio.NewScanner(bytes.NewReader(data))
 	lineNo := 0
 	for scanner.Scan() {
 		lineNo++
@@ -385,14 +445,13 @@ func loadEnvFile(path string) error {
 
 // loadConfigFile loads and parses a single config file.
 // visited is used for cycle detection when loading includes (nil for top-level).
-func loadConfigFile(path string, visited map[string]bool) (*Config, error) {
-	// #nosec G304 -- config paths are operator-controlled local inputs.
-	data, err := os.ReadFile(path)
+func loadConfigFile(path string, visited map[string]bool, kr *secrets.Keyring) (*Config, error) {
+	data, err := readConfigBytes(kr, path)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read file: %w", err)
 	}
 
-	if err := loadEnvIncludes(path, data); err != nil {
+	if err := loadEnvIncludes(path, data, kr); err != nil {
 		return nil, err
 	}
 
@@ -520,13 +579,13 @@ func deepMergeConfig(dst, src *Config) error {
 }
 
 // verifyScopeFilesRecursively verifies hash for any scope files found in the included paths.
-// Scope files are auto-detected by basename (tokens.yaml, webhooks.yaml).
+// Scope files are auto-detected by basename (webhooks.yaml).
 func verifyScopeFilesRecursively(paths []string) error {
 	// Group paths by directory to avoid loading the same checksums file multiple times
 	dirToFiles := make(map[string][]string)
 	for _, path := range paths {
 		basename := filepath.Base(path)
-		if basename == "tokens.yaml" || basename == "webhooks.yaml" {
+		if basename == "webhooks.yaml" {
 			dir := filepath.Dir(path)
 			dirToFiles[dir] = append(dirToFiles[dir], path)
 		}
@@ -537,7 +596,7 @@ func verifyScopeFilesRecursively(paths []string) error {
 		checksums, err := LoadChecksums(dir)
 		if err != nil {
 			return fmt.Errorf("checksum verification failed in %s: %w\n"+
-				"Scope files (tokens.yaml, webhooks.yaml) require hash verification.\n"+
+				"Scope files (webhooks.yaml) require hash verification.\n"+
 				"Run: ductile config lock --config-dir %s", dir, err, dir)
 		}
 
@@ -559,15 +618,6 @@ func verifyScopeFilesRecursively(paths []string) error {
 	}
 
 	return nil
-}
-
-// extractTokensFromConfig extracts token definitions from config for cross-validation.
-func extractTokensFromConfig(cfg *Config) map[string]string {
-	m := make(map[string]string, len(cfg.Tokens))
-	for _, t := range cfg.Tokens {
-		m[t.Name] = t.Key
-	}
-	return m
 }
 
 // applyConfigDefaults merges default values into config where not explicitly set.

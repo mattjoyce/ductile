@@ -15,6 +15,8 @@ Authorization: Bearer <your_token>
 
 Ductile uses scoped tokens configured in `api.auth.tokens`, with explicit scopes (e.g., `plugin:rw`, `jobs:ro`, `events:ro`).
 
+**Two credential domains.** The scoped `api.auth.tokens` above authorize the *general* API. The vault management routes (`POST /vault/*`, §13) are a **separate domain**: they authenticate against the **vault-resident admin token** (minted by `ductile vault init`, presented as `Authorization: Bearer <admin-token>` / `DUCTILE_VAULT_TOKEN`). The config `api.auth.tokens` — even a `*` token — are **rejected** on `/vault/*`, and vice-versa. The admin token lives inside the encrypted vault, never in config, and is rotatable by a normal vault write.
+
 ---
 
 ## Endpoints
@@ -595,7 +597,25 @@ Redaction rules:
 
 ---
 
-### 13. System Topology Graph
+### 13. Vault Management
+
+Manage the owned secret store (principals and secrets). **Auth:** the vault-resident admin token only (see Authentication, above) — *not* `api.auth.tokens`. All routes are `POST` with a JSON body. Responses never contain secret **values** — the API is write/lifecycle only; there is no read-back-value endpoint by design. Returns `503` if no vault is loaded, `401` on a bad admin token, `400` on a policy violation (e.g. an orphan grant, a reserved entity, a revoked secret).
+
+| Endpoint | Body | Response | Notes |
+|---|---|---|---|
+| `POST /vault/principal` | `{"name","kind"}` | `{"name","status"}` | Register a deliver-to identity. `kind` is `plugin`, `consumer`, or `gateway`. |
+| `POST /vault/secret` | `{"name","value","authorized_principals":[],"pattern"}` | `{"name","status"}` | Upsert a secret. `pattern` is `manual` (default) or `auto`. `authorized_principals` lists the principals allowed to receive it (each must already be registered). Omitting the field leaves existing grants unchanged; `[]` clears them; a list replaces them — so a partial update never silently wipes grants. |
+| `POST /vault/secret/roll` | `{"name","value"}` | `{"name","status"}` | Supersede the value. Manual secrets take the new value from the body; auto secrets are minted by the daemon (any `value` ignored). |
+| `POST /vault/secret/revoke` | `{"name"}` | `{"name","status"}` | Terminal: marks the secret revoked and clears its value. |
+| `POST /vault/principal/revoke` | `{"name"}` | `{"name","status"}` | Revoke a principal; its secrets stop being delivered (fail closed). |
+| `POST /vault/principal/purge` | `{"name"}` | `{"name","status"}` | Remove a principal and strip its grants from every secret. |
+| `POST /vault/principal/roll` | `{"name"}` | `{"name","rolled":[],"skipped":[]}` | Roll every auto-pattern secret the principal holds; `skipped` names the manual ones (roll each with `/vault/secret/roll`). |
+
+The matching CLI clients are `ductile vault set` / `roll` / `revoke` / `register-principal` / `revoke-principal` / `purge-principal` / `roll-principal` (keyless — they POST here). The audit trail for every call is the `vault_audit` log (`ductile system vault-audit`). See `docs/SECRETS.md` for the model.
+
+---
+
+### 14. System Topology Graph
 
 Retrieve the full plugin-to-signal-to-plugin pipeline graph representation. Requires `plugin:catalog:ro`, `plugin:rw`, or `*` scope.
 
@@ -625,7 +645,7 @@ Retrieve the full plugin-to-signal-to-plugin pipeline graph representation. Requ
 
 ---
 
-### 14. Plugin Latency Stopwatch
+### 15. Plugin Latency Stopwatch
 
 Retrieve runtime-captured latency telemetry (percentile aggregations) for a specific plugin. Requires `jobs:status:ro`, `jobs:rw`, or `*` scope.
 
@@ -656,7 +676,7 @@ Retrieve runtime-captured latency telemetry (percentile aggregations) for a spec
 
 ---
 
-### 15. Real-Time Event Stream
+### 16. Real-Time Event Stream
 
 Establish a Server-Sent Events (SSE) stream to receive real-time observation and lifecycle events published to the Event Hub. Requires `events:ro`, `events:rw`, or `*` scope.
 
@@ -671,7 +691,7 @@ Connection: keep-alive
 
 ---
 
-### 16. System Diagnostic Utilities
+### 17. System Diagnostic Utilities
 
 Retrieve diagnostic checks and run self-check invariant validation. Requires `system:ro`, `system:rw`, or `*` scope.
 

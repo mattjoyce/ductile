@@ -1028,17 +1028,13 @@ func (s *Scheduler) currentCircuitBreaker(ctx context.Context, pluginName, comma
 }
 
 func breakerThreshold(pluginConf config.PluginConf) int {
-	if pluginConf.CircuitBreaker == nil || pluginConf.CircuitBreaker.Threshold <= 0 {
-		return config.DefaultPluginConf().CircuitBreaker.Threshold
-	}
-	return pluginConf.CircuitBreaker.Threshold
+	// Single-sourced through the shared resolver — same default source as the
+	// `--effective` view, so the breaker threshold cannot silently drift (card #75).
+	return config.ResolvePluginConf(pluginConf, 0).BreakerThreshold()
 }
 
 func breakerResetAfter(pluginConf config.PluginConf) time.Duration {
-	if pluginConf.CircuitBreaker == nil || pluginConf.CircuitBreaker.ResetAfter <= 0 {
-		return config.DefaultPluginConf().CircuitBreaker.ResetAfter
-	}
-	return pluginConf.CircuitBreaker.ResetAfter
+	return config.ResolvePluginConf(pluginConf, 0).BreakerResetAfter()
 }
 
 func cooldownElapsed(cb queue.CircuitBreaker, resetAfter time.Duration, now time.Time) bool {

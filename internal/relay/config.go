@@ -146,9 +146,5 @@ func NewReceiver(
 }
 
 func tokensByName(cfg *config.Config) map[string]string {
-	out := make(map[string]string, len(cfg.Tokens))
-	for _, token := range cfg.Tokens {
-		out[token.Name] = token.Key
-	}
-	return out
+	return cfg.ResolvedSecrets
 }

@@ -39,6 +39,29 @@ func ComputeBlake3Hash(filePath string) (string, error) {
 	return hex.EncodeToString(hash[:]), nil
 }
 
+// ComputeKeyedBlake3Hash computes the keyed BLAKE3 hash of a file using a
+// 32-byte key — the vault fingerprint nonce. Keyed hashing makes a plugin
+// fingerprint unforgeable without the key: an attacker who cannot read the
+// vault cannot produce a matching .checksums entry (closes ADR Threat B for a
+// non-key-holder). The key MUST be exactly 32 bytes; a wrong-length key is a
+// hard error rather than a silent fall-through to an unkeyed digest.
+func ComputeKeyedBlake3Hash(filePath string, key []byte) (string, error) {
+	if len(key) != 32 {
+		return "", fmt.Errorf("keyed hash: key must be 32 bytes, got %d", len(key))
+	}
+	// #nosec G304 -- config paths are operator-controlled local inputs.
+	data, err := os.ReadFile(filePath)
+	if err != nil {
+		return "", fmt.Errorf("failed to read file: %w", err)
+	}
+	h, err := blake3.NewKeyed(key)
+	if err != nil {
+		return "", fmt.Errorf("keyed hash: %w", err)
+	}
+	_, _ = h.Write(data)
+	return hex.EncodeToString(h.Sum(nil)), nil
+}
+
 // VerifyFileHash verifies a file against an expected BLAKE3 hash.
 func VerifyFileHash(filePath, expectedHash string) error {
 	actualHash, err := ComputeBlake3Hash(filePath)

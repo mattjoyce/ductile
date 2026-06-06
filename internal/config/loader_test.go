@@ -1459,22 +1459,16 @@ func contains(s, substr string) bool {
 func TestHashVerification(t *testing.T) {
 	tmpDir := t.TempDir()
 
-	// Create tokens.yaml (scope file)
-	tokensYAML := `
-tokens:
-  - name: test
-    key: original-secret
-    scopes_file: scopes/test.json
-    scopes_hash: blake3:deadbeef
-`
-	if err := os.WriteFile(filepath.Join(tmpDir, "tokens.yaml"), []byte(tokensYAML), 0600); err != nil {
+	// webhooks.yaml is the recognized scope file (hash-verified on load).
+	webhooksYAML := "webhooks:\n  endpoints: []\n"
+	if err := os.WriteFile(filepath.Join(tmpDir, "webhooks.yaml"), []byte(webhooksYAML), 0600); err != nil {
 		t.Fatal(err)
 	}
 
-	// Create config with include for tokens.yaml
+	// Create config with include for webhooks.yaml
 	configYAML := `
 include:
-  - tokens.yaml
+  - webhooks.yaml
 
 service:
   tick_interval: 60s
@@ -1493,8 +1487,8 @@ plugins:
 		t.Fatal(err)
 	}
 
-	// Generate checksums for tokens.yaml
-	if _, err := GenerateChecksumsWithReport(tmpDir, []string{"tokens.yaml"}, false); err != nil {
+	// Generate checksums for the scope file
+	if _, err := GenerateChecksumsWithReport(tmpDir, []string{"webhooks.yaml"}, false); err != nil {
 		t.Fatal(err)
 	}
 
@@ -1503,15 +1497,8 @@ plugins:
 		t.Fatalf("Load() with correct hash failed: %v", err)
 	}
 
-	// Modify tokens.yaml (tamper with it)
-	tamperedYAML := `
-tokens:
-  - name: test
-    key: tampered-secret
-    scopes_file: scopes/test.json
-    scopes_hash: blake3:deadbeef
-`
-	if err := os.WriteFile(filepath.Join(tmpDir, "tokens.yaml"), []byte(tamperedYAML), 0600); err != nil {
+	// Tamper with the scope file
+	if err := os.WriteFile(filepath.Join(tmpDir, "webhooks.yaml"), []byte(webhooksYAML+"# tampered\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
 
@@ -1531,12 +1518,8 @@ func TestDiscoverScopeDirsFromIncludes(t *testing.T) {
 	tmpDir := t.TempDir()
 
 	configDir := filepath.Join(tmpDir, "config")
-	secretsDir := filepath.Join(tmpDir, "secrets")
 	hooksDir := filepath.Join(tmpDir, "hooks")
 	if err := os.MkdirAll(configDir, 0755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.MkdirAll(secretsDir, 0755); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.MkdirAll(hooksDir, 0755); err != nil {
@@ -1551,19 +1534,17 @@ include:
 		t.Fatal(err)
 	}
 
+	// webhooks.yaml is the recognized scope file; it lives in a sibling dir,
+	// reached via a nested include, to prove scope-dir discovery walks includes.
 	baseYAML := `
 include:
-  - ../secrets/tokens.yaml
   - ../hooks/webhooks.yaml
 `
 	if err := os.WriteFile(filepath.Join(configDir, "base.yaml"), []byte(baseYAML), 0644); err != nil {
 		t.Fatal(err)
 	}
 
-	if err := os.WriteFile(filepath.Join(secretsDir, "tokens.yaml"), []byte("tokens:\n  - name: test\n    key: secret\n    scopes_file: scopes/test.json\n    scopes_hash: blake3:deadbeef\n"), 0600); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(hooksDir, "webhooks.yaml"), []byte("listen: :8080\n"), 0600); err != nil {
+	if err := os.WriteFile(filepath.Join(hooksDir, "webhooks.yaml"), []byte("webhooks:\n  endpoints: []\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
 
@@ -1572,19 +1553,11 @@ include:
 		t.Fatalf("DiscoverScopeDirs() failed: %v", err)
 	}
 
-	if len(dirs) != 2 {
-		t.Fatalf("DiscoverScopeDirs() returned %d dirs, want 2: %v", len(dirs), dirs)
+	if len(dirs) != 1 {
+		t.Fatalf("DiscoverScopeDirs() returned %d dirs, want 1: %v", len(dirs), dirs)
 	}
-
-	got := map[string]bool{
-		dirs[0]: true,
-		dirs[1]: true,
-	}
-	if !got[secretsDir] {
-		t.Errorf("DiscoverScopeDirs() missing secrets dir: %s", secretsDir)
-	}
-	if !got[hooksDir] {
-		t.Errorf("DiscoverScopeDirs() missing hooks dir: %s", hooksDir)
+	if dirs[0] != hooksDir {
+		t.Errorf("DiscoverScopeDirs() = %s, want hooks dir %s", dirs[0], hooksDir)
 	}
 }
 
@@ -1661,7 +1634,7 @@ webhooks:
 	if err == nil {
 		t.Fatal("Load() succeeded, want missing webhook token error")
 	}
-	if !contains(err.Error(), `secret_ref "github_webhook_secret" not found in tokens.yaml`) {
+	if !contains(err.Error(), `secret_ref "github_webhook_secret" not found in the vault`) {
 		t.Fatalf("Load() error = %v, want missing webhook token message", err)
 	}
 }
@@ -1670,7 +1643,6 @@ func TestLoadAcceptsIncludedStandaloneWebhooksFileNestedShape(t *testing.T) {
 	tmpDir := t.TempDir()
 	configYAML := `
 include:
-  - tokens.yaml
   - webhooks.yaml
 
 service:
@@ -1679,6 +1651,9 @@ state:
   path: ./test.db
 plugin_roots:
   - ./plugins
+secrets:
+  age_key_file: age.key
+  vault_file: vault.age
 plugins:
   echo:
     enabled: true
@@ -1708,9 +1683,11 @@ webhooks:
 	if err := os.WriteFile(filepath.Join(tmpDir, "scopes", "webhook.json"), []byte("[\"*\"]\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := GenerateChecksumsWithReport(tmpDir, []string{"tokens.yaml", "webhooks.yaml"}, false); err != nil {
+	if _, err := GenerateChecksumsWithReport(tmpDir, []string{"webhooks.yaml"}, false); err != nil {
 		t.Fatal(err)
 	}
+	// The webhook secret now resolves from the vault (epic #48), not tokens.yaml.
+	seedVault(t, tmpDir, map[string]string{"github_webhook_secret": "test-secret"})
 
 	cfg, err := Load(tmpDir)
 	if err != nil {
@@ -1719,8 +1696,8 @@ webhooks:
 	if cfg.Webhooks == nil || len(cfg.Webhooks.Endpoints) != 1 {
 		t.Fatalf("cfg.Webhooks.Endpoints = %v, want 1 endpoint", cfg.Webhooks)
 	}
-	if len(cfg.Tokens) != 1 || cfg.Tokens[0].Name != "github_webhook_secret" {
-		t.Fatalf("cfg.Tokens = %v, want github_webhook_secret", cfg.Tokens)
+	if cfg.ResolvedSecrets["github_webhook_secret"] != "test-secret" {
+		t.Fatalf("github_webhook_secret not resolved from vault: %v", cfg.ResolvedSecrets)
 	}
 }
 
@@ -1768,7 +1745,7 @@ webhooks:
 	if err == nil {
 		t.Fatal("Load() succeeded, want missing webhook token error")
 	}
-	if !contains(err.Error(), `secret_ref "github_webhook_secret" not found in tokens.yaml`) {
+	if !contains(err.Error(), `secret_ref "github_webhook_secret" not found in the vault`) {
 		t.Fatalf("Load() error = %v, want missing webhook token message", err)
 	}
 }
@@ -1777,7 +1754,6 @@ func TestLoadAcceptsRelayConfigIncludes(t *testing.T) {
 	tmpDir := t.TempDir()
 	configYAML := `
 include:
-  - tokens.yaml
   - relay-instances.yaml
   - relay-ingress.yaml
 
@@ -1788,6 +1764,9 @@ state:
   path: ./test.db
 plugin_roots:
   - ./plugins
+secrets:
+  age_key_file: age.key
+  vault_file: vault.age
 plugins:
   echo:
     enabled: true
@@ -1854,6 +1833,8 @@ remote_ingress:
 		t.Fatal(err)
 	}
 
+	seedVault(t, tmpDir, map[string]string{"relay-lab-v1": "test-secret"})
+
 	cfg, err := Load(tmpDir)
 	if err != nil {
 		t.Fatalf("Load() failed: %v", err)
@@ -1873,7 +1854,6 @@ func TestLoadRejectsDuplicateRelayInstanceNames(t *testing.T) {
 	tmpDir := t.TempDir()
 	configYAML := `
 include:
-  - tokens.yaml
   - relay-instances.yaml
 
 service:
@@ -1883,6 +1863,9 @@ state:
   path: ./test.db
 plugin_roots:
   - ./plugins
+secrets:
+  age_key_file: age.key
+  vault_file: vault.age
 plugins:
   echo:
     enabled: true
@@ -1925,6 +1908,8 @@ instances:
 	if _, err := GenerateChecksumsWithReport(tmpDir, []string{"tokens.yaml"}, false); err != nil {
 		t.Fatal(err)
 	}
+
+	seedVault(t, tmpDir, map[string]string{"relay-lab-v1": "test-secret"})
 
 	_, err := Load(tmpDir)
 	if err == nil {

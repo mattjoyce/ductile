@@ -326,7 +326,7 @@ func TestDispatcher_ExecuteCoreRelayStep(t *testing.T) {
 	}
 	disp.router = router.New(set, nil)
 	disp.cfg.Service.Name = "home-primary"
-	disp.cfg.Tokens = []config.TokenEntry{{Name: "relay_lab_v1", Key: "shared-secret"}}
+	disp.cfg.ResolvedSecrets = map[string]string{"relay_lab_v1": "shared-secret"}
 	disp.cfg.RelayInstances = []config.RelayInstanceConfig{{
 		Name:        "lab",
 		Enabled:     true,
@@ -1382,6 +1382,32 @@ func TestDispatcher_GetTimeout(t *testing.T) {
 				t.Errorf("getTimeout() = %v, want %v", got, tt.want)
 			}
 		})
+	}
+}
+
+// TestGetTimeoutMatchesEffectiveView is the drift guard for card #75: the runtime
+// timeout resolver and the `config show --effective` view (EffectivePluginConf)
+// must agree on the all-default resolution for every command. getTimeout used to
+// re-hardcode 60/120/10/30s; both now resolve from DefaultPluginConf, so a change
+// to a default that updated only one side would fail here.
+func TestGetTimeoutMatchesEffectiveView(t *testing.T) {
+	disp, _, _, cleanup := setupTestDispatcher(t)
+	defer cleanup()
+
+	eff, _ := config.EffectivePluginConf(config.PluginConf{Enabled: true}, 8)
+	for _, c := range []struct {
+		command string
+		want    time.Duration
+	}{
+		{"poll", eff.Timeouts.Poll},
+		{"handle", eff.Timeouts.Handle},
+		{"health", eff.Timeouts.Health},
+		{"init", eff.Timeouts.Init},
+	} {
+		// nil timeouts → all-default resolution, the path that must match the view.
+		if got := disp.getTimeout(nil, c.command); got != c.want {
+			t.Errorf("getTimeout(nil, %q) = %v, want effective-view %v", c.command, got, c.want)
+		}
 	}
 }
 

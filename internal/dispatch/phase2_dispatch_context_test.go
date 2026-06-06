@@ -146,4 +146,3 @@ func countDispatchContexts(t *testing.T, db queryRower) int {
 type queryRower interface {
 	QueryRow(query string, args ...any) *sql.Row
 }
-

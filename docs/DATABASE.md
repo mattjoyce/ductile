@@ -24,6 +24,7 @@ Fact/history rows (durable record):
 - `event_context`
 - `job_log`
 - `circuit_breaker_transitions`
+- `vault_audit`
 
 Current/cache rows (derived views and operational state):
 - `job_queue`
@@ -88,6 +89,9 @@ Current-state compatibility/cache row for scheduled poll circuit breakers.
 ### 8. `circuit_breaker_transitions`
 Append-only transition facts for circuit breakers. Use this table to explain why a breaker opened, moved half-open, closed, or was manually reset.
 
+### 9. `vault_audit`
+Append-only audit facts for the secret vault: every `register` / `set` / `roll` / `revoke` / `purge` and every fail-closed compose `denied`. Columns: `op`, `principal`, `secret_name`, `actor`, `outcome`, `detail`, `created_at`. It records secret **names and outcomes only — never values** (the log is observability, not a second copy of the store). Prefer the CLI inspector `ductile system vault-audit [--principal NAME] [--json]` over raw SQL; the table is here for ad-hoc queries.
+
 ---
 
 ## Useful Operator Queries
@@ -116,6 +120,14 @@ SELECT id, plugin, command, started_at
 FROM job_queue 
 WHERE status = 'running' 
   AND started_at < datetime('now', '-1 hour');
+
+-- Vault audit: recent secret-delivery denials for one principal
+-- (or use: ductile system vault-audit --principal my-plugin)
+SELECT created_at, op, secret_name, actor, outcome, detail
+FROM vault_audit
+WHERE principal = 'my-plugin'
+ORDER BY id DESC
+LIMIT 20;
 ```
 
 ### Performance & Troubleshooting

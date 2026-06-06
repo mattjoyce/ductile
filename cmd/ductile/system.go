@@ -37,6 +37,12 @@ func runSystemNoun(args []string) int {
 			return 0
 		}
 		return runSystemPluginFacts(actionArgs)
+	case "vault-audit":
+		if hasHelpFlag(actionArgs) {
+			printSystemVaultAuditHelp()
+			return 0
+		}
+		return runSystemVaultAudit(actionArgs)
 	case "reset":
 		if hasHelpFlag(actionArgs) {
 			printSystemResetHelp()
@@ -87,7 +93,7 @@ func runSystemNoun(args []string) int {
 
 func printSystemNounHelp(w *os.File) {
 	_, _ = fmt.Fprintln(w, "Usage: ductile system <action>")
-	_, _ = fmt.Fprintln(w, "Actions: start, status, plugin-facts, breaker, scheduler, reset, reload, selfcheck, backup, skills")
+	_, _ = fmt.Fprintln(w, "Actions: start, status, plugin-facts, vault-audit, breaker, scheduler, reset, reload, selfcheck, backup, skills")
 }
 
 func printSystemStartHelp() {
@@ -124,6 +130,12 @@ func printSystemSchedulerHelp() {
 func printSystemPluginFactsHelp() {
 	fmt.Println("Usage: ductile system plugin-facts <plugin> [--fact-type TYPE] [--config PATH] [--json] [--limit N]")
 	fmt.Println("Show recent append-only plugin facts and their recorded JSON payloads.")
+}
+
+func printSystemVaultAuditHelp() {
+	fmt.Println("Usage: ductile system vault-audit [--principal NAME] [--config PATH] [--json] [--limit N]")
+	fmt.Println("Show the append-only vault audit log (register/set/roll/revoke/purge + fail-closed")
+	fmt.Println("compose denials), newest first. Records secret NAMES and outcomes only — never values.")
 }
 
 func printSystemReloadHelp() {

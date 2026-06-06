@@ -92,8 +92,8 @@ func TestVerifyIntegrityHighSecurityMismatch(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Tamper with tokens.yaml (high security)
-	writeTestFile(t, filepath.Join(tmpDir, "tokens.yaml"), "tokens:\n  - name: tampered\n    key: hacked\n")
+	// Tamper with webhooks.yaml (high security)
+	writeTestFile(t, filepath.Join(tmpDir, "webhooks.yaml"), "webhooks:\n  listen: \"127.0.0.1:9999\"\n")
 
 	result, err := VerifyIntegrity(tmpDir, files)
 	if err != nil {
@@ -187,6 +187,6 @@ func TestVerifyIntegrityNoManifestNoHighSecurity(t *testing.T) {
 func setupIntegrityDir(t *testing.T, dir string) {
 	t.Helper()
 	writeTestFile(t, filepath.Join(dir, "config.yaml"), "service:\n  name: test\n  tick_interval: 60s\nstate:\n  path: ./test.db\n")
-	writeTestFile(t, filepath.Join(dir, "tokens.yaml"), "tokens:\n  - name: admin\n    key: secret123\n")
+	writeTestFile(t, filepath.Join(dir, "webhooks.yaml"), "webhooks:\n  listen: \"127.0.0.1:8091\"\n")
 	writeTestFile(t, filepath.Join(dir, "routes.yaml"), "routes:\n  - name: sample\n")
 }

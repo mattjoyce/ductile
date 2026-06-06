@@ -39,7 +39,7 @@ func (s *Store) StopwatchRowsForPlugin(ctx context.Context, plugin string, since
 	if err != nil {
 		return nil, fmt.Errorf("StopwatchRowsForPlugin: query: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var out []StopwatchAggregationRow
 	for rows.Next() {

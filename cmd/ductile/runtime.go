@@ -31,6 +31,7 @@ import (
 	"github.com/mattjoyce/ductile/internal/scheduler"
 	"github.com/mattjoyce/ductile/internal/state"
 	"github.com/mattjoyce/ductile/internal/storage"
+	"github.com/mattjoyce/ductile/internal/vault"
 	"github.com/mattjoyce/ductile/internal/webhook"
 )
 
@@ -67,6 +68,11 @@ type reloadManager struct {
 type runtimeBuildOptions struct {
 	snapshotReason     string
 	existingSnapshotID string
+	// vaultOwner, when non-nil, is the vault owner already decrypted by the
+	// load-time projection (config.LoadWithVault). buildRuntime reuses it as the
+	// live owner instead of decrypting the blob again (#43 redundant decrypt; epic
+	// #48 slice 2). nil — restore or no vault — falls back to a fresh load.
+	vaultOwner *vault.Vault
 }
 
 func (rt *runtimeState) Stop() {
@@ -145,14 +151,14 @@ func (rm *reloadManager) Reload(ctx context.Context) (api.ReloadResponse, error)
 	}
 	oldCfg := oldRuntime.cfg
 
-	newCfg, err := config.Load(rm.configPath)
+	newCfg, newOwner, err := config.LoadWithVault(rm.configPath)
 	if err != nil {
 		return api.ReloadResponse{Status: "error", Message: err.Error()}, err
 	}
-	// P2-10: source strict_mode policy from the RUNNING config (oldCfg), not the
-	// proposed newCfg — otherwise an attacker could relax admission by setting
-	// strict_mode: false in the very reload they are trying to push.
-	if err := verifyReloadIntegrity(rm.configPath, oldCfg.Service.StrictMode); err != nil {
+	// P2-10: source the fail_on_drift policy from the RUNNING config (oldCfg),
+	// not the proposed newCfg — otherwise an attacker could relax admission by
+	// disabling it in the very reload they are trying to push.
+	if err := verifyReloadIntegrity(rm.configPath, oldCfg.Service.AdmissionPolicy().FailOnDrift, newOwner); err != nil {
 		return api.ReloadResponse{Status: "error", Message: err.Error()}, err
 	}
 	if err := validateReloadableFields(oldCfg, newCfg); err != nil {
@@ -176,6 +182,11 @@ func (rm *reloadManager) Reload(ctx context.Context) (api.ReloadResponse, error)
 
 	runtime, err := buildRuntime(newCfg, rm.configPath, rm.configSource, rm.reloadFunc, rm.errCh, runtimeBuildOptions{
 		snapshotReason: configsnapshot.ReasonReload,
+		// Reuse the owner LoadWithVault already decrypted instead of letting
+		// buildRuntime re-decrypt the blob via LoadVault. The start path already
+		// threads its owner (#43 single-decrypt); the reload path regressed to a
+		// double-decrypt (2026-06-06 branch review, Ousterhout 6c) — this closes it.
+		vaultOwner: newOwner,
 	})
 	if err != nil {
 		oldRuntime.logger.Error("reload failed; attempting to restore previous runtime", "error", err)
@@ -230,13 +241,19 @@ func resolveConfigDir(configPath string) string {
 }
 
 // verifyReloadIntegrity validates the on-disk config against the .checksums manifest
-// and plugin fingerprint locks. P2-10: when strict is true, operational tier warnings
+// and plugin fingerprint locks. When failOnDrift is true, operational tier warnings
 // (e.g. config.yaml or routes.yaml drift) are promoted to admission failures so the
-// reload is rejected. When strict is false, operational warnings stay warnings —
+// reload is rejected. When failOnDrift is false, operational warnings stay warnings —
 // only high-security file mismatches and plugin fingerprint mismatches reject. The
-// strict flag should come from the running config's service.strict_mode so that an
+// failOnDrift flag should come from the RUNNING config's admission policy so that an
 // attacker cannot relax policy via the very reload they are trying to push.
-func verifyReloadIntegrity(configPath string, strict bool) error {
+//
+// owner, when non-nil, is the vault already decrypted for this boot/reload
+// (config.LoadWithVault); it is threaded to the plugin-fingerprint verify so the
+// attestation nonce is taken from that one snapshot instead of a second decrypt
+// (#43 single-decrypt). A nil owner — the reload-restore path — falls back to a
+// fresh vault load, preserving prior behaviour.
+func verifyReloadIntegrity(configPath string, failOnDrift bool, owner *vault.Vault) error {
 	configDir := resolveConfigDir(configPath)
 	files, err := config.DiscoverConfigFiles(configDir)
 	if err != nil {
@@ -249,10 +266,10 @@ func verifyReloadIntegrity(configPath string, strict bool) error {
 	if !result.Passed {
 		return fmt.Errorf("config reload rejected: %s", strings.Join(result.Errors, "; "))
 	}
-	if strict && len(result.Warnings) > 0 {
-		return fmt.Errorf("config reload rejected (strict_mode): operational drift: %s", strings.Join(result.Warnings, "; "))
+	if failOnDrift && len(result.Warnings) > 0 {
+		return fmt.Errorf("config reload rejected (admission.fail_on_drift): operational drift: %s", strings.Join(result.Warnings, "; "))
 	}
-	if err := verifyPluginFingerprintsForConfig(configPath); err != nil {
+	if err := verifyPluginFingerprintsForConfig(configPath, owner); err != nil {
 		return fmt.Errorf("config reload rejected: %v", err)
 	}
 	return nil
@@ -417,31 +434,55 @@ func buildRuntime(cfg *config.Config, configPath string, configSource string, re
 		)
 	}
 
-	// Strict mode enforcement. P2-10: route through verifyReloadIntegrity with
-	// strict=true so startup and reload share one admission gate — operational
-	// drift fails both, not just one.
-	if cfg.Service.StrictMode {
-		logger.Info("strict mode enabled, performing pre-flight checks")
+	// Admission-control enforcement. Each policy is independent (decomplected from
+	// the former bundled strict_mode). At reload, fail_on_drift is sourced from the
+	// running config; here at boot every policy reads from cfg directly.
+	if w := cfg.Service.StrictModeDeprecationWarning(); w != "" {
+		logger.Warn(w)
+	}
+	admission := cfg.Service.AdmissionPolicy()
 
-		if err := verifyReloadIntegrity(configPath, true); err != nil {
-			logger.Error("integrity check failed (strict mode)", "error", err)
+	if admission.VerifyIntegrityOnBoot {
+		logger.Info("admission: verifying config integrity at boot", "fail_on_drift", admission.FailOnDrift)
+		if err := verifyReloadIntegrity(configPath, admission.FailOnDrift, opts.vaultOwner); err != nil {
+			logger.Error("integrity check failed (admission.verify_integrity_on_boot)", "error", err)
 			return nil, fmt.Errorf("integrity check failed: %w", err)
 		}
+	}
 
+	if admission.ValidateConfigOnBoot {
 		doc := doctor.New(cfg, registry)
 		report := doc.Validate()
 		if !report.Valid {
-			logger.Error("configuration validation failed (strict mode)")
+			logger.Error("configuration validation failed (admission.validate_config_on_boot)")
 			for _, e := range report.Errors {
 				logger.Error("config error", "detail", e)
 			}
 			return nil, fmt.Errorf("configuration validation failed")
 		}
+	}
 
-		if cfg.API.Enabled && len(cfg.API.Auth.Tokens) == 0 {
-			logger.Error("no API tokens configured (strict mode requires at least one token when API is enabled)")
-			return nil, fmt.Errorf("no API tokens configured")
+	// Unknown-key handling (#26): the load-time YAML decode is lenient, so a
+	// typo'd or unsupported key is silently dropped — the operator believes it is
+	// active when it is not. Always surface each dropped key as a warning. When
+	// admission.validate_config_on_boot is set, dropped keys are additionally an
+	// admission FAILURE (the config/schema drift that once blocked this — #36 — is
+	// resolved, so ductile's own configs decode clean); otherwise it stays
+	// warn-only. buildRuntime runs at boot AND reload, so this gates both, matching
+	// the doctor.Validate() check above.
+	for _, w := range config.StrictDecodeWarnings(cfg) {
+		logger.Warn("config: key ignored (not a known field)", "detail", w)
+	}
+	if admission.ValidateConfigOnBoot {
+		if err := config.StrictDecodeError(cfg); err != nil {
+			logger.Error("configuration validation failed: ignored config keys (admission.validate_config_on_boot)", "error", err)
+			return nil, fmt.Errorf("configuration validation failed: %w; fix or remove the keys, or disable service.admission.validate_config_on_boot", err)
 		}
+	}
+
+	if admission.RequireAPIAuth && cfg.API.Enabled && len(cfg.API.Auth.Tokens) == 0 {
+		logger.Error("no API tokens configured (admission.require_api_auth requires at least one token when API is enabled)")
+		return nil, fmt.Errorf("no API tokens configured")
 	}
 
 	logger.Info("ductile starting", "version", version, "config", configPath)
@@ -550,7 +591,42 @@ func buildRuntime(cfg *config.Config, configPath string, configSource string, re
 	)
 	rt.scheduler = sched
 	admitter := state.NewAdmitter(q, state.DefaultMaxContextBytes)
-	disp := dispatch.New(q, st, contextStore, routerEngine, registry, hub, cfg, dispatch.WithAdmitter(admitter))
+
+	// Load the vault owner — the single guarded holder of the decrypted model.
+	// The daemon routes the spawn-time read path (Compose) and management writes
+	// (SetSecret) through this one owner. A nil owner (no vault yet, or keyless)
+	// leaves the composer unset so no secrets are delivered — back-compatible. We
+	// assign the interface only for a non-nil owner to avoid a typed-nil
+	// interface that would later panic in Compose.
+	var secretComposer dispatch.SecretComposer
+	// pluginVerifier stays a nil interface unless a vault is loaded, so the §3.3
+	// compose-time gate is off for vault-less deployments (and we avoid a typed-nil
+	// interface that would defeat the nil check in composePluginSecrets).
+	var pluginVerifier dispatch.PluginVerifier
+	// Reuse the owner the load-time graft already decrypted (passed via opts on the
+	// daemon start path) rather than decrypting the blob a second time (#43
+	// redundant decrypt; epic #48 slice 2). A nil opts owner — reload, restore, or
+	// no vault — falls back to a fresh load, preserving prior behaviour exactly.
+	vaultOwner := opts.vaultOwner
+	if vaultOwner == nil {
+		vaultOwner, err = config.LoadVault(configDir, cfg)
+		if err != nil {
+			logger.Error("failed to load vault", "error", err)
+			return nil, fmt.Errorf("vault: %w", err)
+		}
+	}
+	if vaultOwner != nil {
+		secretComposer = vaultOwner
+		// §3.3: re-verify a principal's live bytes against its recorded keyed
+		// fingerprint right before delivering its secrets. The nonce comes from the
+		// same loaded vault that holds the secrets.
+		pluginVerifier = newPluginIdentityVerifier(registry, configDir, vaultOwner, logger)
+		logger.Info("vault secret delivery enabled (compose-time attestation on)")
+	}
+
+	disp := dispatch.New(q, st, contextStore, routerEngine, registry, hub, cfg,
+		dispatch.WithAdmitter(admitter), dispatch.WithSecretComposer(secretComposer),
+		dispatch.WithPluginVerifier(pluginVerifier))
 	rt.dispatcher = disp
 
 	relayReceiver, err := relay.NewReceiver(cfg, q, routerEngine, contextStore, admitter, log.WithComponent("relay"))
@@ -609,6 +685,15 @@ func buildRuntime(cfg *config.Config, configPath string, configSource string, re
 			RelayReceiver:  relayReceiver,
 			AllowedOrigins: cfg.API.AllowedOrigins,
 		}
+		// Expose the vault management API only when a vault owner exists. Assign
+		// the interface field solely for a non-nil owner: a typed-nil *vault.Vault
+		// would make the interface non-nil and register routes that then panic.
+		if vaultOwner != nil {
+			apiConfig.Vault = vaultOwner
+			// The state store is the append-only audit sink for vault lifecycle
+			// facts. Wired only alongside a vault owner; nil leaves audit disabled.
+			apiConfig.VaultAuditor = st
+		}
 		apiServer := api.New(apiConfig, q, registry, routerEngine, disp, contextStore, admitter, st, hub, log.WithComponent("api"))
 		rt.apiServer = apiServer
 		rt.wg.Add(1)
@@ -622,11 +707,7 @@ func buildRuntime(cfg *config.Config, configPath string, configSource string, re
 	}
 
 	if cfg.Webhooks != nil && len(cfg.Webhooks.Endpoints) > 0 {
-		tokensMap := make(map[string]string, len(cfg.Tokens))
-		for _, t := range cfg.Tokens {
-			tokensMap[t.Name] = t.Key
-		}
-		webhookConfig, err := webhook.FromGlobalConfig(cfg.Webhooks, tokensMap, cfg.Plugins)
+		webhookConfig, err := webhook.FromGlobalConfig(cfg.Webhooks, cfg.ResolvedSecrets, cfg.Plugins)
 		if err != nil {
 			logger.Error("failed to configure webhooks", "error", err)
 			return nil, err
@@ -670,7 +751,9 @@ func runStart(args []string) int {
 		*configPath = discovered
 	}
 
-	cfg, err := config.Load(*configPath)
+	// LoadWithVault also returns the owner decrypted by the load-time projection, so
+	// the daemon reuses that single decryption as its live owner (epic #48 slice 2).
+	cfg, vaultOwner, err := config.LoadWithVault(*configPath)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to load config: %v\n", err)
 		return 1
@@ -693,6 +776,7 @@ func runStart(args []string) int {
 
 	runtime, err := buildRuntime(cfg, *configPath, configSource, manager.reloadFunc, manager.errCh, runtimeBuildOptions{
 		snapshotReason: configsnapshot.ReasonStartup,
+		vaultOwner:     vaultOwner,
 	})
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to start runtime: %v\n", err)

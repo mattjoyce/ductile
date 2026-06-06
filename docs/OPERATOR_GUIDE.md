@@ -41,9 +41,86 @@ reasons, plugin-root mappings, and any boundary warnings (e.g. `api.yaml`
 appearing at scope `config`, env files appearing at scope `all`). Inspect with
 `tar -xzOf <archive> BACKUP_MANIFEST.txt` without re-extracting the rest.
 
+At scope `config` or higher the archive includes the encrypted vault blob
+(`vault.age`) so a restore is not secret-less, but the age key that decrypts it
+is **deliberately excluded** — custody it out-of-band (e.g. a password manager)
+and restore needs both. The manifest records the key as excluded with this
+pairing note. Restore = unpack the archive, write the age key file back from
+custody (mode 0600), then start. See `docs/SECRETS.md` §3 "Backup and restore"
+for the full steps and the `rotate-key`-destroys-the-old-key discipline.
+
 The command refuses to overwrite an existing destination — operator owns the
 naming pattern and retention. For a scheduled-backup setup (systemd timer or
 launchd), see `docs/DEPLOYMENT.md` §10.
+
+### Vault operations
+The vault holds the secrets the core delivers to plugins (the `ductile vault`
+command family; the full model is in `docs/SECRETS.md`). Writes split into two
+classes by whether they touch the age key:
+
+- **Local, key-touching — daemon STOPPED** (`init`, `import`, `rotate-key`): they
+  hold the age key and rewrite the blob, so they take the daemon's PID lock and
+  refuse while it is running.
+- **Keyless API clients — daemon RUNNING** (everything else): they POST to the
+  daemon (the sole writer) authenticated by the **vault admin token** (`--token`
+  or `DUCTILE_VAULT_TOKEN`), not the config API tokens.
+
+```bash
+# Genesis (once, daemon down): seeds the core principal, the fingerprint nonce,
+# and a one-time admin token — printed once, store it; it is the API credential.
+ductile vault init --vault vault.age --key age.key
+
+# Lifecycle (daemon up, admin token in DUCTILE_VAULT_TOKEN, --api-url omitted for brevity):
+ductile vault register-principal --name mailer --kind plugin
+printf '%s' "$SMTP_PW" | ductile vault set --name smtp_pw --principal mailer
+ductile vault roll   --name smtp_pw          # supersede the value (manual: stdin; auto: minted)
+ductile vault revoke --name smtp_pw          # terminal; clears the value
+ductile vault revoke-principal --name mailer # stop delivery (fail closed)
+ductile vault purge-principal  --name mailer # remove + strip its grants
+```
+
+`--pattern manual` (default) takes the value from stdin; `--pattern auto` has the
+daemon mint it. A plugin must be `plugin lock`-ed before it receives any secret.
+Audit every change with **`ductile system vault-audit [--principal NAME]`**.
+Rotating the at-rest key is below.
+
+**When a roll takes effect (freshness):** a **plugin** secret picks up a `roll` at
+its **next spawn** (re-resolved per job). A **webhook/relay** secret_ref is resolved
+at config **load**, so rolling it only takes effect on the running servers after a
+**`ductile system reload`** — roll, then reload.
+
+### Rotating the vault key
+`ductile vault rotate-key` rotates the daemon's age identity: it mints a fresh
+key, re-encrypts the vault to it, and retires the old key — so the blob at rest
+is readable only by the new key.
+
+It is a **local, key-touching** operation and the daemon must be **stopped**
+(it refuses while the daemon holds the PID lock). Stop the service, rotate, start:
+
+```bash
+ductile system stop
+ductile vault rotate-key --config /path/to/config
+ductile system start
+```
+
+The rotation is atomic and crash-safe (a dual-recipient bridge keeps the on-disk
+key and blob decryptable at every step, and the new key is verified to decrypt the
+new blob before the old key is retired).
+
+**Back up the new key immediately.** The new identity is written to the configured
+age key file (mode `0600`); the previous key is destroyed (no `.bak`). Copy the key
+into your password manager. The vault blob and its key are a **pair**:
+
+- `vault.age` is restorable only with the key that was current when the backup was
+  taken. After a rotation the old key is gone, so any **pre-rotation** backup needs
+  the old key you saved while it was current.
+- Do **not** point `ductile secrets rotate` at `vault.age` — that command is for
+  config bundles (e.g. `tokens.yaml`); `vault rotate-key` is the only safe path for
+  the vault.
+
+`system backup` (scope `config` or higher) now bundles the encrypted `vault.age`;
+the age key stays out-of-band (see the Backups section above and `docs/SECRETS.md`
+§3).
 
 ### Self-check
 `ductile system selfcheck` runs four read-only invariants against the local
@@ -115,12 +192,15 @@ To prevent unauthorized modifications to sensitive files (like `tokens.yaml` or 
     ductile config check
     ```
 
-### Strict Mode
-For hardened environments, enable `service.strict_mode: true` in your `config.yaml`.
-In strict mode:
-- The system **will not start** if any file fails integrity verification (no warnings).
-- The system **will not start** if any configuration check fails (e.g., missing dependencies).
-- The system **requires** at least one API token to be defined if the API is enabled.
+### Admission Control
+For hardened environments, enable the `service.admission` gates in your `config.yaml`.
+Each is independent — turn on only what you need:
+- `verify_integrity_on_boot: true` — the system **will not start** if any file fails integrity verification at boot.
+- `fail_on_drift: true` — operational config/routes drift becomes a **hard fail** (boot and reload), not just a warning.
+- `validate_config_on_boot: true` — the system **will not start** if any configuration check fails (e.g., missing dependencies).
+- `require_api_auth: true` — the system **requires** at least one API token if the API is enabled.
+
+> **Deprecated:** `service.strict_mode: true` is a back-compat alias that enables all four gates at once. Prefer the explicit `admission` block; the daemon logs a warning when `strict_mode` is used.
 
 ### Managing Scoped Tokens
 Create scoped API tokens by passing scopes directly or by providing a scopes JSON file:

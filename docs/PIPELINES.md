@@ -59,11 +59,13 @@ direct API triggers. A predicate that tests `context.*` against an
 absent context simply evaluates to false (no special-case error), the
 same way a payload predicate against an absent key returns false.
 
-For hook pipelines (`on-hook:`), context is currently empty at hook
-fire time because hooks fire only for root jobs that have no upstream
-context of their own. The predicate engine and runtime plumbing accept
-`context.*` paths in hook predicates so authors can prepare for future
-architectures that surface upstream context at hook time.
+For hook pipelines (`on-hook:`), context is **never** available at hook
+fire time: hooks fire only for root jobs that have no upstream context
+of their own. A `context.*` path in a hook pipeline's `if:` could
+therefore never match, so it is **rejected at config load** with
+`on-hook trigger predicate cannot reference context.* — context is not
+available at hook time`. Scope hooks with `payload.*` predicates (and
+`from_plugin:`, §2.2) instead.
 
 A pipeline may use **both** in the same definition.
 

@@ -7,6 +7,16 @@ import (
 	"testing"
 )
 
+// testFPNonce returns a deterministic 32-byte nonce so keyed-BLAKE3 hashing is
+// reproducible across a generate-then-verify pair within a single test.
+func testFPNonce() []byte {
+	k := make([]byte, 32)
+	for i := range k {
+		k[i] = byte(i + 1)
+	}
+	return k
+}
+
 func writePluginFixture(t *testing.T, dir, name, manifestBody, binaryBody string) (manifestPath, entrypointPath string) {
 	t.Helper()
 	pluginDir := filepath.Join(dir, name)
@@ -38,7 +48,7 @@ func TestComputePluginFingerprintHappyPath(t *testing.T) {
 		Enabled:        true,
 		ManifestPath:   manifest,
 		EntrypointPath: entry,
-	})
+	}, testFPNonce())
 	if err != nil {
 		t.Fatalf("ComputePluginFingerprint: %v", err)
 	}
@@ -72,7 +82,7 @@ func TestComputePluginFingerprintAliasCarriesUses(t *testing.T) {
 		Uses:           "gmail",
 		ManifestPath:   manifest,
 		EntrypointPath: entry,
-	})
+	}, testFPNonce())
 	if err != nil {
 		t.Fatalf("ComputePluginFingerprint: %v", err)
 	}
@@ -93,7 +103,7 @@ func TestComputePluginFingerprintDisabledStillHashes(t *testing.T) {
 		Enabled:        false,
 		ManifestPath:   manifest,
 		EntrypointPath: entry,
-	})
+	}, testFPNonce())
 	if err != nil {
 		t.Fatalf("ComputePluginFingerprint: %v", err)
 	}
@@ -115,7 +125,7 @@ func TestComputePluginFingerprintMissingManifest(t *testing.T) {
 		Enabled:        true,
 		ManifestPath:   missingManifest,
 		EntrypointPath: entry,
-	})
+	}, testFPNonce())
 	if err == nil {
 		t.Fatal("expected error for missing manifest, got nil")
 	}
@@ -134,7 +144,7 @@ func TestComputePluginFingerprintMissingEntrypoint(t *testing.T) {
 		Enabled:        true,
 		ManifestPath:   manifest,
 		EntrypointPath: missingEntry,
-	})
+	}, testFPNonce())
 	if err == nil {
 		t.Fatal("expected error for missing entrypoint, got nil")
 	}
@@ -149,7 +159,7 @@ func TestComputePluginFingerprintRequiresAbsolutePaths(t *testing.T) {
 		Enabled:        true,
 		ManifestPath:   "relative/manifest.yaml",
 		EntrypointPath: "/abs/entrypoint",
-	})
+	}, testFPNonce())
 	if err == nil {
 		t.Fatal("expected error for relative manifest path")
 	}
@@ -162,7 +172,7 @@ func TestComputePluginFingerprintRequiresAbsolutePaths(t *testing.T) {
 		Enabled:        true,
 		ManifestPath:   "/abs/manifest.yaml",
 		EntrypointPath: "rel/binary",
-	})
+	}, testFPNonce())
 	if err == nil {
 		t.Fatal("expected error for relative entrypoint path")
 	}
@@ -172,7 +182,7 @@ func TestComputePluginFingerprintRequiresName(t *testing.T) {
 	_, err := ComputePluginFingerprint(ResolvedPlugin{
 		ManifestPath:   "/abs/m.yaml",
 		EntrypointPath: "/abs/e",
-	})
+	}, testFPNonce())
 	if err == nil {
 		t.Fatal("expected error for empty name")
 	}
@@ -200,7 +210,7 @@ func TestGenerateChecksumsWithPluginsHappyPath(t *testing.T) {
 		Enabled:        true,
 		ManifestPath:   man,
 		EntrypointPath: entry,
-	}}, false)
+	}}, testFPNonce(), false)
 	if err != nil {
 		t.Fatalf("GenerateChecksumsWithPlugins: %v", err)
 	}
@@ -232,7 +242,7 @@ func TestGenerateChecksumsWithPluginsSortedByName(t *testing.T) {
 		{Name: "alpha", Enabled: true, ManifestPath: manA, EntrypointPath: entryA},
 		{Name: "mike", Enabled: true, ManifestPath: manM, EntrypointPath: entryM},
 	}
-	if err := GenerateChecksumsWithPlugins(files, input, false); err != nil {
+	if err := GenerateChecksumsWithPlugins(files, input, testFPNonce(), false); err != nil {
 		t.Fatalf("generate: %v", err)
 	}
 
@@ -259,7 +269,7 @@ func TestGenerateChecksumsWithPluginsDisabledStillRecorded(t *testing.T) {
 		Enabled:        false,
 		ManifestPath:   man,
 		EntrypointPath: entry,
-	}}, false)
+	}}, testFPNonce(), false)
 	if err != nil {
 		t.Fatalf("generate: %v", err)
 	}
@@ -283,7 +293,7 @@ func TestGenerateChecksumsWithPluginsAliasEmbedsUses(t *testing.T) {
 	err := GenerateChecksumsWithPlugins(files, []ResolvedPlugin{
 		{Name: "gmail", Enabled: true, ManifestPath: man, EntrypointPath: entry},
 		{Name: "gmail-work", Enabled: true, Uses: "gmail", ManifestPath: man, EntrypointPath: entry},
-	}, false)
+	}, testFPNonce(), false)
 	if err != nil {
 		t.Fatalf("generate: %v", err)
 	}
@@ -305,7 +315,7 @@ func TestGenerateChecksumsWithPluginsMissingPluginErrors(t *testing.T) {
 		Enabled:        true,
 		ManifestPath:   filepath.Join(tmp, "no-such", "manifest.yaml"),
 		EntrypointPath: filepath.Join(tmp, "no-such", "ghost"),
-	}}, false)
+	}}, testFPNonce(), false)
 	if err == nil {
 		t.Fatal("expected hard error when plugin files missing")
 	}
@@ -320,7 +330,7 @@ func TestGenerateChecksumsWithPluginsMissingPluginErrors(t *testing.T) {
 func TestGenerateChecksumsWithPluginsEmptyOmitsSection(t *testing.T) {
 	files, tmp := lockFixture(t)
 
-	err := GenerateChecksumsWithPlugins(files, nil, false)
+	err := GenerateChecksumsWithPlugins(files, nil, testFPNonce(), false)
 	if err != nil {
 		t.Fatalf("generate: %v", err)
 	}
@@ -355,7 +365,7 @@ func lockAndCurrent(t *testing.T, dir, name string, enabled bool, uses string) (
 		Uses:           uses,
 		ManifestPath:   man,
 		EntrypointPath: entry,
-	})
+	}, testFPNonce())
 	if err != nil {
 		t.Fatalf("lockAndCurrent fingerprint: %v", err)
 	}
@@ -369,9 +379,38 @@ func lockAndCurrent(t *testing.T, dir, name string, enabled bool, uses string) (
 }
 
 func TestVerifyPluginFingerprintsEmptyIsPassNoOp(t *testing.T) {
-	r := VerifyPluginFingerprints(nil, nil, map[string]ResolvedPlugin{})
+	r := VerifyPluginFingerprints(nil, nil, map[string]ResolvedPlugin{}, testFPNonce())
 	if r == nil || !r.Passed || len(r.Errors) != 0 || len(r.Warnings) != 0 {
 		t.Fatalf("expected clean pass, got %+v", r)
+	}
+}
+
+// TestVerifyPluginFingerprintsFailsClosedWithoutNonce proves the downgrade
+// guard: non-empty recorded fingerprints are keyed, so verification without the
+// 32-byte vault nonce must fail closed rather than silently pass unkeyed.
+func TestVerifyPluginFingerprintsFailsClosedWithoutNonce(t *testing.T) {
+	tmp := t.TempDir()
+	fp, cur := lockAndCurrent(t, tmp, "gmail", true, "")
+	current := map[string]ResolvedPlugin{"gmail": cur}
+	configured := configuredPlugins(current)
+
+	// nil nonce: cannot verify keyed fingerprints, must fail closed.
+	r := VerifyPluginFingerprints([]PluginFingerprint{fp}, configured, current, nil)
+	if r.Passed {
+		t.Fatal("verification with nil nonce must fail closed (downgrade guard)")
+	}
+	if len(r.Errors) == 0 {
+		t.Fatalf("fail-closed result should report an error: %+v", r)
+	}
+
+	// 16-byte (wrong-length) nonce must also fail closed.
+	short := make([]byte, 16)
+	r = VerifyPluginFingerprints([]PluginFingerprint{fp}, configured, current, short)
+	if r.Passed {
+		t.Fatal("verification with a 16-byte nonce must fail closed")
+	}
+	if len(r.Errors) == 0 {
+		t.Fatalf("short-nonce result should report an error: %+v", r)
 	}
 }
 
@@ -384,7 +423,7 @@ func configuredPlugins(current map[string]ResolvedPlugin) map[string]bool {
 }
 
 func verifyPluginFingerprintsForTest(fingerprints []PluginFingerprint, current map[string]ResolvedPlugin) *IntegrityResult {
-	return VerifyPluginFingerprints(fingerprints, configuredPlugins(current), current)
+	return VerifyPluginFingerprints(fingerprints, configuredPlugins(current), current, testFPNonce())
 }
 
 func TestVerifyPluginFingerprintsHappyPath(t *testing.T) {
@@ -415,7 +454,7 @@ func TestVerifyPluginFingerprintsEnabledManifestMismatchErrors(t *testing.T) {
 		t.Fatalf("want 1 error, got %d: %+v", len(r.Errors), r)
 	}
 	msg := r.Errors[0]
-	for _, want := range []string{"gmail", "manifest", "mismatch", cur.ManifestPath, "ductile config lock"} {
+	for _, want := range []string{"gmail", "manifest", "mismatch", cur.ManifestPath, "ductile plugin lock"} {
 		if !strings.Contains(msg, want) {
 			t.Fatalf("error missing %q: %s", want, msg)
 		}
@@ -465,7 +504,7 @@ func TestVerifyPluginFingerprintsDisabledMismatchIsWarning(t *testing.T) {
 func TestVerifyPluginFingerprintsStaleRecordIsWarning(t *testing.T) {
 	tmp := t.TempDir()
 	fp, _ := lockAndCurrent(t, tmp, "removed", true, "")
-	r := VerifyPluginFingerprints([]PluginFingerprint{fp}, map[string]bool{}, map[string]ResolvedPlugin{})
+	r := VerifyPluginFingerprints([]PluginFingerprint{fp}, map[string]bool{}, map[string]ResolvedPlugin{}, testFPNonce())
 	if !r.Passed {
 		t.Fatal("stale entry must not fail verify")
 	}
@@ -571,7 +610,7 @@ func TestComputePluginFingerprintRecordsConfiguredAndResolvedPaths(t *testing.T)
 		Enabled:        true,
 		ManifestPath:   configuredManifest,
 		EntrypointPath: configuredEntry,
-	})
+	}, testFPNonce())
 	if err != nil {
 		t.Fatalf("ComputePluginFingerprint: %v", err)
 	}
@@ -612,6 +651,7 @@ func TestVerifyPluginFingerprintsConfiguredButNotDiscoveredErrorsWhenEnabled(t *
 		[]PluginFingerprint{fp},
 		map[string]bool{"gmail": true},
 		map[string]ResolvedPlugin{},
+		testFPNonce(),
 	)
 	if r.Passed {
 		t.Fatal("configured enabled plugin missing from registry must fail verify")
@@ -629,6 +669,7 @@ func TestVerifyPluginFingerprintsConfiguredButNotDiscoveredWarnsWhenDisabled(t *
 		[]PluginFingerprint{fp},
 		map[string]bool{"legacy": false},
 		map[string]ResolvedPlugin{},
+		testFPNonce(),
 	)
 	if !r.Passed {
 		t.Fatalf("configured disabled missing plugin should warn only: %+v", r)
@@ -650,6 +691,7 @@ func TestVerifyPluginFingerprintsConfiguredPluginMissingFromLockErrorsWhenEnable
 		[]PluginFingerprint{{Name: "other", Enabled: true}},
 		configuredPlugins(current),
 		current,
+		testFPNonce(),
 	)
 	if r.Passed {
 		t.Fatal("configured enabled plugin missing from lock must fail verify")
@@ -669,7 +711,7 @@ func TestGenerateChecksumsWithPluginsDryRunNoFile(t *testing.T) {
 		Enabled:        true,
 		ManifestPath:   man,
 		EntrypointPath: entry,
-	}}, true)
+	}}, testFPNonce(), true)
 	if err != nil {
 		t.Fatalf("dry run errored: %v", err)
 	}

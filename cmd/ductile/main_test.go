@@ -10,7 +10,6 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
-	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -68,6 +67,30 @@ func captureRunConfigHashUpdate(t *testing.T, args []string) (int, string, strin
 	return captureOutputWithExitCode(t, func() int {
 		return runConfigHashUpdate(args)
 	})
+}
+
+func captureRunPluginLock(t *testing.T, args []string) (int, string, string) {
+	t.Helper()
+	return captureOutputWithExitCode(t, func() int {
+		return runPluginLock(args)
+	})
+}
+
+// lockConfigAndPlugins performs the §3.1 two-step that replaced the old all-in-one
+// lock: `config lock` authorizes the config files (and preserves/prunes recorded
+// attestations), then `plugin lock <name>` explicitly attests each named plugin's
+// bytes. Most fingerprint wiring tests need a plugin attested before they can
+// exercise verify, tamper, or stale-record behavior.
+func lockConfigAndPlugins(t *testing.T, dir string, names ...string) {
+	t.Helper()
+	if code, _, stderr := captureRunConfigHashUpdate(t, []string{"--config-dir", dir}); code != 0 {
+		t.Fatalf("config lock failed: %s", stderr)
+	}
+	for _, n := range names {
+		if code, _, stderr := captureRunPluginLock(t, []string{"--config-dir", dir, n}); code != 0 {
+			t.Fatalf("plugin lock %s failed: %s", n, stderr)
+		}
+	}
 }
 
 func setVersionMetadataForTest(t *testing.T, v, commit, built string) {
@@ -139,12 +162,12 @@ func TestRunConfigHashUpdateVerboseDryRunShortFlag(t *testing.T) {
 	configPath := filepath.Join(tmpDir, "config.yaml")
 	configYAML := `
 include:
-  - tokens.yaml
+  - webhooks.yaml
 `
 	if err := os.WriteFile(configPath, []byte(configYAML), 0644); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(tmpDir, "tokens.yaml"), []byte("tokens:\n  - name: test\n    key: test\n    scopes_file: scopes/test.json\n    scopes_hash: blake3:deadbeef\n"), 0600); err != nil {
+	if err := os.WriteFile(filepath.Join(tmpDir, "webhooks.yaml"), []byte("webhooks:\n  listen: \"127.0.0.1:8091\"\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
 
@@ -177,12 +200,12 @@ func TestRunConfigHashUpdateVerboseLongFlagWritesChecksums(t *testing.T) {
 	configPath := filepath.Join(tmpDir, "config.yaml")
 	configYAML := `
 include:
-  - tokens.yaml
+  - webhooks.yaml
 `
 	if err := os.WriteFile(configPath, []byte(configYAML), 0644); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(tmpDir, "tokens.yaml"), []byte("tokens:\n  - name: test\n    key: test\n    scopes_file: scopes/test.json\n    scopes_hash: blake3:deadbeef\n"), 0600); err != nil {
+	if err := os.WriteFile(filepath.Join(tmpDir, "webhooks.yaml"), []byte("webhooks:\n  listen: \"127.0.0.1:8091\"\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
 
@@ -1037,7 +1060,6 @@ func writeRelaySenderConfigFixture(t *testing.T, dir, baseURL string) {
 
 	configYAML := `
 include:
-  - tokens.yaml
   - relay-instances.yaml
 service:
   name: home-primary
@@ -1048,6 +1070,9 @@ state:
   path: ` + filepath.Join(dir, "state.db") + `
 plugin_roots:
   - ` + pluginsDir + `
+secrets:
+  age_key_file: age.key
+  vault_file: vault.age
 plugins: {}
 `
 	if err := os.WriteFile(filepath.Join(dir, "config.yaml"), []byte(configYAML), 0o644); err != nil {
@@ -1084,6 +1109,9 @@ instances:
 	if err := os.WriteFile(filepath.Join(dir, "relay-instances.yaml"), []byte(relayInstancesYAML), 0o644); err != nil {
 		t.Fatal(err)
 	}
+
+	// The relay secret now resolves from the vault (epic #48), not tokens.yaml.
+	seedVaultSecrets(t, dir, map[string]string{"relay-lab-v1": "shared-secret"})
 }
 
 func TestRunRelaySendDeliversConfiguredEvent(t *testing.T) {
@@ -1135,7 +1163,7 @@ pipelines:
 				},
 			},
 		},
-		Tokens: []config.TokenEntry{{Name: "relay-lab-v1", Key: "shared-secret"}},
+		ResolvedSecrets: map[string]string{"relay-lab-v1": "shared-secret"},
 	}
 	receiver, err := relay.NewReceiver(receiverCfg, q, engine, contexts, state.NewAdmitter(q, state.DefaultMaxContextBytes), slog.Default())
 	if err != nil {
@@ -1259,129 +1287,6 @@ func TestRunRelaySendAcceptsInstanceFirstOrdering(t *testing.T) {
 	if !bytes.Contains(observedBody, []byte(`"withings.measurement_recorded"`)) {
 		t.Fatalf("relay body did not carry underscored event type: %s", string(observedBody))
 	}
-}
-
-func TestRunConfigTokenCreateAndInspectJSON(t *testing.T) {
-	tmpDir := t.TempDir()
-	writeConfigDirFixture(t, tmpDir)
-
-	createCode, createStdout, createStderr := captureOutputWithExitCode(t, func() int {
-		return runConfigTokenCreate([]string{
-			"--config-dir", tmpDir,
-			"--name", "github-integration",
-			"--scopes", "read:jobs,read:events",
-			"--format", "json",
-		})
-	})
-	if createCode != 0 {
-		t.Fatalf("runConfigTokenCreate() code = %d, stderr: %s", createCode, createStderr)
-	}
-
-	var createOut struct {
-		Status string `json:"status"`
-		Token  struct {
-			Name       string `json:"name"`
-			ScopesFile string `json:"scopes_file"`
-			ScopesHash string `json:"scopes_hash"`
-		} `json:"token"`
-		EnvVar string `json:"env_var"`
-	}
-	if err := json.Unmarshal([]byte(createStdout), &createOut); err != nil {
-		t.Fatalf("failed to parse create json: %v\noutput=%s", err, createStdout)
-	}
-	if createOut.Status != "success" {
-		t.Fatalf("status = %q, want success", createOut.Status)
-	}
-	if createOut.Token.Name != "github-integration" {
-		t.Fatalf("token.name = %q", createOut.Token.Name)
-	}
-	if !strings.HasPrefix(createOut.Token.ScopesHash, "blake3:") {
-		t.Fatalf("token.scopes_hash missing blake3 prefix: %q", createOut.Token.ScopesHash)
-	}
-	if createOut.EnvVar != "GITHUB_INTEGRATION_TOKEN" {
-		t.Fatalf("env_var = %q, want %q", createOut.EnvVar, "GITHUB_INTEGRATION_TOKEN")
-	}
-
-	if _, err := os.Stat(filepath.Join(tmpDir, "tokens.yaml")); err != nil {
-		t.Fatalf("tokens.yaml not written: %v", err)
-	}
-	if _, err := os.Stat(filepath.Join(tmpDir, "scopes", "github-integration.json")); err != nil {
-		t.Fatalf("scope file not written: %v", err)
-	}
-	if _, err := os.Stat(filepath.Join(tmpDir, ".checksums")); err != nil {
-		t.Fatalf(".checksums not written: %v", err)
-	}
-
-	inspectCode, inspectStdout, inspectStderr := captureOutputWithExitCode(t, func() int {
-		return runConfigTokenInspect([]string{
-			"github-integration",
-			"--config-dir", tmpDir,
-			"--format", "json",
-		})
-	})
-	if inspectCode != 0 {
-		t.Fatalf("runConfigTokenInspect() code = %d, stderr: %s", inspectCode, inspectStderr)
-	}
-
-	var inspectOut struct {
-		Name        string `json:"name"`
-		HashMatches bool   `json:"hash_matches"`
-	}
-	if err := json.Unmarshal([]byte(inspectStdout), &inspectOut); err != nil {
-		t.Fatalf("failed to parse inspect json: %v\noutput=%s", err, inspectStdout)
-	}
-	if inspectOut.Name != "github-integration" {
-		t.Fatalf("inspect name = %q", inspectOut.Name)
-	}
-	if !inspectOut.HashMatches {
-		t.Fatalf("inspect hash_matches = false, output=%s", inspectStdout)
-	}
-}
-
-func TestRunConfigScopeAddWithPositionalBeforeFlags(t *testing.T) {
-	tmpDir := t.TempDir()
-	writeConfigDirFixture(t, tmpDir)
-
-	createCode, _, createStderr := captureOutputWithExitCode(t, func() int {
-		return runConfigTokenCreate([]string{
-			"--config-dir", tmpDir,
-			"--name", "github-integration",
-			"--scopes", "read:jobs",
-		})
-	})
-	if createCode != 0 {
-		t.Fatalf("runConfigTokenCreate() code = %d, stderr: %s", createCode, createStderr)
-	}
-
-	scopeCode, _, scopeStderr := captureOutputWithExitCode(t, func() int {
-		return runConfigScopeAdd([]string{
-			"github-integration",
-			"echo:ro",
-			"--config-dir", tmpDir,
-		})
-	})
-	if scopeCode != 0 {
-		t.Fatalf("runConfigScopeAdd() code = %d, stderr: %s", scopeCode, scopeStderr)
-	}
-
-	raw, err := os.ReadFile(filepath.Join(tmpDir, "scopes", "github-integration.json"))
-	if err != nil {
-		t.Fatalf("read scope file: %v", err)
-	}
-	var doc struct {
-		Scopes []string `json:"scopes"`
-	}
-	if err := json.Unmarshal(raw, &doc); err != nil {
-		t.Fatalf("parse scope file: %v", err)
-	}
-
-	if !containsString(doc.Scopes, "read:jobs") || !containsString(doc.Scopes, "echo:ro") {
-		t.Fatalf("scope file missing expected scopes: %v", doc.Scopes)
-	}
-}
-
-func containsString(list []string, value string) bool {
-	return slices.Contains(list, value)
 }
 
 func writeRouteFixture(t *testing.T, dir string) {
@@ -1577,7 +1482,7 @@ func TestRunConfigInitBackupRestore(t *testing.T) {
 		t.Fatalf("backup archive missing: %v", err)
 	}
 
-	if err := os.WriteFile(filepath.Join(configDir, "tokens.yaml"), []byte("tokens:\n  - name: changed\n    key: x\n"), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(configDir, "webhooks.yaml"), []byte("webhooks:\n  - name: changed\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 
@@ -1588,12 +1493,35 @@ func TestRunConfigInitBackupRestore(t *testing.T) {
 		t.Fatalf("runConfigRestore() code = %d, stderr: %s", restoreCode, restoreStderr)
 	}
 
-	raw, err := os.ReadFile(filepath.Join(configDir, "tokens.yaml"))
+	raw, err := os.ReadFile(filepath.Join(configDir, "webhooks.yaml"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if strings.Contains(string(raw), "changed") {
-		t.Fatalf("restore did not replace modified tokens.yaml: %s", string(raw))
+		t.Fatalf("restore did not replace modified webhooks.yaml: %s", string(raw))
+	}
+}
+
+func TestConfigBackupWarnsWhenVaultPresent(t *testing.T) {
+	tmpDir := t.TempDir()
+	writeConfigDirFixture(t, tmpDir)
+	// A vault blob lives in the config dir — config backup must NOT silently omit it.
+	if err := os.WriteFile(filepath.Join(tmpDir, "vault.age"), []byte("AGE-ENCRYPTED"), 0o600); err != nil {
+		t.Fatalf("write vault.age: %v", err)
+	}
+
+	backupPath := filepath.Join(t.TempDir(), "config-only.tar.gz")
+	code, _, stderr := captureOutputWithExitCode(t, func() int {
+		return runConfigBackup([]string{"--config-dir", tmpDir, "--output", backupPath})
+	})
+	if code != 0 {
+		t.Fatalf("runConfigBackup() code = %d, stderr: %s", code, stderr)
+	}
+	if !strings.Contains(stderr, "does NOT include the encrypted vault blob") {
+		t.Errorf("expected vault-omission warning when vault.age present; stderr:\n%s", stderr)
+	}
+	if !strings.Contains(stderr, "system backup") {
+		t.Errorf("warning should point to `system backup`; stderr:\n%s", stderr)
 	}
 }
 

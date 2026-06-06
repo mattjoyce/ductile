@@ -2,13 +2,104 @@ package router
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/mattjoyce/ductile/internal/plugin"
 	"github.com/mattjoyce/ductile/internal/protocol"
 	"github.com/mattjoyce/ductile/internal/router/conditions"
 	"github.com/mattjoyce/ductile/internal/router/dsl"
 )
+
+func TestRouterNextPoisonPredicateIsolatedFromHealthyRoutes(t *testing.T) {
+	// Two pipelines on the same trigger. The first carries a predicate that
+	// errors at eval time (numeric gt against a string payload). The second is
+	// healthy. A poison predicate on one route must not abort routing for the
+	// other — and must not surface as an error from Next.
+	set, err := dsl.CompileSpecs([]dsl.PipelineSpec{
+		{
+			Name: "poison",
+			On:   "event.shared",
+			If:   &conditions.Condition{Path: "payload.count", Op: conditions.OpGT, Value: 1},
+			Steps: []dsl.StepSpec{
+				{ID: "poison_step", Uses: "plugin-poison"},
+			},
+		},
+		{
+			Name: "healthy",
+			On:   "event.shared",
+			Steps: []dsl.StepSpec{
+				{ID: "healthy_step", Uses: "plugin-healthy"},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("CompileSpecs: %v", err)
+	}
+
+	r := New(set, nil)
+	out, err := r.Next(context.Background(), Request{
+		Event: protocol.Event{
+			Type:    "event.shared",
+			Payload: map[string]any{"count": "not-a-number"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Next returned error for a poison predicate; want fault isolation: %v", err)
+	}
+	if len(out) != 1 {
+		t.Fatalf("dispatch count = %d, want 1 (healthy route survives poison route): %+v", len(out), out)
+	}
+	if out[0].Plugin != "plugin-healthy" {
+		t.Fatalf("surviving dispatch plugin = %q, want plugin-healthy", out[0].Plugin)
+	}
+}
+
+func TestValidateFromPluginExists(t *testing.T) {
+	compile := func(t *testing.T, fromPlugin string) *dsl.Set {
+		t.Helper()
+		set, err := dsl.CompileSpecs([]dsl.PipelineSpec{
+			{
+				Name:       "scoped",
+				On:         "event.start",
+				FromPlugin: fromPlugin,
+				Steps:      []dsl.StepSpec{{ID: "step_b", Uses: "plugin-b"}},
+			},
+		})
+		if err != nil {
+			t.Fatalf("CompileSpecs: %v", err)
+		}
+		return set
+	}
+
+	registry := plugin.NewRegistry()
+	if err := registry.Add(&plugin.Plugin{Name: "plugin-a"}); err != nil {
+		t.Fatalf("registry.Add: %v", err)
+	}
+
+	t.Run("known from_plugin loads", func(t *testing.T) {
+		if err := validateFromPluginExists(compile(t, "plugin-a"), registry); err != nil {
+			t.Fatalf("validateFromPluginExists: unexpected error %v", err)
+		}
+	})
+
+	t.Run("empty from_plugin loads", func(t *testing.T) {
+		if err := validateFromPluginExists(compile(t, ""), registry); err != nil {
+			t.Fatalf("validateFromPluginExists: unexpected error %v", err)
+		}
+	})
+
+	t.Run("unknown from_plugin is rejected at load", func(t *testing.T) {
+		err := validateFromPluginExists(compile(t, "plugin-ghost"), registry)
+		if err == nil {
+			t.Fatalf("expected error for unknown from_plugin")
+		}
+		if !strings.Contains(err.Error(), "from_plugin references unknown plugin") {
+			t.Fatalf("error = %v, want from_plugin unknown-plugin message", err)
+		}
+	})
+}
 
 func TestRouterNextRootTrigger(t *testing.T) {
 	set, err := dsl.CompileSpecs([]dsl.PipelineSpec{
@@ -316,7 +407,7 @@ func TestRouterNextHookDispatch(t *testing.T) {
 	r := New(set, nil)
 
 	payload := map[string]any{"plugin": "claude_harvest", "status": "succeeded"}
-	out, err := r.NextHook(context.Background(), "claude_harvest", "job.completed", payload, nil)
+	out, err := r.NextHook(context.Background(), "claude_harvest", "job.completed", payload)
 	if err != nil {
 		t.Fatalf("NextHook: %v", err)
 	}
@@ -351,7 +442,7 @@ func TestRouterNextHookUnknownSignalReturnsEmpty(t *testing.T) {
 	}
 
 	r := New(set, nil)
-	out, err := r.NextHook(context.Background(), "", "job.failed", nil, nil)
+	out, err := r.NextHook(context.Background(), "", "job.failed", nil)
 	if err != nil {
 		t.Fatalf("NextHook: %v", err)
 	}
@@ -411,7 +502,7 @@ func TestRouterNextHookMultiplePipelines(t *testing.T) {
 	}
 
 	r := New(set, nil)
-	out, err := r.NextHook(context.Background(), "any_plugin", "job.completed", nil, nil)
+	out, err := r.NextHook(context.Background(), "any_plugin", "job.completed", nil)
 	if err != nil {
 		t.Fatalf("NextHook: %v", err)
 	}
@@ -444,7 +535,7 @@ func TestRouterNextHookExpandsCalledPipeline(t *testing.T) {
 	r := New(set, nil)
 
 	payload := map[string]any{"plugin": "claude_harvest", "status": "succeeded"}
-	out, err := r.NextHook(context.Background(), "claude_harvest", "job.completed", payload, nil)
+	out, err := r.NextHook(context.Background(), "claude_harvest", "job.completed", payload)
 	if err != nil {
 		t.Fatalf("NextHook: %v", err)
 	}
@@ -648,7 +739,7 @@ func TestRouterNextHookSkipsWhenIfFalse(t *testing.T) {
 	r := New(set, nil)
 
 	out, err := r.NextHook(context.Background(), "check_youtube", "job.failed",
-		map[string]any{"plugin": "check_youtube"}, nil)
+		map[string]any{"plugin": "check_youtube"})
 	if err != nil {
 		t.Fatalf("NextHook (false): %v", err)
 	}
@@ -657,7 +748,7 @@ func TestRouterNextHookSkipsWhenIfFalse(t *testing.T) {
 	}
 
 	out, err = r.NextHook(context.Background(), "fabric", "job.failed",
-		map[string]any{"plugin": "fabric"}, nil)
+		map[string]any{"plugin": "fabric"})
 	if err != nil {
 		t.Fatalf("NextHook (true): %v", err)
 	}
@@ -846,7 +937,7 @@ func TestRouterNextHookFromPluginMatches(t *testing.T) {
 	r := New(set, nil)
 
 	out, err := r.NextHook(context.Background(), "claude_harvest", "job.failed",
-		map[string]any{"plugin": "claude_harvest"}, nil)
+		map[string]any{"plugin": "claude_harvest"})
 	if err != nil {
 		t.Fatalf("NextHook: %v", err)
 	}
@@ -871,7 +962,7 @@ func TestRouterNextHookFromPluginDoesNotMatchOtherSourcePlugins(t *testing.T) {
 	r := New(set, nil)
 
 	out, err := r.NextHook(context.Background(), "fabric", "job.failed",
-		map[string]any{"plugin": "fabric"}, nil)
+		map[string]any{"plugin": "fabric"})
 	if err != nil {
 		t.Fatalf("NextHook: %v", err)
 	}
@@ -895,7 +986,7 @@ func TestRouterNextHookFromPluginRejectsEmptySourcePlugin(t *testing.T) {
 	r := New(set, nil)
 
 	out, err := r.NextHook(context.Background(), "", "job.failed",
-		map[string]any{"plugin": ""}, nil)
+		map[string]any{"plugin": ""})
 	if err != nil {
 		t.Fatalf("NextHook: %v", err)
 	}
@@ -919,7 +1010,7 @@ func TestRouterNextHookEmptyFromPluginPreservesBehaviour(t *testing.T) {
 
 	for _, plugin := range []string{"claude_harvest", "fabric", ""} {
 		out, err := r.NextHook(context.Background(), plugin, "job.failed",
-			map[string]any{"plugin": plugin}, nil)
+			map[string]any{"plugin": plugin})
 		if err != nil {
 			t.Fatalf("NextHook(%q): %v", plugin, err)
 		}
@@ -1070,10 +1161,12 @@ func TestRouterNextRootTriggerIfAbsentContextPredicateFails(t *testing.T) {
 	}
 }
 
-func TestRouterNextHookIfEvaluatesAgainstSourceContext(t *testing.T) {
-	// Hook-side context-aware if: — predicate evaluates against the
-	// upstream job's accumulated context passed by the dispatcher.
-	set, err := dsl.CompileSpecs([]dsl.PipelineSpec{{
+func TestCompileSpecsRejectsHookContextPredicate(t *testing.T) {
+	// Context is never available at hook time (the dispatcher short-circuits
+	// hooks for context-bearing jobs), so a context.* predicate on an on-hook:
+	// trigger can never match. It must be rejected at load, not silently
+	// dead-route at runtime.
+	_, err := dsl.CompileSpecs([]dsl.PipelineSpec{{
 		Name:   "page-on-high-severity",
 		OnHook: "job.failed",
 		If: &conditions.Condition{
@@ -1083,29 +1176,25 @@ func TestRouterNextHookIfEvaluatesAgainstSourceContext(t *testing.T) {
 		},
 		Steps: []dsl.StepSpec{{ID: "page", Uses: "pagerduty"}},
 	}})
-	if err != nil {
-		t.Fatalf("CompileSpecs: %v", err)
+	if err == nil {
+		t.Fatalf("expected compile error for on-hook trigger predicate referencing context.*")
 	}
-	r := New(set, nil)
-
-	out, err := r.NextHook(context.Background(), "claude_harvest", "job.failed",
-		map[string]any{"plugin": "claude_harvest"},
-		map[string]any{"severity": "high"})
-	if err != nil {
-		t.Fatalf("NextHook (high): %v", err)
-	}
-	if len(out) != 1 {
-		t.Fatalf("dispatch count = %d, want 1 (predicate-true on hook context.*)", len(out))
+	if !strings.Contains(err.Error(), "context is not available at hook time") {
+		t.Fatalf("error = %v, want hook-context rejection message", err)
 	}
 
-	out, err = r.NextHook(context.Background(), "claude_harvest", "job.failed",
-		map[string]any{"plugin": "claude_harvest"},
-		map[string]any{"severity": "low"})
-	if err != nil {
-		t.Fatalf("NextHook (low): %v", err)
-	}
-	if len(out) != 0 {
-		t.Fatalf("dispatch count = %d, want 0 (predicate-false on hook context.*)", len(out))
+	// A payload.* predicate on the same hook is fine — context-free.
+	if _, err := dsl.CompileSpecs([]dsl.PipelineSpec{{
+		Name:   "page-on-high-severity",
+		OnHook: "job.failed",
+		If: &conditions.Condition{
+			Path:  "payload.severity",
+			Op:    conditions.OpEq,
+			Value: "high",
+		},
+		Steps: []dsl.StepSpec{{ID: "page", Uses: "pagerduty"}},
+	}}); err != nil {
+		t.Fatalf("payload predicate on hook should compile: %v", err)
 	}
 }
 

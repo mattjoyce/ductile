@@ -89,6 +89,37 @@ func TestEncodeRequest(t *testing.T) {
 	}
 }
 
+func TestEncodeRequestSecrets(t *testing.T) {
+	t.Run("secrets present are serialized under secrets", func(t *testing.T) {
+		var buf bytes.Buffer
+		req := &Request{
+			Protocol: 2, JobID: "j1", Command: "poll",
+			Secrets: map[string]string{"API_KEY": "shh"},
+		}
+		if err := EncodeRequest(&buf, req); err != nil {
+			t.Fatalf("EncodeRequest: %v", err)
+		}
+		out := buf.String()
+		if !strings.Contains(out, `"secrets"`) {
+			t.Errorf("expected secrets field in output, got %s", out)
+		}
+		if !strings.Contains(out, `"API_KEY":"shh"`) {
+			t.Errorf("expected secret value in output, got %s", out)
+		}
+	})
+
+	t.Run("empty secrets are omitted from the wire", func(t *testing.T) {
+		var buf bytes.Buffer
+		req := &Request{Protocol: 2, JobID: "j2", Command: "poll"}
+		if err := EncodeRequest(&buf, req); err != nil {
+			t.Fatalf("EncodeRequest: %v", err)
+		}
+		if strings.Contains(buf.String(), `"secrets"`) {
+			t.Errorf("expected no secrets field when empty, got %s", buf.String())
+		}
+	})
+}
+
 func TestDecodeResponseLenientValidation(t *testing.T) {
 	tests := []struct {
 		name    string

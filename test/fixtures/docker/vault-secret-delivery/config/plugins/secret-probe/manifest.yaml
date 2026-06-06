@@ -1,0 +1,26 @@
+manifest_spec: ductile.plugin
+manifest_version: 1
+name: secret-probe
+version: 0.1.0
+protocol: 2
+entrypoint: run.sh
+concurrency_safe: true
+description: "E2E probe: reports the NAMES and value-lengths of vault secrets delivered over stdin (never the values). Used by the vault-secret-delivery fixture to prove spawn-time secret composition + delivery."
+commands:
+  - name: poll
+    type: write
+    description: "Echo back a summary of the secrets the dispatcher delivered over stdin."
+    idempotent: true
+    retry_safe: true
+    input_schema:
+      type: object
+      additionalProperties: true
+    output_schema:
+      type: object
+      properties:
+        status: { type: string, enum: [ok, error] }
+        result: { type: string }
+        events: { type: array }
+        logs: { type: array, items: { type: object } }
+      required: [status, logs]
+      additionalProperties: true

@@ -15,10 +15,13 @@ import (
 
 type subprocessExecutor struct {
 	events *events.Hub
+	// extraEnv lists operator-granted environment variable names passed through
+	// to plugin children on top of the built-in allowlist (see buildPluginEnv).
+	extraEnv []string
 }
 
-func newSubprocessExecutor(events *events.Hub) *subprocessExecutor {
-	return &subprocessExecutor{events: events}
+func newSubprocessExecutor(events *events.Hub, extraEnv []string) *subprocessExecutor {
+	return &subprocessExecutor{events: events, extraEnv: extraEnv}
 }
 
 // spawnPlugin spawns the plugin subprocess, writes the request to stdin, and reads the response from stdout.
@@ -35,8 +38,13 @@ func (e *subprocessExecutor) execute(
 	timeoutTimer := time.NewTimer(timeout)
 	defer timeoutTimer.Stop()
 
-	// Prepare command (don't use CommandContext - we'll manage termination ourselves)
+	// Prepare command (don't use CommandContext - we'll manage termination ourselves).
+	// The entrypoint is invoked with NO arguments: secrets never travel on argv
+	// (which is world-readable via /proc), only over the stdin request channel.
 	cmd := exec.Command(entrypoint)
+	// Replace full-environment inheritance with a minimal allowlist so the child
+	// never receives a copy of the gateway's environment (1a spawn hygiene).
+	cmd.Env = buildPluginEnv(e.extraEnv)
 	configurePluginProcess(cmd)
 
 	// Prepare stdin pipe

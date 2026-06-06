@@ -14,6 +14,8 @@ import (
 
 	"gopkg.in/yaml.v3"
 	_ "modernc.org/sqlite"
+
+	"github.com/mattjoyce/ductile/internal/config"
 )
 
 func TestParseScope(t *testing.T) {
@@ -186,7 +188,7 @@ func TestWriteBackupArchiveScopeDB(t *testing.T) {
 		t.Fatalf("writeBackupArchive: %v", err)
 	}
 	got := tarPaths(t, dest)
-	want := []string{"BACKUP_MANIFEST.txt", "db/ductile.sqlite"}
+	want := []string{"BACKUP_MANIFEST.txt", "uid.txt", "db/ductile.sqlite"}
 	if !equalSorted(got, want) {
 		t.Fatalf("scope=db archive contents\n got: %v\nwant: %v", got, want)
 	}
@@ -202,6 +204,7 @@ func TestWriteBackupArchiveScopeConfig(t *testing.T) {
 	got := tarPaths(t, dest)
 	want := []string{
 		"BACKUP_MANIFEST.txt",
+		"uid.txt",
 		"db/ductile.sqlite",
 		"config/.checksums",
 		"config/api.yaml",
@@ -285,6 +288,113 @@ func TestWriteBackupArchiveManifestRecordsSHA256(t *testing.T) {
 	}
 	if m.Scope != "db" {
 		t.Errorf("manifest scope = %q, want db", m.Scope)
+	}
+}
+
+func TestBackupIncludesVaultBlobNotKey(t *testing.T) {
+	fx := newBackupFixture(t)
+
+	// A vault blob and its age key live in the config dir.
+	if err := os.WriteFile(filepath.Join(fx.configDir, "vault.age"), []byte("AGE-ENCRYPTED-VAULT-BLOB"), 0o600); err != nil {
+		t.Fatalf("write vault.age: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(fx.configDir, "age.key"), []byte("AGE-SECRET-KEY-PRIVATE"), 0o600); err != nil {
+		t.Fatalf("write age.key: %v", err)
+	}
+	// Make the env var deterministic so the key resolves to the config-dir file.
+	t.Setenv("DUCTILE_AGE_KEY_FILE", "")
+
+	cfg := &config.Config{}
+	cfg.State.Path = fx.dbPath
+	cfg.Secrets.AgeKeyFile = "age.key"
+
+	plan, err := buildBackupPlan(scopeConfig, cfg, fx.configDir, fx.dbPath)
+	if err != nil {
+		t.Fatalf("buildBackupPlan: %v", err)
+	}
+
+	// Manifest: the blob is included; the age key is recorded as out-of-band excluded.
+	if !contains(plan.manifest.Included, "config/vault.age") {
+		t.Errorf("manifest must include the vault blob; got %v", plan.manifest.Included)
+	}
+	keyExcluded := false
+	for _, ex := range plan.manifest.Excluded {
+		if strings.Contains(ex.Reason, "out-of-band") {
+			for _, it := range ex.Items {
+				if strings.HasSuffix(it, "age.key") {
+					keyExcluded = true
+				}
+			}
+		}
+	}
+	if !keyExcluded {
+		t.Errorf("manifest must record the age key as excluded out-of-band; got %+v", plan.manifest.Excluded)
+	}
+
+	// Archive: contains the blob, NEVER the age key.
+	dest := filepath.Join(t.TempDir(), "out.tar.gz")
+	if err := writeBackupArchive(dest, plan); err != nil {
+		t.Fatalf("writeBackupArchive: %v", err)
+	}
+	got := tarPaths(t, dest)
+	if !contains(got, "config/vault.age") {
+		t.Errorf("archive must contain config/vault.age; got %v", got)
+	}
+	for _, p := range got {
+		if strings.HasSuffix(p, "age.key") {
+			t.Fatalf("age key must NEVER be in the archive; found %s", p)
+		}
+	}
+
+	// The in-archive manifest tells the truth about the pairing.
+	body := string(tarReadFile(t, dest, "BACKUP_MANIFEST.txt"))
+	if !strings.Contains(body, "vault.age") || !strings.Contains(body, "out-of-band") {
+		t.Errorf("manifest should record the vault.age + out-of-band-key pairing; got:\n%s", body)
+	}
+}
+
+func TestBackupUIDWrittenAndPaired(t *testing.T) {
+	fx := newBackupFixture(t)
+	cfg := &config.Config{}
+	cfg.State.Path = fx.dbPath
+
+	plan, err := buildBackupPlan(scopeConfig, cfg, fx.configDir, fx.dbPath)
+	if err != nil {
+		t.Fatalf("buildBackupPlan: %v", err)
+	}
+
+	uid := plan.manifest.BackupUID
+	if len(uid) != backupUIDLen {
+		t.Fatalf("backup uid %q length = %d, want %d", uid, len(uid), backupUIDLen)
+	}
+	for _, r := range uid {
+		if !strings.ContainsRune(backupUIDAlphabet, r) {
+			t.Fatalf("backup uid %q contains out-of-alphabet char %q", uid, r)
+		}
+	}
+
+	dest := filepath.Join(t.TempDir(), "out.tar.gz")
+	if err := writeBackupArchive(dest, plan); err != nil {
+		t.Fatalf("writeBackupArchive: %v", err)
+	}
+
+	// uid.txt is present and matches the manifest UID.
+	if got := strings.TrimSpace(string(tarReadFile(t, dest, "uid.txt"))); got != uid {
+		t.Errorf("uid.txt = %q, want manifest uid %q", got, uid)
+	}
+	// The manifest carries the same UID for the pairing record.
+	body := string(tarReadFile(t, dest, "BACKUP_MANIFEST.txt"))
+	if !strings.Contains(body, "backup_uid: "+uid) {
+		t.Errorf("manifest must record backup_uid %q; got:\n%s", uid, body)
+	}
+
+	// Two backups get distinct UIDs.
+	plan2, err := buildBackupPlan(scopeConfig, cfg, fx.configDir, fx.dbPath)
+	if err != nil {
+		t.Fatalf("buildBackupPlan (2): %v", err)
+	}
+	if plan2.manifest.BackupUID == uid {
+		t.Errorf("expected distinct UIDs across backups; both = %q", uid)
 	}
 }
 

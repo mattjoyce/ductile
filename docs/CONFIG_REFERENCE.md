@@ -35,7 +35,7 @@ Before starting, the system verifies all files against a monolithic `.checksums`
 | Tier | Files | Missing/Mismatch Behavior |
 | :--- | :--- | :--- |
 | **High Security** | `tokens.yaml`, `webhooks.yaml`, `scopes/*.json` | **Hard Fail**: System refuses to start (EX_CONFIG). |
-| **Operational** | `config.yaml`, `routes.yaml`, `relay-instances.yaml`, `relay-ingress.yaml` | **Warn & Continue**: Logs a warning but loads the file (Unless `strict_mode: true` is set, in which case it is a **Hard Fail**). |
+| **Operational** | `config.yaml`, `routes.yaml`, `relay-instances.yaml`, `relay-ingress.yaml` | **Warn & Continue**: Logs a warning but loads the file (Unless `service.admission.fail_on_drift: true` is set, in which case it is a **Hard Fail**). |
 
 ### 2.1 The Seal (`.checksums`)
 The `.checksums` file is a YAML manifest containing BLAKE3 hashes indexed by the **absolute path** of every authorized file.
@@ -135,19 +135,31 @@ service:
   dedupe_ttl: 24h
   job_log_retention: 30d
   job_queue_retention: 24h
-  
+
   # DB table history retention
-  job_transitions_retention: 30d          # Retention for historical job state transitions
-  job_attempts_retention: 30d             # Retention for job execution attempt logs
-  breaker_transitions_retention: 90d      # Retention for circuit breaker state changes
-  
+  job_transitions_retention: 30d   # historical job state transitions
+  job_attempts_retention: 30d      # job execution attempt logs
+  breaker_transitions_retention: 90d  # circuit breaker state changes
+
   # Concurrency & limits
-  max_workers: 4                          # Global worker cap across all plugins (default: CPU-1)
-  hook_max_depth: 4                       # Max depth of on-hook lifecycle chain to prevent loops (default: 4)
-  
-  # Safety
-  strict_mode: true                       # Enforce integrity & config verification on startup
-  allow_symlinks: false                   # Permit resolving symbolic links under config/plugin roots
+  # Omit to use the default: max(1, CPU-1). Set to 1 to force global serial dispatch.
+  max_workers: 4
+  hook_max_depth: 4                # max on-hook lifecycle chain depth, prevents loops (default: 4)
+
+  # Admission control: four independent gates the daemon applies at boot/reload.
+  # Each defaults to false (permissive). Enable only what you need.
+  admission:
+    verify_integrity_on_boot: true   # run .checksums + fingerprint preflight at startup
+    fail_on_drift: true              # operational config/routes drift -> reject (boot & reload)
+    validate_config_on_boot: true    # require config validation to pass at startup
+    require_api_auth: true           # reject an enabled API with no auth tokens
+  # strict_mode: true  # DEPRECATED alias — enables all four admission gates above
+  allow_symlinks: false              # permit resolving symbolic links under config/plugin roots
+  # Spawn-hygiene allowlist: extra env var NAMES passed through to plugin child
+  # processes, on top of the built-in minimal set (PATH, HOME, TZ, LANG, ...).
+  # Secrets do NOT go here — they reach plugins via the vault `secrets` envelope
+  # over stdin, never the environment.
+  plugin_env_passthrough: [MY_PLUGIN_FLAG]
 
 plugin_roots:
   - /opt/ductile/plugins
@@ -164,6 +176,11 @@ api:
 
 state:
   path: ./data/state.db
+
+# Encryption at rest + the owned secret vault (see docs/SECRETS.md).
+secrets:
+  age_key_file: ./age.key      # age identity that decrypts encrypted config and the vault
+  vault_file: ./vault.age      # the encrypted vault blob (default: <configDir>/vault.age)
 
 # macOS-only. Each path is stat()-ed once on cold start (after PID lock,
 # before "ductile running" log). Triggers any pending TCC popup for the
@@ -193,6 +210,10 @@ tcc_paths:
 > **Note:** the core does not provision per-job filesystem workspaces;
 > the `workspace:` config section has been removed. Plugins that need a
 > scratch path manage it themselves — see `docs/PLUGIN_DEVELOPMENT.md` §9.
+
+**`service.plugin_env_passthrough`** is a list of env var *names* (not values) granted to plugin child processes on top of the built-in spawn-hygiene allowlist (`PATH`, `HOME`, `TZ`, `LANG`, …). Use it sparingly. Secrets must **not** travel this way — they are withheld from the plugin environment and delivered only through the vault `secrets` envelope over stdin (`docs/ARCHITECTURE.md` §5.5/§6.1).
+
+**`secrets.age_key_file`** names the age identity (private key, mode 0600) used to decrypt encrypted config includes *and* the vault blob. Resolution order: `DUCTILE_AGE_KEY_FILE` env var → `secrets.age_key_file` (relative to configDir) → built-in default locations. **`secrets.vault_file`** names the encrypted vault blob; relative to configDir, defaulting to `<configDir>/vault.age`. An absent vault file means "no vault yet" (the migration/coexistence window) — not an error. The vault holds the owned secret store; see `docs/SECRETS.md` for the principal/secret model and the `ductile vault` lifecycle.
 
 `plugin_roots` is the multi-root setting.
 
@@ -228,6 +249,31 @@ Manifest interaction:
 - The manifest hint is the plugin author's safety declaration. Operators use
   `plugins.<name>.parallelism` to choose how much same-plugin concurrency to
   allow within the global `service.max_workers` cap.
+
+### 4.2.2 Inspecting effective plugin defaults
+
+Per-plugin `retry`, `timeouts`, `circuit_breaker`, `parallelism`, and
+`max_outstanding_polls` defaults live in code (single-sourced), and unset fields
+resolve to those defaults at runtime — so a plugin stanza that omits them (or sets
+only part of a block) does not show the values actually in force. Use the
+effective view to see what runs, with each value tagged `explicit` (set in your
+file) or `default` (inherited from code):
+
+```
+$ ductile config show --effective birda
+plugin: birda
+  enabled: true (explicit)
+  retry.max_attempts: 4 (default)
+  retry.backoff_base: 30s (default)
+  timeouts.poll: 1m0s (default)
+  timeouts.handle: 5m0s (explicit)
+  ...
+  parallelism: 8 (default)        # inherits service.max_workers
+```
+
+`ductile config get --effective birda.timeouts.handle` resolves a single field
+(`5m0s (explicit)`); add `--json` for `{ "value": ..., "source": ... }`. Plain
+`config show` (no `--effective`) is unchanged and renders the config as written.
 
 ### 4.3 webhooks.yaml (High Security)
 

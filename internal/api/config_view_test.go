@@ -50,7 +50,7 @@ func TestRenderCompiledRoutesExposesSprint17Selectors(t *testing.T) {
 		OnHook:     "job.failed",
 		FromPlugin: "claude_harvest",
 		If: &conditions.Condition{
-			Path:  "context.severity",
+			Path:  "payload.severity",
 			Op:    conditions.OpEq,
 			Value: "high",
 		},
@@ -84,8 +84,8 @@ func TestRenderCompiledRoutesExposesSprint17Selectors(t *testing.T) {
 		if route.Source.If == nil {
 			t.Fatalf("rendered hook entry route missing if predicate")
 		}
-		if route.Source.If.Path != "context.severity" {
-			t.Fatalf("rendered if path = %q, want context.severity", route.Source.If.Path)
+		if route.Source.If.Path != "payload.severity" {
+			t.Fatalf("rendered if path = %q, want payload.severity", route.Source.If.Path)
 		}
 	}
 	if !sawHookEntry {

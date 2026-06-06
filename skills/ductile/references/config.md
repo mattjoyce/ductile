@@ -29,6 +29,7 @@ service:
   dedupe_ttl: 24h
   job_log_retention: 30d
   strict_mode: true            # Hard-fail on any integrity mismatch
+  plugin_env_passthrough: [MY_PLUGIN_FLAG]  # extra env var NAMES for plugin children (allowlist; NOT for secrets)
 
 plugin_roots:
   - /opt/ductile/plugins       # Scanned in order; first match wins
@@ -40,12 +41,25 @@ api:
 state:
   path: ./data/state.db        # Relative to config.yaml location
 
+secrets:
+  age_key_file: ./age.key      # age identity decrypting config + vault (env DUCTILE_AGE_KEY_FILE overrides)
+  vault_file: ./vault.age      # encrypted vault blob (default: <configDir>/vault.age)
+
 include:
   - api.yaml
   - plugins.yaml
   - pipelines.yaml
   - webhooks.yaml
 ```
+
+**Secrets & encryption at rest.** `secrets.age_key_file` is the age private key
+(mode 0600) that decrypts both encrypted config includes and the vault blob
+(`secrets.vault_file`). Key resolution: `DUCTILE_AGE_KEY_FILE` → `age_key_file` →
+default locations. The vault is the owned secret store; legacy `tokens.yaml`
+entries migrate into it via `ductile vault import --config <dir> --tokens
+tokens.yaml`. `service.plugin_env_passthrough` allowlists extra env var *names*
+for plugin children — secrets do **not** travel via env (they reach plugins over
+stdin). Full model: `docs/SECRETS.md`.
 
 ## Modular Grafting (Merge Strategy)
 
@@ -134,10 +148,18 @@ Existing process env vars are NOT overridden.
 ## Integrity Workflow
 
 ```bash
-# After any config file change:
+# After a config FILE change (config.yaml, api.yaml, pipelines, webhooks):
 ductile config check          # Validate first (catches YAML errors, policy violations)
-ductile config lock           # Update .checksums to authorize new state
+ductile config lock           # Update .checksums to authorize the new file state
+
+# After a PLUGIN manifest/entrypoint change (separate, decoupled act):
+ductile plugin lock <name>    # Re-attest the plugin's bytes (re-records its fingerprint)
 ```
 
-The `.checksums` file contains BLAKE3 hashes keyed by absolute path.
-Moving the config directory breaks the seal — re-lock after moving.
+The `.checksums` file holds BLAKE3 hashes keyed by absolute path **and** the
+recorded plugin fingerprints. `config lock` re-hashes the config files and
+*preserves* the plugin fingerprints; it does **not** re-attest plugin bytes — that
+is the separate `ductile plugin lock`. A plugin whose bytes changed without a
+re-`plugin lock` is refused its vault secrets at spawn (fail closed), and a routine
+`config lock` will not fix it. Moving the config directory breaks the seal —
+re-lock after moving.

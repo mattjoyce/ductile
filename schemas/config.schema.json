@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/mattjoyce/ductile/schemas/config.schema.json",
   "title": "Ductile Configuration",
-  "description": "Schema for ductile config.yaml — the main configuration file for the Ductile automation service. Note: cross-field rules such as plugins.<name>.parallelism <= service.max_workers are enforced by runtime validation, not purely by JSON Schema.",
+  "description": "The single schema for ductile configuration — whole config files AND include fragments. The root is deliberately LENIENT: no top-level key is required, so a single-section include file (e.g. just `plugins:` or `webhooks:`) validates on its own, and split sub-objects (webhooks.listen in one file, webhooks.endpoints in another) each validate alone. Every key that IS present is still checked for type, shape, and no-unknown-keys (additionalProperties:false everywhere). Completeness and cross-field rules (e.g. a config must have service/state/plugin_roots; plugins.<name>.parallelism <= service.max_workers) are NOT the JSON Schema's job — they are enforced by the Go loader/doctor at boot. For the strict 'this is a complete, merged config' contract, validate against #/$defs/WholeConfig (config validate --whole).",
   "type": "object",
   "properties": {
     "include": {
@@ -23,14 +23,21 @@
       "$ref": "#/$defs/StateConfig",
       "description": "Alias for state (user intuition)."
     },
+    "secrets": {
+      "$ref": "#/$defs/SecretsConfig"
+    },
     "api": {
       "$ref": "#/$defs/APIConfig"
     },
     "plugin_roots": {
       "type": "array",
       "description": "Directories to scan for plugin manifests.",
-      "items": { "type": "string", "minLength": 1 },
-      "minItems": 1
+      "items": { "type": "string", "minLength": 1 }
+    },
+    "tcc_paths": {
+      "type": "array",
+      "description": "macOS-only: paths stat()-ed on cold start to surface TCC permission popups synchronously.",
+      "items": { "type": "string", "minLength": 1 }
     },
     "tcc_paths": {
       "type": "array",
@@ -59,11 +66,38 @@
     },
     "webhooks": {
       "$ref": "#/$defs/WebhooksConfig"
+    },
+    "pipelines": {
+      "type": "array",
+      "description": "Pipeline definitions (directory-mode pipelines.yaml or inline). The pipeline DSL lives in pipelines.schema.json.",
+      "items": { "$ref": "pipelines.schema.json#/$defs/PipelineEntry" }
+    },
+    "tokens": {
+      "type": "array",
+      "description": "Directory-mode token entries (tokens.yaml). The token entry shape lives in tokens.schema.json.",
+      "items": { "$ref": "tokens.schema.json#/properties/tokens/items" }
     }
   },
-  "required": ["service", "state", "plugin_roots"],
   "additionalProperties": false,
   "$defs": {
+    "WholeConfig": {
+      "description": "The strict whole-config contract: a complete, merged config. Adds the top-level completeness requirements that the lenient root deliberately omits so that single include fragments can validate on their own. Validate against this via `config validate --whole` (and, in future, the validate_config_on_boot admission gate).",
+      "allOf": [
+        { "$ref": "#" },
+        { "required": ["service", "state", "plugin_roots"] }
+      ]
+    },
+    "SecretsConfig": {
+      "type": "object",
+      "description": "Encryption-at-rest settings (age). Encrypted config/token includes are decrypted in memory at load, before ${ENV} interpolation.",
+      "properties": {
+        "age_key_file": {
+          "type": "string",
+          "description": "Path to the age identity (private key) file used to decrypt encrypted includes. Relative paths resolve against the config dir. Overridden by the DUCTILE_AGE_KEY_FILE environment variable. The file must have mode 0600 or load fails. When unset and no default key file exists, encryption at rest is off."
+        }
+      },
+      "additionalProperties": false
+    },
     "EnvironmentVarsConfig": {
       "type": "object",
       "description": "Environment variable file includes for interpolation.",
@@ -116,27 +150,23 @@
         },
         "job_queue_retention": {
           "type": "string",
-          "description": "How long to retain jobs in the work queue database (Go duration).",
-          "pattern": "^[0-9]+(ns|us|µs|ms|s|m|h)+$",
-          "default": "24h"
+          "description": "How long to retain terminal job_queue rows (Go duration).",
+          "pattern": "^[0-9]+(ns|us|µs|ms|s|m|h)+$"
         },
         "job_transitions_retention": {
           "type": "string",
-          "description": "How long to retain historical job state transitions (Go duration).",
-          "pattern": "^[0-9]+(ns|us|µs|ms|s|m|h)+$",
-          "default": "720h"
+          "description": "How long to retain job state-transition rows (Go duration).",
+          "pattern": "^[0-9]+(ns|us|µs|ms|s|m|h)+$"
         },
         "job_attempts_retention": {
           "type": "string",
-          "description": "How long to retain job execution attempt logs (Go duration).",
-          "pattern": "^[0-9]+(ns|us|µs|ms|s|m|h)+$",
-          "default": "720h"
+          "description": "How long to retain job attempt rows (Go duration).",
+          "pattern": "^[0-9]+(ns|us|µs|ms|s|m|h)+$"
         },
         "breaker_transitions_retention": {
           "type": "string",
-          "description": "How long to retain circuit breaker state change records (Go duration).",
-          "pattern": "^[0-9]+(ns|us|µs|ms|s|m|h)+$",
-          "default": "2160h"
+          "description": "How long to retain circuit-breaker transition rows (Go duration).",
+          "pattern": "^[0-9]+(ns|us|µs|ms|s|m|h)+$"
         },
         "max_workers": {
           "type": "integer",
@@ -144,9 +174,18 @@
           "minimum": 1,
           "default": 1
         },
+        "plugin_env_passthrough": {
+          "type": "array",
+          "description": "Environment variable names granted to plugin child processes on top of the built-in spawn-hygiene allowlist (PATH, HOME, TZ, LANG, LANGUAGE, LC_* locale categories, TMPDIR). Use sparingly: every name here is one a plugin child sees from the gateway's environment. Secrets should travel over the stdin config map, not here.",
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "admission": {
+          "$ref": "#/$defs/AdmissionConfig"
+        },
         "strict_mode": {
           "type": "boolean",
-          "description": "Strict admission mode. When true, operational config-hash drift (config.yaml, routes.yaml, pipeline files) is treated as a failure at both startup pre-flight and /system/reload — not just a warning. High-security files (tokens.yaml, webhooks.yaml) and plugin entrypoint fingerprints reject regardless of this setting. P2-10.",
+          "description": "DEPRECATED bundled admission switch. strict_mode: true is an alias enabling all four admission policies; prefer an explicit service.admission block. When admission is also set, strict_mode is ignored. P2-10.",
+          "deprecated": true,
           "default": false
         },
         "allow_symlinks": {
@@ -161,7 +200,33 @@
           "default": 4
         }
       },
-      "required": ["tick_interval"],
+      "additionalProperties": false
+    },
+    "AdmissionConfig": {
+      "type": "object",
+      "description": "The decomplected set of admission-control policies the daemon applies when admitting a config (at boot and reload). Each field is an independent gate; the deprecated strict_mode boolean welded all four together. P2 / decomplect-strict-admission.",
+      "properties": {
+        "verify_integrity_on_boot": {
+          "type": "boolean",
+          "description": "Run the .checksums + plugin-fingerprint preflight at startup. (Reload always verifies integrity regardless of this flag.)",
+          "default": false
+        },
+        "fail_on_drift": {
+          "type": "boolean",
+          "description": "Promote operational config/routes drift (otherwise warnings) to admission failures, at both boot and reload.",
+          "default": false
+        },
+        "validate_config_on_boot": {
+          "type": "boolean",
+          "description": "Require doctor.Validate() to pass at startup.",
+          "default": false
+        },
+        "require_api_auth": {
+          "type": "boolean",
+          "description": "Reject an enabled API that has no auth tokens configured.",
+          "default": false
+        }
+      },
       "additionalProperties": false
     },
     "StateConfig": {
@@ -174,7 +239,6 @@
           "minLength": 1
         }
       },
-      "required": ["path"],
       "additionalProperties": false
     },
     "APIConfig": {
@@ -205,8 +269,8 @@
         },
         "allowed_origins": {
           "type": "array",
-          "description": "Origins permitted to receive credentialed CORS headers. Empty disables CORS credentials.",
-          "items": { "type": "string" }
+          "description": "Origins that may receive credentialed CORS headers. Empty (the default) disables cross-origin credential sharing entirely.",
+          "items": { "type": "string", "minLength": 1 }
         }
       },
       "additionalProperties": false
@@ -238,7 +302,6 @@
           "minItems": 1
         }
       },
-      "required": ["token", "scopes"],
       "additionalProperties": false
     },
     "PluginConf": {
@@ -265,8 +328,8 @@
           "items": { "$ref": "#/$defs/ScheduleConfig" }
         },
         "config": {
-          "type": "object",
-          "description": "Plugin-specific configuration passed in the protocol request.",
+          "type": ["object", "null"],
+          "description": "Plugin-specific configuration passed in the protocol request. May be left empty (null) — it maps to an empty map.",
           "additionalProperties": true
         },
         "retry": {
@@ -296,7 +359,6 @@
           "default": false
         }
       },
-      "required": ["enabled"],
       "additionalProperties": false
     },
     "ScheduleConfig": {
@@ -369,7 +431,7 @@
           "default": "poll"
         },
         "payload": {
-          "type": "object",
+          "type": ["object", "null"],
           "description": "Static payload merged into the protocol request for this schedule.",
           "additionalProperties": true
         },
@@ -377,22 +439,6 @@
           "$ref": "#/$defs/PreferredWindow"
         }
       },
-      "oneOf": [
-        { "required": ["every"] },
-        { "required": ["cron"] },
-        { "required": ["at"] },
-        { "required": ["after"] },
-        {
-          "not": {
-            "anyOf": [
-              { "required": ["every"] },
-              { "required": ["cron"] },
-              { "required": ["at"] },
-              { "required": ["after"] }
-            ]
-          }
-        }
-      ],
       "additionalProperties": false
     },
     "PreferredWindow": {
@@ -410,7 +456,6 @@
           "pattern": "^[0-2][0-9]:[0-5][0-9]$"
         }
       },
-      "required": ["start", "end"],
       "additionalProperties": false
     },
     "RetryConfig": {
@@ -503,7 +548,6 @@
           "description": "Target plugin name."
         }
       },
-      "required": ["from", "event_type", "to"],
       "additionalProperties": false
     },
     "RelayInstanceConfig": {
@@ -548,7 +592,6 @@
           }
         }
       },
-      "required": ["name", "base_url", "ingress_path", "secret_ref"],
       "additionalProperties": false
     },
     "RemoteIngressConfig": {
@@ -578,7 +621,6 @@
           "items": { "$ref": "#/$defs/RelayPeerConfig" }
         }
       },
-      "required": ["listen_path", "peers"],
       "additionalProperties": false
     },
     "RelayPeerConfig": {
@@ -611,7 +653,6 @@
           "$ref": "#/$defs/RelayBaggageRules"
         }
       },
-      "required": ["name", "secret_ref"],
       "additionalProperties": false
     },
     "RelayBaggageRules": {
@@ -630,7 +671,7 @@
     },
     "WebhooksConfig": {
       "type": "object",
-      "description": "Webhook listener settings.",
+      "description": "Webhook listener settings. listen and endpoints may be split across include fragments; the merged config needs both.",
       "properties": {
         "listen": {
           "type": "string",
@@ -641,7 +682,6 @@
           "items": { "$ref": "#/$defs/WebhookEndpoint" }
         }
       },
-      "required": ["listen", "endpoints"],
       "additionalProperties": false
     },
     "WebhookEndpoint": {
@@ -673,7 +713,6 @@
           "description": "Maximum request body size (e.g. '1MB')."
         }
       },
-      "required": ["path", "plugin"],
       "additionalProperties": false
     }
   }

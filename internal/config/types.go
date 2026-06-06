@@ -16,6 +16,7 @@ type Config struct {
 	Service         ServiceConfig         `yaml:"service"`
 	State           StateConfig           `yaml:"state"`
 	Database        StateConfig           `yaml:"database,omitempty"` // Alias for user intuition
+	Secrets         SecretsConfig         `yaml:"secrets,omitempty"`
 	API             APIConfig             `yaml:"api,omitempty"`
 	PluginRoots     []string              `yaml:"plugin_roots,omitempty"`
 	TCCPaths        []string              `yaml:"tcc_paths,omitempty"` // macOS-only: paths stat()-ed on cold start to surface TCC popups synchronously
@@ -25,9 +26,21 @@ type Config struct {
 	Routes          []RouteConfig         `yaml:"routes,omitempty"`   // Not in MVP
 	Webhooks        *WebhooksConfig       `yaml:"webhooks,omitempty"` // Not in MVP
 	SourceFiles     map[string]*yaml.Node `yaml:"-"`                  // Physical files tracked for updates
-	Tokens          []TokenEntry          `yaml:"-"`                  // Directory mode: token entries from tokens.yaml
+	ResolvedSecrets map[string]string     `yaml:"-"`                  // name->value, projected from the vault owner at load (epic #48)
 	Pipelines       []PipelineEntry       `yaml:"-"`                  // Directory mode: pipeline entries
 	ConfigDir       string                `yaml:"-"`                  // Directory mode: root config directory
+}
+
+// SecretsConfig defines encryption-at-rest settings. AgeKeyFile names the age
+// identity (private key) file used to decrypt encrypted config/token includes
+// at load. It is overridden by the DUCTILE_AGE_KEY_FILE environment variable.
+// When unset and no default key file exists, encryption at rest is simply off.
+type SecretsConfig struct {
+	AgeKeyFile string `yaml:"age_key_file,omitempty"`
+	// VaultFile names the age-encrypted vault blob (the owned secret store).
+	// Relative paths resolve against the config dir; empty uses the default
+	// (<configDir>/vault.age). Absent file = no vault yet (coexistence window).
+	VaultFile string `yaml:"vault_file,omitempty"`
 }
 
 // EnvironmentVarsConfig defines env file includes for interpolation.
@@ -48,8 +61,19 @@ type ServiceConfig struct {
 	JobAttemptsRetention        time.Duration `yaml:"job_attempts_retention"`
 	BreakerTransitionsRetention time.Duration `yaml:"breaker_transitions_retention"`
 	MaxWorkers                  int           `yaml:"max_workers,omitempty"`
-	StrictMode                  bool          `yaml:"strict_mode"`
-	AllowSymlinks               bool          `yaml:"allow_symlinks"`
+	// PluginEnvPassthrough lists environment variable names granted to plugin
+	// children on top of the built-in spawn-hygiene allowlist. Use sparingly:
+	// every name here is one the child sees from the gateway's environment.
+	PluginEnvPassthrough []string `yaml:"plugin_env_passthrough,omitempty"`
+	// Admission decomplects the four independent admission-control policies that
+	// strict_mode used to bundle. When present it is authoritative; when absent
+	// the deprecated StrictMode alias is consulted (see AdmissionPolicy).
+	Admission *AdmissionConfig `yaml:"admission,omitempty"`
+	// StrictMode is the DEPRECATED bundled switch. strict_mode: true is an alias
+	// that enables all four admission policies; prefer the explicit admission
+	// block. Retained for back-compat (a coexistence window, like tokens.yaml).
+	StrictMode    bool `yaml:"strict_mode"`
+	AllowSymlinks bool `yaml:"allow_symlinks"`
 	// HookMaxDepth caps the on-hook lifecycle chain depth. A root job that fires
 	// a hook produces a depth-1 hook job; if that hook job itself fires a hook
 	// (because its plugin has notify_on_complete: true), the next would-be hook
@@ -57,6 +81,54 @@ type ServiceConfig struct {
 	// Set to 0 to use the default (DefaultHookMaxDepth). Negative is rejected
 	// by config validation. P2-11.
 	HookMaxDepth int `yaml:"hook_max_depth,omitempty"`
+}
+
+// AdmissionConfig is the decomplected set of admission-control policies that the
+// daemon applies when admitting a config — at boot and at reload. Each field is
+// an independent gate; the old strict_mode boolean welded all four together.
+type AdmissionConfig struct {
+	// VerifyIntegrityOnBoot runs the .checksums + plugin-fingerprint preflight at
+	// startup. (Reload always verifies integrity regardless of this flag.)
+	VerifyIntegrityOnBoot bool `yaml:"verify_integrity_on_boot"`
+	// FailOnDrift promotes operational config/routes drift (otherwise warnings)
+	// to admission failures — at both boot and reload.
+	FailOnDrift bool `yaml:"fail_on_drift"`
+	// ValidateConfigOnBoot requires doctor.Validate() to pass at startup.
+	ValidateConfigOnBoot bool `yaml:"validate_config_on_boot"`
+	// RequireAPIAuth rejects an enabled API that has no auth tokens configured.
+	RequireAPIAuth bool `yaml:"require_api_auth"`
+}
+
+// AdmissionPolicy resolves the effective admission policy. An explicit admission
+// block is authoritative. Otherwise the deprecated strict_mode alias maps to
+// all-policies-on; with neither set, every policy is off (today's zero-value
+// default — a permissive deployment).
+func (s ServiceConfig) AdmissionPolicy() AdmissionConfig {
+	if s.Admission != nil {
+		return *s.Admission
+	}
+	if s.StrictMode {
+		return AdmissionConfig{
+			VerifyIntegrityOnBoot: true,
+			FailOnDrift:           true,
+			ValidateConfigOnBoot:  true,
+			RequireAPIAuth:        true,
+		}
+	}
+	return AdmissionConfig{}
+}
+
+// StrictModeDeprecationWarning returns a non-empty operator warning when the
+// deprecated strict_mode field is in use, or "" when it is not. A co-present
+// admission block means strict_mode is being silently superseded — say so.
+func (s ServiceConfig) StrictModeDeprecationWarning() string {
+	if !s.StrictMode {
+		return ""
+	}
+	if s.Admission != nil {
+		return "service.strict_mode is deprecated and ignored because service.admission is set; remove strict_mode"
+	}
+	return "service.strict_mode is deprecated; replace it with an explicit service.admission block"
 }
 
 // StateConfig defines state storage settings.
@@ -197,23 +269,224 @@ type TimeoutsConfig struct {
 	Overrides map[string]time.Duration `yaml:",inline,omitempty"`
 }
 
+// ResolvedPluginConf is the single resolver for a plugin's effective
+// retry / timeout / circuit-breaker / parallelism values. It applies the one
+// "value if set (> 0) else DefaultPluginConf()" rule in exactly one place, so the
+// runtime hot paths (dispatcher getTimeout/computeRetryDelay, scheduler
+// breakerThreshold/breakerResetAfter), the enqueue path (MaxAttemptsForPlugin),
+// and the `config show --effective` view (EffectivePluginConf) all read the same
+// resolution. Adding a field or changing a default can no longer make one site
+// silently disagree with another (#75).
+//
+// Build one with ResolvePluginConf(raw, maxWorkers). Defaults are single-sourced
+// from DefaultPluginConf; maxWorkers (service.max_workers) is the default for
+// parallelism, matching mergePluginDefaults.
+type ResolvedPluginConf struct {
+	raw        PluginConf
+	def        PluginConf
+	maxWorkers int
+}
+
+// ResolvePluginConf builds a resolver over a RAW (un-merged) plugin config.
+// maxWorkers is only consulted by Parallelism; pass 0 when resolving fields that
+// do not need it.
+func ResolvePluginConf(raw PluginConf, maxWorkers int) ResolvedPluginConf {
+	return ResolvedPluginConf{raw: raw, def: DefaultPluginConf(), maxWorkers: maxWorkers}
+}
+
+// MaxAttempts resolves retry.max_attempts: the plugin value when set (> 0),
+// otherwise the global default.
+func (r ResolvedPluginConf) MaxAttempts() int {
+	if r.raw.Retry != nil && r.raw.Retry.MaxAttempts > 0 {
+		return r.raw.Retry.MaxAttempts
+	}
+	return r.def.Retry.MaxAttempts
+}
+
+// BackoffBase resolves retry.backoff_base: the plugin value when set (> 0),
+// otherwise the global default.
+func (r ResolvedPluginConf) BackoffBase() time.Duration {
+	if r.raw.Retry != nil && r.raw.Retry.BackoffBase > 0 {
+		return r.raw.Retry.BackoffBase
+	}
+	return r.def.Retry.BackoffBase
+}
+
+// Timeout resolves the effective timeout for a single command. Resolution order
+// mirrors the runtime dispatcher: an operator Overrides entry (> 0) wins; then the
+// matching core field (poll/handle/health/init) when set (> 0); otherwise the
+// per-command default. Unknown commands fall back to the default poll timeout.
+// A nil Timeouts block is treated as the default block.
+func (r ResolvedPluginConf) Timeout(command string) time.Duration {
+	timeouts := r.raw.Timeouts
+	if timeouts == nil {
+		timeouts = r.def.Timeouts
+	}
+	if override, ok := timeouts.Overrides[command]; ok && override > 0 {
+		return override
+	}
+	def := r.def.Timeouts
+	switch command {
+	case "poll":
+		if timeouts.Poll > 0 {
+			return timeouts.Poll
+		}
+		return def.Poll
+	case "handle":
+		if timeouts.Handle > 0 {
+			return timeouts.Handle
+		}
+		return def.Handle
+	case "health":
+		if timeouts.Health > 0 {
+			return timeouts.Health
+		}
+		return def.Health
+	case "init":
+		if timeouts.Init > 0 {
+			return timeouts.Init
+		}
+		return def.Init
+	default:
+		return def.Poll
+	}
+}
+
+// BreakerThreshold resolves circuit_breaker.threshold: the plugin value when set
+// (> 0), otherwise the global default.
+func (r ResolvedPluginConf) BreakerThreshold() int {
+	if r.raw.CircuitBreaker == nil || r.raw.CircuitBreaker.Threshold <= 0 {
+		return r.def.CircuitBreaker.Threshold
+	}
+	return r.raw.CircuitBreaker.Threshold
+}
+
+// BreakerResetAfter resolves circuit_breaker.reset_after: the plugin value when
+// set (> 0), otherwise the global default.
+func (r ResolvedPluginConf) BreakerResetAfter() time.Duration {
+	if r.raw.CircuitBreaker == nil || r.raw.CircuitBreaker.ResetAfter <= 0 {
+		return r.def.CircuitBreaker.ResetAfter
+	}
+	return r.raw.CircuitBreaker.ResetAfter
+}
+
+// Parallelism resolves the plugin's worker fan-out: the plugin value when set
+// (> 0), otherwise service.max_workers (the mergePluginDefaults default). This is
+// the base value before the dispatcher applies the manifest concurrency_safe clamp.
+func (r ResolvedPluginConf) Parallelism() int {
+	if r.raw.Parallelism > 0 {
+		return r.raw.Parallelism
+	}
+	return r.maxWorkers
+}
+
 // MaxAttemptsForPlugin returns the retry max-attempts value to stamp into an
-// EnqueueRequest for jobs targeting the given plugin. Resolution order:
-//  1. plugin-level Retry.MaxAttempts when configured (> 0)
-//  2. DefaultPluginConf().Retry.MaxAttempts (the global default)
-//  3. 0 when both are absent — the queue's own fallback then applies.
+// EnqueueRequest for jobs targeting the given plugin: the plugin-level
+// Retry.MaxAttempts when configured (> 0), otherwise DefaultPluginConf()'s value.
 //
 // All non-scheduler enqueue paths (API direct/pipeline, webhook ingress, relay
 // ingress, internal routed/hook dispatch) must call this so the operator's
 // configured retry policy is honored uniformly. P2-02.
 func MaxAttemptsForPlugin(pluginConf PluginConf) int {
-	if pluginConf.Retry != nil && pluginConf.Retry.MaxAttempts > 0 {
-		return pluginConf.Retry.MaxAttempts
+	return ResolvePluginConf(pluginConf, 0).MaxAttempts()
+}
+
+// Provenance tags for an effective config value (see EffectivePluginConf).
+const (
+	SourceExplicit = "explicit" // value set in the operator's config file
+	SourceDefault  = "default"  // value inherited from DefaultPluginConf (code)
+)
+
+// EffectivePluginConf resolves a RAW (un-merged) plugin config into the values
+// actually in force at runtime, plus a per-field provenance map (field path →
+// SourceExplicit|SourceDefault). It mirrors the scattered runtime resolvers
+// field-by-field — MaxAttemptsForPlugin, dispatcher getTimeout/computeRetryDelay/
+// pluginParallelism, scheduler breakerThreshold/breakerResetAfter — so the view
+// matches what runs: a value is explicit when set (> 0) in the file, otherwise it
+// is the DefaultPluginConf value. Defaults are single-sourced from
+// DefaultPluginConf so this never re-hardcodes them (#71). maxWorkers is
+// service.max_workers, the default for parallelism (mergePluginDefaults semantics).
+//
+// Pass the raw conf (e.g. from LoadRaw); passing an already-merged conf would
+// report inherited block values as explicit.
+func EffectivePluginConf(raw PluginConf, maxWorkers int) (PluginConf, map[string]string) {
+	def := DefaultPluginConf()
+	res := ResolvePluginConf(raw, maxWorkers)
+	src := make(map[string]string)
+	out := raw
+
+	// Resolved VALUES come from the shared ResolvedPluginConf so the view can never
+	// drift from the runtime resolution. The view only adds PROVENANCE: a field is
+	// explicit when set (> 0) in the raw config, otherwise default (#75).
+	mark := func(key string, explicit bool) {
+		if explicit {
+			src[key] = SourceExplicit
+		} else {
+			src[key] = SourceDefault
+		}
 	}
-	if defaults := DefaultPluginConf().Retry; defaults != nil {
-		return defaults.MaxAttempts
+
+	// enabled is operator-declared by listing the plugin stanza.
+	src["enabled"] = SourceExplicit
+
+	var rawRetry RetryConfig
+	if raw.Retry != nil {
+		rawRetry = *raw.Retry
 	}
-	return 0
+	out.Retry = &RetryConfig{
+		MaxAttempts: res.MaxAttempts(),
+		BackoffBase: res.BackoffBase(),
+	}
+	mark("retry.max_attempts", rawRetry.MaxAttempts > 0)
+	mark("retry.backoff_base", rawRetry.BackoffBase > 0)
+
+	var rawTimeouts TimeoutsConfig
+	if raw.Timeouts != nil {
+		rawTimeouts = *raw.Timeouts
+	}
+	effTimeouts := &TimeoutsConfig{
+		Poll:   res.Timeout("poll"),
+		Handle: res.Timeout("handle"),
+		Health: res.Timeout("health"),
+		Init:   res.Timeout("init"),
+	}
+	mark("timeouts.poll", rawTimeouts.Poll > 0)
+	mark("timeouts.handle", rawTimeouts.Handle > 0)
+	mark("timeouts.health", rawTimeouts.Health > 0)
+	mark("timeouts.init", rawTimeouts.Init > 0)
+	if len(rawTimeouts.Overrides) > 0 {
+		effTimeouts.Overrides = make(map[string]time.Duration, len(rawTimeouts.Overrides))
+		for cmd, d := range rawTimeouts.Overrides {
+			effTimeouts.Overrides[cmd] = d
+			src["timeouts."+cmd] = SourceExplicit
+		}
+	}
+	out.Timeouts = effTimeouts
+
+	var rawCB CircuitBreakerConfig
+	if raw.CircuitBreaker != nil {
+		rawCB = *raw.CircuitBreaker
+	}
+	out.CircuitBreaker = &CircuitBreakerConfig{
+		Threshold:  res.BreakerThreshold(),
+		ResetAfter: res.BreakerResetAfter(),
+	}
+	mark("circuit_breaker.threshold", rawCB.Threshold > 0)
+	mark("circuit_breaker.reset_after", rawCB.ResetAfter > 0)
+
+	if raw.MaxOutstandingPolls > 0 {
+		out.MaxOutstandingPolls = raw.MaxOutstandingPolls
+	} else {
+		out.MaxOutstandingPolls = def.MaxOutstandingPolls
+	}
+	mark("max_outstanding_polls", raw.MaxOutstandingPolls > 0)
+
+	// Parallelism's default is service.max_workers, not DefaultPluginConf().Parallelism
+	// — this matches mergePluginDefaults, the value the dispatcher actually sees.
+	out.Parallelism = res.Parallelism()
+	mark("parallelism", raw.Parallelism > 0)
+
+	return out, src
 }
 
 // CircuitBreakerConfig defines circuit breaker settings.
@@ -281,12 +554,7 @@ type WebhookEndpoint struct {
 	MaxBodySize     string `yaml:"max_body_size"`
 }
 
-// TokensConfig defines sensitive authentication tokens (separate file for security).
-type TokensConfig struct {
-	Tokens map[string]string `yaml:",inline"` // Flat key-value map
-}
-
-// ChecksumManifest stores BLAKE3 hashes for scope files (tokens.yaml, webhooks.yaml)
+// ChecksumManifest stores BLAKE3 hashes for scope files (webhooks.yaml)
 // and plugin identity fingerprints (manifest.yaml + entrypoint bytes) for each
 // configured plugin when the operator runs `ductile config lock`.
 type ChecksumManifest struct {
@@ -332,21 +600,6 @@ type RelayInstancesFileConfig struct {
 // RelayIngressFileConfig wraps inbound relay policy for standalone relay-ingress.yaml.
 type RelayIngressFileConfig struct {
 	RemoteIngress RemoteIngressConfig `yaml:"remote_ingress"`
-}
-
-// TokenEntry defines an API token with scoped permissions (directory mode tokens.yaml).
-type TokenEntry struct {
-	Name        string `yaml:"name" json:"name"`
-	Key         string `yaml:"key" json:"key"`
-	ScopesFile  string `yaml:"scopes_file,omitempty" json:"scopes_file,omitempty"`
-	ScopesHash  string `yaml:"scopes_hash,omitempty" json:"scopes_hash,omitempty"`
-	CreatedAt   string `yaml:"created_at,omitempty" json:"created_at,omitempty"`
-	Description string `yaml:"description,omitempty" json:"description,omitempty"`
-}
-
-// TokensFileConfig wraps token entries for standalone tokens.yaml.
-type TokensFileConfig struct {
-	Tokens []TokenEntry `yaml:"tokens"`
 }
 
 // WebhooksFileConfig wraps webhook endpoints for standalone webhooks.yaml.
@@ -461,7 +714,6 @@ type ConfigFiles struct {
 	Plugins        []string // plugins/*.yaml paths (absolute, sorted)
 	Pipelines      []string // pipelines/*.yaml paths (absolute, sorted)
 	Webhooks       string   // webhooks.yaml path (absolute, empty if missing)
-	Tokens         string   // tokens.yaml path (absolute, empty if missing)
 	Routes         string   // routes.yaml path (absolute, empty if missing)
 	RelayInstances string   // relay-instances.yaml path (absolute, empty if missing)
 	RelayIngress   string   // relay-ingress.yaml path (absolute, empty if missing)
@@ -470,7 +722,7 @@ type ConfigFiles struct {
 
 // FileTier returns the integrity tier for a given file path.
 func (cf *ConfigFiles) FileTier(path string) IntegrityTier {
-	if path == cf.Tokens || path == cf.Webhooks {
+	if path == cf.Webhooks {
 		return TierHighSecurity
 	}
 	if slices.Contains(cf.Scopes, path) {
@@ -488,9 +740,6 @@ func (cf *ConfigFiles) AllFiles() []string {
 	if cf.Webhooks != "" {
 		files = append(files, cf.Webhooks)
 	}
-	if cf.Tokens != "" {
-		files = append(files, cf.Tokens)
-	}
 	if cf.Routes != "" {
 		files = append(files, cf.Routes)
 	}
@@ -507,9 +756,6 @@ func (cf *ConfigFiles) AllFiles() []string {
 // HighSecurityFiles returns only high-security tier file paths.
 func (cf *ConfigFiles) HighSecurityFiles() []string {
 	var files []string
-	if cf.Tokens != "" {
-		files = append(files, cf.Tokens)
-	}
 	if cf.Webhooks != "" {
 		files = append(files, cf.Webhooks)
 	}

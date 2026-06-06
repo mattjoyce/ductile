@@ -93,6 +93,13 @@ func compilePipeline(spec PipelineSpec) (*Pipeline, error) {
 		}
 		clone := *spec.If
 		pipeline.If = &clone
+		// Hooks fire for jobs that have no accumulated durable context (the
+		// dispatcher short-circuits hooks for context-bearing jobs), so a
+		// context.* predicate on an on-hook: trigger can never match. Reject it
+		// at load rather than letting it silently dead-route at runtime.
+		if isHook && conditions.ReferencesRoot(pipeline.If, "context") {
+			return nil, fmt.Errorf("on-hook trigger predicate cannot reference context.* — context is not available at hook time")
+		}
 	}
 	if spec.MaxDepth != nil {
 		if *spec.MaxDepth < 0 {

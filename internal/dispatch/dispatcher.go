@@ -50,6 +50,15 @@ type Dispatcher struct {
 	events   *events.Hub
 	logger   *slog.Logger
 
+	// secretComposer resolves per-plugin vault secrets delivered over stdin at
+	// spawn. Nil when no vault is wired, in which case no secrets are delivered.
+	secretComposer SecretComposer
+
+	// pluginVerifier re-verifies a plugin's live bytes against its recorded keyed
+	// fingerprint right before its secrets are delivered (§3.3). Nil disables the
+	// gate. Only consulted for plugins that ARE vault principals.
+	pluginVerifier PluginVerifier
+
 	// completions tracks jobs being waited on for synchronous execution.
 	// Map key is root job ID. Value is a channel that is closed when the tree is complete.
 	completions    map[string]chan struct{}
@@ -75,6 +84,28 @@ type Option func(*Dispatcher)
 func WithAdmitter(a AdmissionGate) Option {
 	return func(d *Dispatcher) {
 		d.admitter = a
+	}
+}
+
+// WithSecretComposer wires the vault read-path that composes a plugin's
+// authorized secrets for stdin delivery at spawn. When omitted (nil), no
+// secrets are delivered and plugins resolve as before — so this is additive and
+// back-compatible. The production runtime supplies the loaded *vault.Store.
+func WithSecretComposer(c SecretComposer) Option {
+	return func(d *Dispatcher) {
+		d.secretComposer = c
+	}
+}
+
+// WithPluginVerifier wires compose-time plugin re-verification (§3.3). When set,
+// a plugin that is a vault principal has its live bytes re-checked against its
+// recorded keyed fingerprint right before secrets are delivered; a mismatch fails
+// the spawn closed. Omitted (nil) leaves delivery gated only by authorization, as
+// before. The production runtime supplies an adapter over the registry +
+// .checksums + vault nonce.
+func WithPluginVerifier(v PluginVerifier) Option {
+	return func(d *Dispatcher) {
+		d.pluginVerifier = v
 	}
 }
 
@@ -347,6 +378,39 @@ func (d *Dispatcher) executeJob(ctx context.Context, job *queue.Job) {
 		DeadlineAt: deadline,
 	}
 
+	// Compose the plugin's authorized vault secrets for stdin delivery. A revoked
+	// principal (or any non-opt-out composer error) fails the job closed — the
+	// plugin must not run when an explicit authorization signal is in error.
+	secrets, err := composePluginSecrets(d.secretComposer, d.pluginVerifier, job.Plugin, jobLogger)
+	if err != nil {
+		errMsg := fmt.Sprintf("secret composition failed: %v", err)
+		// Classify the fail-closed failure. A fingerprint mismatch is a possible
+		// plugin swap — a SECURITY event escalated loudly and distinctly from a
+		// benign denial (#25), via a SECURITY-marked log and a live hub event so
+		// `system watch`/SSE subscribers and any external alerting catch it.
+		op, outcome, security := composeFailureEscalation(err)
+		if security {
+			jobLogger.Error("SECURITY: plugin fingerprint mismatch at spawn — possible plugin swap; secrets withheld and spawn failed closed",
+				"event", eventPluginFingerprintMismatch, "plugin", job.Plugin, "job_id", job.ID, "detail", err.Error())
+			d.events.Publish(eventPluginFingerprintMismatch, map[string]any{
+				"plugin": job.Plugin, "job_id": job.ID, "detail": err.Error(),
+			})
+		} else {
+			jobLogger.Error(errMsg)
+		}
+		// Record the fail-closed outcome as a vault audit fact. The error text is
+		// about principal identity/status, never a secret value. Best-effort: a
+		// lost audit row warn-logs, it does not change the (already failed) job.
+		if auditErr := d.state.AppendVaultAudit(ctx, state.VaultAuditEvent{
+			Op: op, Principal: job.Plugin, Actor: "core", Outcome: outcome, Detail: err.Error(),
+		}); auditErr != nil {
+			jobLogger.Error("vault audit write failed", "op", op, "error", auditErr)
+		}
+		d.completeJob(ctx, jobLogger, job.ID, job.Plugin, job.StartedAt, queue.StatusFailed, nil, &errMsg, nil)
+		return
+	}
+	req.Secrets = secrets
+
 	// Include payload if present
 	if len(job.Payload) > 0 {
 		if err := json.Unmarshal(job.Payload, &req.Payload); err != nil {
@@ -602,7 +666,7 @@ func (d *Dispatcher) spawnPlugin(
 	timeout time.Duration,
 	logger *slog.Logger,
 ) (*protocol.Response, protocol.ResponseCompat, json.RawMessage, []byte, string, int, error) {
-	executor := newSubprocessExecutor(d.events)
+	executor := newSubprocessExecutor(d.events, d.cfg.Service.PluginEnvPassthrough)
 	return executor.execute(ctx, pluginName, entrypoint, req, timeout, logger)
 }
 
@@ -701,10 +765,9 @@ func hookSignalForStatus(status queue.Status) string {
 }
 
 func (d *Dispatcher) computeRetryDelay(retryCfg *config.RetryConfig, attempt int) time.Duration {
-	base := config.DefaultPluginConf().Retry.BackoffBase
-	if retryCfg != nil && retryCfg.BackoffBase > 0 {
-		base = retryCfg.BackoffBase
-	}
+	// backoff_base resolved through the shared resolver — same default source as
+	// the view and every other site (card #75).
+	base := config.ResolvePluginConf(config.PluginConf{Retry: retryCfg}, 0).BackoffBase()
 
 	jitter := time.Duration(0)
 	maxJitter := base / 4
@@ -760,14 +823,15 @@ func (d *Dispatcher) loadRequestContext(ctx context.Context, job *queue.Job) (ma
 	if eventCtx.StepID != "" {
 		out["ductile_step_id"] = eventCtx.StepID
 	}
-	if pipelineInstanceID := state.PipelineInstanceIDFromAccumulated(eventCtx.AccumulatedJSON); pipelineInstanceID != "" {
-		out["ductile_pipeline_instance_id"] = pipelineInstanceID
+	cp := state.RouteControlPlaneFromAccumulated(eventCtx.AccumulatedJSON)
+	if cp.PipelineInstanceID != "" {
+		out["ductile_pipeline_instance_id"] = cp.PipelineInstanceID
 	}
-	if routeDepth := state.RouteDepthFromAccumulated(eventCtx.AccumulatedJSON); routeDepth > 0 {
-		out["ductile_route_depth"] = routeDepth
+	if cp.RouteDepth > 0 {
+		out["ductile_route_depth"] = cp.RouteDepth
 	}
-	if routeMaxDepth := state.RouteMaxDepthFromAccumulated(eventCtx.AccumulatedJSON); routeMaxDepth > 0 {
-		out["ductile_route_max_depth"] = routeMaxDepth
+	if cp.RouteMaxDepth > 0 {
+		out["ductile_route_max_depth"] = cp.RouteMaxDepth
 	}
 	return out, nil
 }
@@ -803,9 +867,10 @@ func (d *Dispatcher) routeEventsWithOptions(
 		}
 		sourcePipeline = currentCtx.PipelineName
 		sourceStepID = currentCtx.StepID
-		sourcePipelineInstanceID = state.PipelineInstanceIDFromAccumulated(currentCtx.AccumulatedJSON)
-		sourceDepth = state.RouteDepthFromAccumulated(currentCtx.AccumulatedJSON)
-		sourceMaxDepth = state.RouteMaxDepthFromAccumulated(currentCtx.AccumulatedJSON)
+		cp := state.RouteControlPlaneFromAccumulated(currentCtx.AccumulatedJSON)
+		sourcePipelineInstanceID = cp.PipelineInstanceID
+		sourceDepth = cp.RouteDepth
+		sourceMaxDepth = cp.RouteMaxDepth
 		if len(currentCtx.AccumulatedJSON) > 0 {
 			scope := make(map[string]any)
 			if err := json.Unmarshal(currentCtx.AccumulatedJSON, &scope); err != nil {
@@ -1601,38 +1666,10 @@ func buildPluginFact(job *queue.Job, updates json.RawMessage, factType string) (
 // (anything other than the four core lifecycle commands) are honored via the
 // Overrides map. P2-05.
 func (d *Dispatcher) getTimeout(timeouts *config.TimeoutsConfig, command string) time.Duration {
-	if timeouts == nil {
-		timeouts = config.DefaultPluginConf().Timeouts
-	}
-
-	if override, ok := timeouts.Overrides[command]; ok && override > 0 {
-		return override
-	}
-
-	switch command {
-	case "poll":
-		if timeouts.Poll > 0 {
-			return timeouts.Poll
-		}
-		return 60 * time.Second
-	case "handle":
-		if timeouts.Handle > 0 {
-			return timeouts.Handle
-		}
-		return 120 * time.Second
-	case "health":
-		if timeouts.Health > 0 {
-			return timeouts.Health
-		}
-		return 10 * time.Second
-	case "init":
-		if timeouts.Init > 0 {
-			return timeouts.Init
-		}
-		return 30 * time.Second
-	default:
-		return 60 * time.Second
-	}
+	// Single-sourced through the shared resolver so the runtime timeout, the
+	// `--effective` view, and every other site resolve identically — no silent
+	// drift if a default changes or a field is added (card #75).
+	return config.ResolvePluginConf(config.PluginConf{Timeouts: timeouts}, 0).Timeout(command)
 }
 
 func (d *Dispatcher) publishPollStarted(job *queue.Job) {
@@ -1845,10 +1882,9 @@ func (d *Dispatcher) maybeFireHooks(ctx context.Context, job *queue.Job, signal 
 
 	// maybeFireHooks short-circuits when job.EventContextID != nil, so by the
 	// time we're here the upstream job has no accumulated durable context.
-	// Hook entry-route predicates therefore see Scope.Context as nil today.
-	// The plumbing is in place for future architectures that expose context
-	// at hook time.
-	dispatches, err := d.router.NextHook(ctx, job.Plugin, signal, payload, nil)
+	// Hook entry-route predicates evaluate against the lifecycle payload only;
+	// context.* in a hook if: is rejected at config load.
+	dispatches, err := d.router.NextHook(ctx, job.Plugin, signal, payload)
 	if err != nil {
 		d.logger.Error("hook routing error", "plugin", job.Plugin, "signal", signal, "error", err)
 		return

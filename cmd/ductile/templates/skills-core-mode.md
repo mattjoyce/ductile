@@ -30,6 +30,20 @@ ductile job inspect <job_id>
 - **`ductile job inspect <job_id>`** — Retrieve logs, baggage, and execution
   details for a specific job execution.
 
+### Bootstrapping secrets (optional, local, no config needed)
+
+These are local key-touching commands you can run before a gateway is up:
+
+```
+ductile secrets keygen --out <dir>/age.key   # encryption-at-rest identity
+ductile vault init --vault <dir>/vault.age --key <dir>/age.key   # vault genesis
+```
+
+`vault init` seeds the vault's core principal, fingerprint nonce, and a one-time
+admin token (the credential for later keyless `vault` API calls). See the SECRETS
+guide. Vault writes after genesis (`vault set/roll/revoke`, `register-principal`)
+are keyless API clients and need the daemon running.
+
 ---
 
 ## Loading the Full Manifest

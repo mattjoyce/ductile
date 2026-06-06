@@ -74,7 +74,7 @@ pipelines:
 				{Name: "home-primary", Enabled: true, SecretRef: "relay-lab-v1", KeyID: "v1"},
 			},
 		},
-		Tokens: []config.TokenEntry{{Name: "relay-lab-v1", Key: "shared-secret"}},
+		ResolvedSecrets: map[string]string{"relay-lab-v1": "shared-secret"},
 	}
 
 	receiver, err := NewReceiver(cfg, q, engine, contexts, state.NewAdmitter(q, state.DefaultMaxContextBytes), slog.Default())
@@ -143,7 +143,7 @@ pipelines:
 				},
 			},
 		},
-		Tokens: []config.TokenEntry{{Name: "relay-lab-v1", Key: "shared-secret"}},
+		ResolvedSecrets: map[string]string{"relay-lab-v1": "shared-secret"},
 	}
 
 	receiver, err := NewReceiver(cfg, q, engine, contexts, state.NewAdmitter(q, state.DefaultMaxContextBytes), slog.Default())
@@ -255,7 +255,7 @@ pipelines:
 				{Name: "home-primary", Enabled: true, SecretRef: "relay-lab-v1", KeyID: "v1", Accept: []string{"backup.ready"}},
 			},
 		},
-		Tokens: []config.TokenEntry{{Name: "relay-lab-v1", Key: "shared-secret"}},
+		ResolvedSecrets: map[string]string{"relay-lab-v1": "shared-secret"},
 	}
 
 	receiver, err := NewReceiver(receiverCfg, q, engine, contexts, state.NewAdmitter(q, state.DefaultMaxContextBytes), slog.Default())
@@ -279,7 +279,7 @@ pipelines:
 				Allow:       []string{"backup.ready"},
 			},
 		},
-		Tokens: []config.TokenEntry{{Name: "relay-lab-v1", Key: "shared-secret"}},
+		ResolvedSecrets: map[string]string{"relay-lab-v1": "shared-secret"},
 	}
 
 	sender, err := NewSender(senderCfg)
@@ -356,7 +356,7 @@ pipelines:
 				{Name: "home-primary", Enabled: true, SecretRef: "relay-lab-v1", KeyID: "v1", Accept: []string{"backup.ready"}},
 			},
 		},
-		Tokens: []config.TokenEntry{{Name: "relay-lab-v1", Key: "shared-secret"}},
+		ResolvedSecrets: map[string]string{"relay-lab-v1": "shared-secret"},
 	}
 	receiver, err := NewReceiver(cfg, q, engine, contexts, state.NewAdmitter(q, state.DefaultMaxContextBytes), slog.Default())
 	if err != nil {
@@ -414,7 +414,7 @@ pipelines:
 				{Name: "home-primary", Enabled: true, SecretRef: "relay-lab-v1", KeyID: "v1", Accept: []string{"backup.ready"}},
 			},
 		},
-		Tokens: []config.TokenEntry{{Name: "relay-lab-v1", Key: "shared-secret"}},
+		ResolvedSecrets: map[string]string{"relay-lab-v1": "shared-secret"},
 	}
 	receiver, err := NewReceiver(cfg, q, engine, contexts, state.NewAdmitter(q, state.DefaultMaxContextBytes), slog.Default())
 	if err != nil {
@@ -472,7 +472,7 @@ pipelines:
 				{Name: "home-primary", Enabled: true, SecretRef: "relay-lab-v1", KeyID: "v1", Accept: []string{"backup.ready"}},
 			},
 		},
-		Tokens: []config.TokenEntry{{Name: "relay-lab-v1", Key: "shared-secret"}},
+		ResolvedSecrets: map[string]string{"relay-lab-v1": "shared-secret"},
 	}
 	receiver, err := NewReceiver(cfg, q, engine, contexts, state.NewAdmitter(q, state.DefaultMaxContextBytes), slog.Default())
 	if err != nil {
@@ -495,7 +495,7 @@ pipelines:
 				Allow:       []string{"backup.ready"},
 			},
 		},
-		Tokens: []config.TokenEntry{{Name: "relay-lab-v1", Key: "shared-secret"}},
+		ResolvedSecrets: map[string]string{"relay-lab-v1": "shared-secret"},
 	}
 	sender, err := NewSender(senderCfg)
 	if err != nil {
@@ -566,7 +566,7 @@ pipelines:
 				{Name: "home-primary", Enabled: true, SecretRef: "relay-lab-v1", KeyID: "v1", Accept: []string{"backup.ready"}},
 			},
 		},
-		Tokens: []config.TokenEntry{{Name: "relay-lab-v1", Key: "shared-secret"}},
+		ResolvedSecrets: map[string]string{"relay-lab-v1": "shared-secret"},
 	}
 	receiver, err := NewReceiver(cfg, q, engine, contexts, state.NewAdmitter(q, state.DefaultMaxContextBytes), slog.Default())
 	if err != nil {
@@ -589,7 +589,7 @@ pipelines:
 				Allow:       []string{"backup.ready"},
 			},
 		},
-		Tokens: []config.TokenEntry{{Name: "relay-lab-v1", Key: "shared-secret"}},
+		ResolvedSecrets: map[string]string{"relay-lab-v1": "shared-secret"},
 	}
 	sender, err := NewSender(senderCfg)
 	if err != nil {
@@ -659,7 +659,7 @@ pipelines:
 				{Name: "home-primary", Enabled: true, SecretRef: "relay-lab-v1", KeyID: "v1", Accept: []string{"backup.ready"}},
 			},
 		},
-		Tokens: []config.TokenEntry{{Name: "relay-lab-v1", Key: "shared-secret"}},
+		ResolvedSecrets: map[string]string{"relay-lab-v1": "shared-secret"},
 	}
 	receiver, err := NewReceiver(cfg, q, engine, contexts, state.NewAdmitter(q, state.DefaultMaxContextBytes), slog.Default())
 	if err != nil {
@@ -682,7 +682,7 @@ pipelines:
 				Allow:       []string{"backup.ready"},
 			},
 		},
-		Tokens: []config.TokenEntry{{Name: "relay-lab-v1", Key: "shared-secret"}},
+		ResolvedSecrets: map[string]string{"relay-lab-v1": "shared-secret"},
 	}
 	sender, err := NewSender(senderCfg)
 	if err != nil {

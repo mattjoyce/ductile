@@ -111,6 +111,33 @@ ductile job logs [--json]                 # Query stored job logs
 ```bash
 ductile plugin list [--api-url URL] [--json]   # Discover loaded plugins
 ductile plugin run <name>                      # Manual execution
+ductile plugin lock <name>                     # Attest plugin bytes — REQUIRED before it can receive vault secrets
+                                               #   (decoupled from `config lock`; re-run after any manifest/entrypoint edit)
+```
+
+### Vault & Secrets
+
+The vault delivers secrets to attested plugins. Two op classes (full model: `docs/SECRETS.md`):
+
+**Onboarding a plugin to vault secrets is three ordered steps:** (1) `vault register-principal --name <p> --kind plugin`, (2) `vault set --name <s> --principal <p>` to grant each secret, (3) `plugin lock <p>` to attest its bytes. All three are required — an unattested plugin has no recorded keyed fingerprint, so compose-time identity verification fails and it receives **nothing**.
+
+```bash
+# Local, key-touching — daemon STOPPED (hold the age key; PID-lock guarded):
+ductile vault init   --vault vault.age --key age.key      # genesis: core principal + nonce + one-time admin token
+ductile vault import --config <dir> --tokens tokens.yaml  # migrate legacy tokens.yaml into the vault
+ductile vault rotate-key --config <dir>                   # rotate the at-rest age key
+
+# Keyless API clients — daemon RUNNING (admin token: --token / DUCTILE_VAULT_TOKEN):
+ductile vault register-principal --name <p> --kind plugin|consumer|gateway
+ductile vault set    --name <s> --principal <p>           # value from stdin (--pattern manual|auto)
+ductile vault roll   --name <s>                           # supersede value
+ductile vault revoke --name <s>                           # terminal (clears value)
+ductile vault revoke-principal --name <p>                 # stop delivery (fail closed)
+ductile vault purge-principal  --name <p>                 # remove + strip grants
+ductile vault roll-principal   --name <p>                 # roll every auto secret it holds
+
+ductile secrets keygen|encrypt|rotate                     # age-at-rest tooling (config bundles, NOT the vault)
+ductile system vault-audit [--principal <p>] [--json]     # the append-only audit log (names + outcomes, never values)
 ```
 
 ### API (direct gateway calls)
@@ -144,19 +171,26 @@ ductile version           # Version + commit + build time
 
 ---
 
-## The `config lock` ritual
+## The lock rituals (`config lock` ≠ `plugin lock`)
 
-Every config or plugin manifest edit goes through:
+Locking is two decoupled acts — pick by what changed:
 
 ```bash
+# Config FILE edit (config.yaml, api.yaml, pipelines, webhooks):
 ductile config check          # validate
-ductile config lock           # authorize new state (updates .checksums)
+ductile config lock           # authorize the file state (updates .checksums)
 ductile system reload         # apply without restart
+
+# Plugin manifest/entrypoint edit (re-attest the bytes):
+ductile plugin lock <name>    # config lock does NOT do this
+ductile system reload
 ```
 
-**This is the cross-skill ritual.** Plugin authoring hands off here.
-Incident response often discovers a forgotten-to-lock root cause. Owning
-this ritual is owning the seam between authoring and operating.
+`config lock` re-hashes config files and *preserves* plugin fingerprints; it does
+not re-attest plugin bytes. A plugin whose bytes changed without a re-`plugin
+lock` is refused its vault secrets at spawn (fail closed) — a routine `config
+lock` will not fix it. A forgotten lock (either one) is a recurring root cause in
+incident response.
 
 ### Config integrity (tiered)
 

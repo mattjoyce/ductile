@@ -36,7 +36,7 @@ type EndpointConfig struct {
 	// Secret is the resolved HMAC secret for signature verification.
 	Secret string `yaml:"-"`
 
-	// SecretRef references a secret in tokens.yaml
+	// SecretRef references a secret in the vault
 	SecretRef string `yaml:"secret_ref,omitempty"`
 
 	// SignatureHeader is the HTTP header containing the HMAC signature

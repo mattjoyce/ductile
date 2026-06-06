@@ -286,7 +286,7 @@ The four scopes are a nested ladder; each level adds to the previous:
 | Scope | Contents |
 |---|---|
 | `db` | `VACUUM INTO` snapshot of the state DB only |
-| `config` (default) | `db` + ductile config dir (`config.yaml`, `api.yaml`, `plugins.yaml`, `pipelines.yaml`, `webhooks.yaml`, `.checksums`) |
+| `config` (default) | `db` + ductile config dir (`config.yaml`, `api.yaml`, `plugins.yaml`, `pipelines.yaml`, `webhooks.yaml`, `.checksums`) + the encrypted vault blob `vault.age` (the age key is **excluded** — out-of-band custody; restore needs both) |
 | `plugins` | `config` + every directory under `plugin_roots` (excludes `.git`, `node_modules`, `.venv`, `venv`, `__pycache__`, `.DS_Store`, `*.pyc`, `*.pyo`) |
 | `all` | `plugins` + every file referenced under `environment_vars.include` |
 
@@ -344,3 +344,128 @@ as a template for the `ProgramArguments` shape.
 Pre-migration backups before any breaking schema change are a separate manual
 invocation under `~/admin/ductile-backups/<instance>/pre-<slug>-<timestamp>/`
 — they sit outside the auto-rotation directory.
+
+## 11. Deploying the Vault onto an Instance
+
+This is the runnable procedure for bringing up the **vault** (daemon-owned secret
+delivery + plugin attestation) on an existing host-local instance. It is *how-to* only —
+the steps to satisfy the need. For the **why** (the vault's mental model, the sole-writer
+split, compose-time attestation, spawn hygiene, the backup/key pairing) see
+[SECRETS.md](SECRETS.md); the short "Why this order" note at the end of this section
+covers only the deploy-specific theory.
+
+> First reference run: the Thinkpad (`matt-ThinkPad-T14s-Gen-1`), 2026-06-05.
+
+### Order at a glance
+
+backup → `vault_audit` migration → age key + genesis → config reconcile →
+import `tokens.yaml` → **`config lock` + `plugin lock --all`** → cutover → verify.
+
+**The two steps operators miss — both fail loud, both cost a crash-loop:**
+
+- **`plugin lock --all` is separate from `config lock`.** Plugin attestation fingerprints
+  are *not* sealed by `config lock`. Without them, `verify_integrity_on_boot` rejects
+  every plugin at startup. (They were deliberately decoupled — config integrity and
+  plugin attestation are different concerns.)
+- **`validate_config_on_boot` surfaces dead config keys.** The strict admission gate
+  rejects keys the lenient loader silently dropped — a misplaced `log_level`, a
+  per-plugin `timeout`/`max_attempts` that belongs under `timeouts:`/`retry:`, a typo.
+  Fix the keys (`config check` names them), or the daemon refuses to boot.
+
+### Procedure
+
+```bash
+# Build the new binary per §1/§8 but STAGE it — don't install yet; run the gates
+# against it while the old binary still serves.
+NEW=~/staging/ductile-new                       # freshly built branch binary
+CFG=~/.config/ductile
+KEY=~/.config/secrets/ductile/age.key           # out-of-band; NOT inside $CFG
+
+# 1. Rollback point: back up DB + config, and snapshot the current binary.
+ductile system backup --to ~/backups/pre-vault-$(date -u +%Y%m%dT%H%M%SZ).tar.gz \
+  --scope config --config "$CFG"
+cp ~/.local/bin/ductile ~/backups/ductile-prev
+
+# 2. Schema: add the vault_audit table. Idempotent, hot-safe. This is OBSERVABILITY,
+#    not a boot gate — the daemon boots without it; the audit writer just fails soft.
+python3 /path/to/ductile/scripts/migrate-add-vault-audit-table.py "$CFG/ductile.db"
+
+# 3. Age key (record the public recipient) + genesis. Daemon STOPPED for genesis.
+ductile secrets keygen --out "$KEY"             # mode 0600
+systemctl --user stop ductile-local
+"$NEW" vault init --vault "$CFG/vault.age" --key "$KEY" \
+  > ~/.config/secrets/ductile/genesis.out 2>&1  # admin token printed ONCE
+chmod 600 ~/.config/secrets/ductile/genesis.out # capture the token from here; it is the API credential
+# Capture-and-rotate hygiene: lift the token into 0600/0700 custody (or a password
+# manager), then SHRED genesis.out. If the token was ever exposed (shared channel,
+# client log, screen), roll it in place — no re-genesis — while the daemon is stopped:
+#   ductile vault rotate-admin-token --config "$CFG"   # mints + prints the NEW token once
+# The old token dies immediately; update DUCTILE_VAULT_TOKEN before any API write.
+# See SECRETS.md § "Rotating the admin token".
+
+# 4. Reconcile config.yaml, then validate. Set:
+#      secrets.age_key_file: <path to $KEY>
+#      service.admission: { verify_integrity_on_boot: true, fail_on_drift: true,
+#                           validate_config_on_boot: true, require_api_auth: true }
+#      service.plugin_env_passthrough: [ ... ]   # only env names a plugin actually reads
+"$NEW" config check --config "$CFG"             # MUST be clean — resolve every "ignored config key"
+
+# 5. Migrate existing tokens.yaml secrets into the vault and prove parity.
+#    Use an ABSOLUTE --tokens path. tokens.yaml stays as a coexistence shim.
+"$NEW" vault import --config "$CFG" --tokens "$CFG/tokens.yaml"   # add --resolve-env only to freeze ${ENV}
+
+# 6. Seal BOTH: config files AND plugin attestation. Attestation is keyed by the vault
+#    nonce, so genesis (step 3) must already be done.
+"$NEW" config lock --config "$CFG"
+"$NEW" plugin lock --all --config "$CFG"        # prints a confirm code
+"$NEW" plugin lock --all <code> --config "$CFG" # commit with the code
+
+# 7. Cutover: install the new binary and restart.
+systemctl --user stop ductile-local
+cp "$NEW" ~/.local/bin/ductile
+systemctl --user start ductile-local
+
+# 8. Verify.
+journalctl --user -u ductile-local -n 40        # expect "compose-time attestation on"; no integrity/admission failure
+curl -s localhost:8081/healthz                  # status ok; plugins_loaded == your pre-deploy baseline
+ductile system vault-audit --config "$CFG"      # genesis + imports recorded
+```
+
+### Spawn-hygiene check before cutover (do not skip)
+
+Plugins no longer inherit the gateway environment ([SECRETS.md §4](SECRETS.md)). Before
+cutover, for each enabled plugin work out how it gets each secret **today**:
+
+- delivered via `${VAR}` interpolation into its `config:` block → unaffected (it travels over stdin);
+- read from the tool's own config (e.g. `fabric` reads `~/.config/fabric/.env`) → unaffected;
+- read **directly from the process environment** → add that name to
+  `service.plugin_env_passthrough`, or move the secret into the vault.
+
+Catching this here is what prevents a fleet of plugins silently failing on a stripped
+environment after cutover.
+
+### Rollback
+
+Stop the service, restore the previous binary (`~/backups/ductile-prev`), and — only if
+config changed — restore `config.yaml` and `.checksums` from the backup. The additive
+`vault_audit` table and the inert `vault.age` + age key are harmless to the prior binary,
+so a DB restore is normally unnecessary. Confirm green on `healthz`.
+
+### Why this order (theory)
+
+The sequence is forced by dependency, not preference:
+
+- **Genesis before `plugin lock`** — plugin fingerprints are keyed by the vault nonce that
+  genesis seeds; you cannot attest plugins until the vault exists.
+- **`config lock` ≠ `plugin lock`** — deliberately decoupled, so sealing config does not
+  seal attestation and vice-versa.
+- **Migration is observability, not a gate** — `vault_audit` is additive and not a required
+  table; run it so the audit log is complete from the first op, but the boot never hinges
+  on it.
+- **The admission gates are independent levers** — `validate_config_on_boot` is the strict
+  decode (it makes silently-dropped config keys loud); `verify_integrity_on_boot` is the
+  `.checksums` + attestation preflight (it makes tamper/drift loud). Turning them on is
+  what converts those silent failure modes into refuse-to-boot.
+
+For the full mental model — principals, the sole-writer split, compose-time delivery,
+attestation, and the backup/key pairing — see [SECRETS.md](SECRETS.md).

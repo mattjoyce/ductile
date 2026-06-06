@@ -3,6 +3,7 @@ package api
 import (
 	"encoding/json"
 	"net/http"
+	"sort"
 	"strings"
 
 	"github.com/mattjoyce/ductile/internal/config"
@@ -347,14 +348,16 @@ func (s *Server) handleConfigView(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Sanitize tokens — drop Key field.
-	tokens := make([]configViewToken, 0, len(cfg.Tokens))
-	for _, t := range cfg.Tokens {
-		tokens = append(tokens, configViewToken{
-			Name:        t.Name,
-			Description: t.Description,
-			CreatedAt:   t.CreatedAt,
-		})
+	// Secrets resolve from the vault (epic #48): show resolved secret names only,
+	// in deterministic order. Values are never exposed.
+	secretNames := make([]string, 0, len(cfg.ResolvedSecrets))
+	for name := range cfg.ResolvedSecrets {
+		secretNames = append(secretNames, name)
+	}
+	sort.Strings(secretNames)
+	tokens := make([]configViewToken, 0, len(secretNames))
+	for _, name := range secretNames {
+		tokens = append(tokens, configViewToken{Name: name})
 	}
 
 	resp := configViewResponse{

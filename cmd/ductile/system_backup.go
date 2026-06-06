@@ -4,6 +4,7 @@ import (
 	"archive/tar"
 	"compress/gzip"
 	"context"
+	"crypto/rand"
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
@@ -11,6 +12,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"math/big"
 	"os"
 	"path/filepath"
 	"sort"
@@ -99,6 +101,7 @@ var configRuntimeExcludes = []string{
 // It is the self-documenting record of what the archive contains, when, and
 // from where.
 type backupManifest struct {
+	BackupUID      string               `yaml:"backup_uid"`
 	DuctileVersion string               `yaml:"ductile_version"`
 	DuctileCommit  string               `yaml:"ductile_commit"`
 	Hostname       string               `yaml:"hostname"`
@@ -127,6 +130,31 @@ type manifestPluginRoot struct {
 type manifestEnvFile struct {
 	ArchivePath string `yaml:"archive_path"`
 	SourcePath  string `yaml:"source_path"`
+}
+
+// backupUIDLen and backupUIDAlphabet define the per-backup pairing code written
+// to uid.txt and BACKUP_MANIFEST.txt. The operator records it alongside the
+// out-of-band age key (e.g. in a password manager) so an archive can be matched
+// to the key that decrypts it — essential once `vault rotate-key` means more
+// than one key has existed. The alphabet omits visually ambiguous characters
+// (0/O, 1/I/L) so the code survives hand-transcription.
+const (
+	backupUIDLen      = 5
+	backupUIDAlphabet = "ABCDEFGHJKMNPQRSTUVWXYZ23456789"
+)
+
+// newBackupUID returns a short random alphanumeric pairing code.
+func newBackupUID() (string, error) {
+	out := make([]byte, backupUIDLen)
+	max := big.NewInt(int64(len(backupUIDAlphabet)))
+	for i := range out {
+		n, err := rand.Int(rand.Reader, max)
+		if err != nil {
+			return "", err
+		}
+		out[i] = backupUIDAlphabet[n.Int64()]
+	}
+	return string(out), nil
 }
 
 // runSystemBackup writes a consistent, scoped snapshot of ductile state to
@@ -216,6 +244,10 @@ func runSystemBackup(args []string) int {
 
 	fmt.Printf("\nbackup written: %s (%d bytes, %.2fs)\n",
 		resolvedDest, info.Size(), time.Since(start).Seconds())
+	fmt.Printf("backup UID: %s — record this with the age key you custody "+
+		"(e.g. in your password manager) so you can pair this archive to the key "+
+		"that decrypts it. The UID is also in uid.txt and BACKUP_MANIFEST.txt.\n",
+		plan.manifest.BackupUID)
 	return 0
 }
 
@@ -251,13 +283,15 @@ func loadBackupConfig(configPath string) (*config.Config, string, error) {
 // backupPlan captures everything a backup invocation will do, ahead of
 // execution. Built once, printed for operator awareness, then executed.
 type backupPlan struct {
-	scope       backupScope
-	dest        string
-	srcDB       string
-	configDir   string
-	pluginRoots []manifestPluginRoot
-	envFiles    []manifestEnvFile
-	manifest    backupManifest
+	scope            backupScope
+	dest             string
+	srcDB            string
+	configDir        string
+	vaultBlobSrc     string // resolved vault.age path, "" if no vault present
+	vaultBlobArchive string // its path inside the archive
+	pluginRoots      []manifestPluginRoot
+	envFiles         []manifestEnvFile
+	manifest         backupManifest
 }
 
 func buildBackupPlan(
@@ -269,8 +303,14 @@ func buildBackupPlan(
 		configDir: configDir,
 	}
 
+	uid, err := newBackupUID()
+	if err != nil {
+		return nil, fmt.Errorf("generate backup uid: %w", err)
+	}
+
 	hostname, _ := os.Hostname()
 	plan.manifest = backupManifest{
+		BackupUID:      uid,
 		DuctileVersion: version,
 		DuctileCommit:  gitCommit,
 		Hostname:       hostname,
@@ -299,6 +339,38 @@ func buildBackupPlan(
 		})
 		plan.manifest.Warnings = append(plan.manifest.Warnings,
 			"archive contains api.yaml bearer token; treat as secret")
+
+		// Vault blob: include the encrypted vault.age so a restore is not
+		// secret-less. The age key that decrypts it is DELIBERATELY excluded —
+		// the archive and the key must not travel together, or the archive is a
+		// single-file compromise. Restore needs BOTH: unpack the archive, then
+		// write the age key back from out-of-band custody.
+		if vaultPath := config.ResolveVaultPath(configDir, cfg); vaultPath != "" {
+			if _, err := os.Stat(vaultPath); err == nil {
+				plan.vaultBlobSrc = vaultPath
+				plan.vaultBlobArchive = "config/" + filepath.Base(vaultPath)
+				plan.manifest.Included = append(plan.manifest.Included, plan.vaultBlobArchive)
+
+				keyItem := config.ResolveAgeKeyPath(configDir, cfg)
+				if keyItem == "" {
+					keyItem = "the age key (secrets.age_key_file / DUCTILE_AGE_KEY_FILE) — unresolved here"
+				}
+				plan.manifest.Excluded = append(plan.manifest.Excluded, manifestExcluded{
+					Reason: "vault age key — out-of-band by design: store it separately " +
+						"(e.g. a password manager); restore needs BOTH the archive and the key",
+					Items: []string{keyItem},
+				})
+				plan.manifest.Warnings = append(plan.manifest.Warnings,
+					"archive contains "+plan.vaultBlobArchive+" (encrypted vault); its age key is "+
+						"EXCLUDED by design — store it out-of-band, restore needs both",
+					"save this backup's UID ("+plan.manifest.BackupUID+", also in uid.txt) with the "+
+						"out-of-band age key so the archive can be paired to its decrypting key",
+					"after `vault rotate-key` the previous key is destroyed, so a vault.age backup is "+
+						"only restorable with the key that was current when the backup was taken")
+			} else if !errors.Is(err, os.ErrNotExist) {
+				return nil, fmt.Errorf("stat vault %s: %w", vaultPath, err)
+			}
+		}
 	}
 
 	if scope >= scopePlugins {
@@ -444,6 +516,12 @@ func writeBackupArchive(dest string, plan *backupPlan) error {
 				return err
 			}
 		}
+		// The encrypted vault blob (the age key is never added — out-of-band).
+		if plan.vaultBlobSrc != "" {
+			if err := tarAddFile(tw, plan.vaultBlobSrc, plan.vaultBlobArchive); err != nil {
+				return err
+			}
+		}
 	}
 
 	if plan.scope >= scopePlugins {
@@ -465,6 +543,12 @@ func writeBackupArchive(dest string, plan *backupPlan) error {
 				return err
 			}
 		}
+	}
+
+	// uid.txt: the pairing code, on its own so an operator can read it without
+	// parsing the manifest. Save it with the out-of-band age key.
+	if err := tarAddBytes(tw, "uid.txt", []byte(plan.manifest.BackupUID+"\n"), 0o644); err != nil {
+		return err
 	}
 
 	manifestYAML, err := yaml.Marshal(plan.manifest)
@@ -637,6 +721,12 @@ Scopes (nested ladder; each level adds to the previous):
 
 Each invocation prints its INCLUDED / EXCLUDED list before doing the work
 and embeds a BACKUP_MANIFEST.txt inside the archive documenting the same.
+
+NOTE: the encrypted vault blob (vault.age) IS included from scope 'config' up.
+Its age key is deliberately EXCLUDED — custody it out-of-band (e.g. a password
+manager); BACKUP_MANIFEST.txt records the blob/key pairing. A vault backup is
+restorable only with its matching key, and 'vault rotate-key' destroys the old
+key, so save each freshly minted key immediately.
 
 Refuses if --to file already exists. Operator owns naming and retention.
 

@@ -2,9 +2,10 @@
 # Copy this folder to ~/.config/ductile/ (or $XDG_CONFIG_HOME/ductile/)
 # and edit values for your environment.
 
-log_level: info
-
 service:
+  name: ductile
+  tick_interval: 60s
+  log_level: info        # belongs under service: at the root it was silently ignored
   strict_mode: true
 
 state:

@@ -89,6 +89,14 @@ type Config struct {
 	// same six invariants as `ductile system selfcheck`.
 	SelfcheckFunc SelfcheckFunc
 	RelayReceiver *relay.Receiver
+	// Vault is the management surface for the daemon-owned secret store. nil
+	// disables the /vault routes (no vault loaded / keyless). Authenticated by
+	// the vault's own resident admin token, not these config Tokens.
+	Vault VaultManager
+	// VaultAuditor records vault lifecycle facts to the append-only audit log.
+	// nil disables audit emission (ops still succeed — audit is observability,
+	// not a precondition). Runtime wires the state.Store.
+	VaultAuditor VaultAuditor
 	// AllowedOrigins lists the origins that may receive credentialed CORS
 	// headers. An empty list disables cross-origin credential sharing entirely.
 	AllowedOrigins []string
@@ -112,6 +120,8 @@ type Server struct {
 	reloadFunc    func(context.Context) (ReloadResponse, error)
 	serveDone     chan struct{}
 	relayReceiver *relay.Receiver
+	vault         VaultManager
+	auditor       VaultAuditor
 }
 
 // New creates a new API server instance. admitter decides whether ingress
@@ -148,6 +158,8 @@ func New(config Config, queue JobQueuer, registry PluginRegistry, router Pipelin
 		reloadFunc:    config.ReloadFunc,
 		serveDone:     make(chan struct{}),
 		relayReceiver: config.RelayReceiver,
+		vault:         config.Vault,
+		auditor:       config.VaultAuditor,
 	}
 }
 
@@ -278,6 +290,22 @@ func (s *Server) setupRoutes() *chi.Mux {
 		r.Use(s.authenticate(true))
 		r.With(s.requireScopes("events:ro", "events:rw", "*")).Get("/events", s.handleEvents)
 	})
+
+	// Vault management — gated by the vault's OWN resident admin token, not the
+	// config API tokens above (a separate group, separate authenticator). The
+	// daemon is the sole writer; value-dump and genesis stay local, never here.
+	if s.vault != nil {
+		r.Group(func(r chi.Router) {
+			r.Use(s.authenticateVaultAdmin)
+			r.Post("/vault/principal", s.handleVaultRegisterPrincipal)
+			r.Post("/vault/secret", s.handleVaultSet)
+			r.Post("/vault/secret/roll", s.handleVaultRoll)
+			r.Post("/vault/secret/revoke", s.handleVaultRevoke)
+			r.Post("/vault/principal/revoke", s.handleVaultRevokePrincipal)
+			r.Post("/vault/principal/purge", s.handleVaultPurgePrincipal)
+			r.Post("/vault/principal/roll", s.handleVaultRollPrincipal)
+		})
+	}
 
 	return r
 }

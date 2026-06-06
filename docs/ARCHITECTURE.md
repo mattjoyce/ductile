@@ -387,6 +387,30 @@ See card #36 (Manifest Command Type Metadata).
 - World-writable plugin directories are refused at load time.
 - Plugins run as the same OS user as the core. Use systemd `User=ductile` to limit blast radius.
 
+**Secret delivery is gated by attestation.** A plugin receives no secrets until it is *attested*:
+`ductile plugin lock` records a keyed fingerprint (keyed-BLAKE3 over the plugin's manifest and entrypoint
+bytes, keyed by the vault's `core` nonce). At spawn the core re-verifies that fingerprint; a mismatch is a
+**security event** — a possible binary swap — not a quiet denial: the job fails closed and the mismatch is
+escalated. Editing the manifest or entrypoint breaks the fingerprint and demands re-attestation. This is
+why attestation (`plugin lock`) is decoupled from config integrity (`config lock`): a lock taken for an
+unrelated config edit must never silently bless a swapped binary.
+
+Secrets themselves live in the **vault** — an age-encrypted store the daemon alone reads and writes (the
+sole-writer owner; see `docs/SECRETS.md` for the operator model and lifecycle). The daemon decrypts the
+blob **once** at startup into that single in-memory owner; boot integrity-verification, the attestation
+nonce, and secret delivery all read from that one snapshot — so a plugin's fingerprint is verified against
+the exact vault state that later releases its secrets, with no decrypt-twice window between the two. The
+trust idea: a secret is
+bound to an *attested plugin identity*, delivered out-of-band from config and environment, so a swapped or
+unattested binary cannot inherit credentials. Operators register a plugin as a **principal** and grant it
+named secrets; at spawn the core **Composes** that principal's authorized, active secrets and delivers them
+in the request envelope over **stdin only** (§6.1 `secrets`) — never via the environment (secrets are
+withheld from it; only `service.plugin_env_passthrough` names cross), never on argv. Plugins **consume**
+secrets; they never register, roll, or revoke them — that is the operator's `ductile vault` surface.
+Delivery fails closed by design: an *unknown* principal gets no secrets and runs normally, but a *revoked*
+principal fails the job rather than run secret-less. Every register/set/roll/revoke and every fail-closed
+denial is recorded in the `vault_audit` fact log (`ductile system vault-audit`).
+
 ### 5.6 Timeouts
 
 **Defaults:**
@@ -521,6 +545,7 @@ Single JSON object written to plugin's stdin:
   "state": {},
   "context": {},
   "event": {},
+  "secrets": {},
   "deadline_at": "ISO8601"
 }
 ```
@@ -528,6 +553,7 @@ Single JSON object written to plugin's stdin:
 - `event` — present only for `handle`.
 - `state` — the plugin's current compatibility-view row (the latest fact's snapshot, or write-through state for plugins not yet declaring `fact_outputs`).
 - `context` — shared metadata (Baggage) carried across the pipeline chain.
+- `secrets` — the plugin's composed, authorized secrets (a name→value map), present (`omitempty`) only when the plugin is an attested principal with active grants. Delivered here over stdin and nowhere else — distinct from `config`, never in the environment or argv. Read-only: plugins consume secrets; the operator manages them via `ductile vault` (see §5.5).
 - `deadline_at` — informational. Plugins MAY use it to abandon long-running work early. The core enforces the real deadline externally.
 
 ### 6.2 Response Envelope (plugin → core)
@@ -783,7 +809,10 @@ Tokens should be stored in environment variables and interpolated (for example `
 
 - All API requests must include `Authorization: Bearer <token>` header
 - Invalid or missing token returns `401 Unauthorized`
-- No key rotation mechanism in MVP (manual config update + reload)
+
+**Rotation.** Secret values rotate through the vault — `ductile vault roll` (one secret) and `roll-principal` (every auto-pattern secret a principal holds); the at-rest age key rotates with `ductile vault rotate-key` (mint → re-encrypt → verify-before-retire, daemon stopped). See `docs/SECRETS.md`.
+
+**Two credential domains.** The `tokens.yaml` scoped tokens above authorize the *general* API. The vault management routes (`POST /vault/*`) are a **separate domain**: they authenticate against the **vault-resident admin token** (minted by `ductile vault init`, presented as `Authorization: Bearer <admin-token>` / `DUCTILE_VAULT_TOKEN`), and the config `tokens.yaml` tokens — even `*` — are *rejected* there. Rationale: vault-write authority must not depend on a config-defined token an operator could grant by editing a file; it lives inside the encrypted store and is rotatable by a normal vault write, and a revoked admin token authenticates no one.
 
 ### 9.5 Resource Guarding (Synchronous Pipelines)
 
@@ -893,7 +922,7 @@ Fields: `timestamp`, `level`, `component`, `plugin` (when relevant), `job_id` (w
 
 **Plugin stdout:** Reserved exclusively for protocol response. Stored verbatim on completion in `job_log.result` (JSON). Non-JSON on stdout is a protocol error — job fails, stderr + stdout captured for debugging.
 
-**Redaction:** Not in V1. Don't log secrets. Fix the plugin, don't bandage the core.
+**Redaction:** The core owns secret *handling*, not secret *hygiene in plugin output*. It withholds secrets from the plugin environment (delivery is stdin-only, §5.5/§6.1) and redacts secret values in `config show` / `/config/view`. But a plugin that echoes its own `secrets` to stdout/stderr defeats this — the core stores plugin output verbatim. So: don't log secrets *in the plugin*; the core will not scrub a plugin that leaks its own credentials.
 
 ### 11.5 Job Log Retention
 
@@ -1166,7 +1195,7 @@ ductile/
 | `protocol` field in response envelope | Accretive addition; back-compatible with plugins that omit it. |
 | Replay protection for webhooks | Provider-specific. Add per-plugin if a provider requires it. |
 | Rate limiting on webhook listener | Proxy responsibility. Core doesn't duplicate concerns it can't own. |
-| Secret redaction in logs | Operator responsibility. Fix the plugin, don't bandage the core. |
+| Secret redaction in plugin output | Core withholds secrets from env and redacts them in config views (§11.4); it does not scrub a plugin that echoes its own `secrets` to stdout/stderr — fix the plugin. |
 | Streaming / long-lived plugin mode | Out of scope permanently. If it needs to stream, it's not a plugin. |
 | Priority queues / multi-lane dispatch | Revisit only if daily jobs exceed 500 or median wait exceeds 30s. |
 | Router query language / payload filters | Put conditional logic in the receiving plugin. |

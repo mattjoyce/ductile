@@ -1,13 +1,47 @@
 package protocol
 
-import "time"
+import (
+	"log/slog"
+	"sort"
+	"time"
+)
+
+// Secrets carries a plugin's composed, authorized secret values. Its underlying
+// type is map[string]string, so it JSON-marshals to real values for the stdin
+// delivery — but it implements slog.LogValuer to REDACT in structured logs: a
+// stray logger.Debug("req", req) (or logging the map directly) prints the secret
+// names and a count, never the values (#27 / Ousterhout §2.1). Redaction is by
+// construction, not author discipline.
+type Secrets map[string]string
+
+// LogValue redacts: names + count, never values.
+func (s Secrets) LogValue() slog.Value {
+	if len(s) == 0 {
+		return slog.StringValue("(none)")
+	}
+	names := make([]string, 0, len(s))
+	for k := range s {
+		names = append(names, k)
+	}
+	sort.Strings(names)
+	return slog.GroupValue(
+		slog.Int("count", len(s)),
+		slog.Any("names", names),
+		slog.String("values", "REDACTED"),
+	)
+}
 
 // Request represents the protocol v2 request envelope sent to plugins via stdin.
 type Request struct {
-	Protocol   int            `json:"protocol"`
-	JobID      string         `json:"job_id"`
-	Command    string         `json:"command"` // poll | handle | health | init | custom
-	Config     map[string]any `json:"config"`
+	Protocol int            `json:"protocol"`
+	JobID    string         `json:"job_id"`
+	Command  string         `json:"command"` // poll | handle | health | init | custom
+	Config   map[string]any `json:"config"`
+	// Secrets carries the plugin's composed, authorized secrets, delivered over
+	// stdin at spawn (never env, never argv). Distinct from Config: secrets are
+	// authorization-scoped per principal, not configuration. Empty/absent when
+	// the plugin is not a vault principal.
+	Secrets    Secrets        `json:"secrets,omitempty"`
 	State      map[string]any `json:"state"`
 	Payload    map[string]any `json:"payload,omitempty"`
 	Context    map[string]any `json:"context,omitempty"`

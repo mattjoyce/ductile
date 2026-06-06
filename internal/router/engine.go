@@ -36,6 +36,9 @@ func LoadFromConfigFiles(paths []string, registry *plugin.Registry, logger *slog
 		if err := validateUsesNodesExist(set, registry); err != nil {
 			return nil, err
 		}
+		if err := validateFromPluginExists(set, registry); err != nil {
+			return nil, err
+		}
 	}
 	return New(set, logger), nil
 }
@@ -154,9 +157,24 @@ func (r *Router) Next(ctx context.Context, req Request) ([]Dispatch, error) {
 				continue
 			}
 			if route.Source.If != nil {
+				if req.SourceContext == nil && conditions.ReferencesRoot(route.Source.If, "context") {
+					r.logger.Warn("trigger predicate references context.* but no source context is available on this path; predicate cannot match",
+						"route_id", route.ID,
+						"pipeline", route.Pipeline,
+						"event_type", eventType)
+				}
 				ok, err := conditions.Eval(route.Source.If, conditions.Scope{Payload: req.Event.Payload, Context: req.SourceContext})
 				if err != nil {
-					return nil, fmt.Errorf("pipeline %q: evaluate trigger if: %w", route.Pipeline, err)
+					// Fault isolation: a poison predicate on one route must not
+					// abort routing for every other pipeline that matched this
+					// event. Fail safe — skip this route without matching — and
+					// make it loud rather than silent.
+					r.logger.Warn("trigger predicate errored; skipping route (fail-safe no match)",
+						"route_id", route.ID,
+						"pipeline", route.Pipeline,
+						"event_type", eventType,
+						"error", err)
+					continue
 				}
 				if !ok {
 					r.logger.Debug("trigger predicate skipped pipeline",
@@ -191,10 +209,10 @@ func (r *Router) Next(ctx context.Context, req Request) ([]Dispatch, error) {
 // NextHook resolves hook pipeline dispatches for a lifecycle signal on a plugin.
 // Dispatches are root-level (no pipeline/step context) so hook jobs run independently.
 //
-// sourceContext is the upstream job's accumulated durable context, when available.
-// Entry-route predicates evaluate against payload + sourceContext so authors can
-// gate hook fan-out on baggage already claimed upstream.
-func (r *Router) NextHook(ctx context.Context, plugin, signal string, payload map[string]any, sourceContext map[string]any) ([]Dispatch, error) {
+// Hook entry-route predicates evaluate against the lifecycle event payload only.
+// There is no durable context at hook time — hooks fire for root jobs with none —
+// and a context.* predicate on an on-hook: trigger is rejected at config load.
+func (r *Router) NextHook(ctx context.Context, plugin, signal string, payload map[string]any) ([]Dispatch, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -226,9 +244,18 @@ func (r *Router) NextHook(ctx context.Context, plugin, signal string, payload ma
 			continue
 		}
 		if route.Source.If != nil {
-			ok, err := conditions.Eval(route.Source.If, conditions.Scope{Payload: payload, Context: sourceContext})
+			ok, err := conditions.Eval(route.Source.If, conditions.Scope{Payload: payload})
 			if err != nil {
-				return nil, fmt.Errorf("hook pipeline %q: evaluate trigger if: %w", route.Pipeline, err)
+				// Fault isolation: one hook route's poison predicate must not
+				// suppress the other hook pipelines bound to this signal. Fail
+				// safe (skip, no match) and loud.
+				r.logger.Warn("hook trigger predicate errored; skipping route (fail-safe no match)",
+					"route_id", route.ID,
+					"pipeline", route.Pipeline,
+					"signal", signal,
+					"source_plugin", plugin,
+					"error", err)
+				continue
 			}
 			if !ok {
 				r.logger.Debug("hook trigger predicate skipped pipeline",
@@ -239,7 +266,7 @@ func (r *Router) NextHook(ctx context.Context, plugin, signal string, payload ma
 			}
 		}
 		r.logger.Info("triggering hook pipeline", "name", route.Pipeline, "signal", signal, "source_plugin", plugin)
-		dispatches, err := r.resolveCompiledRoute(route, Request{Event: ev, SourcePlugin: plugin, SourceContext: sourceContext}, true)
+		dispatches, err := r.resolveCompiledRoute(route, Request{Event: ev, SourcePlugin: plugin}, true)
 		if err != nil {
 			return nil, err
 		}
@@ -521,6 +548,22 @@ func (r *Router) entryRoutesForPipeline(pipelineName string) []dsl.CompiledRoute
 		out = append(out, route)
 	}
 	return out
+}
+
+// validateFromPluginExists rejects any pipeline whose from_plugin: selector names
+// a plugin not in the registry. Without this an upstream-scoping typo compiles
+// clean and then silently matches nothing for every event — the dead-route trap
+// validateUsesNodesExist already closes for uses: steps.
+func validateFromPluginExists(set *dsl.Set, registry *plugin.Registry) error {
+	for pipelineName, pipeline := range set.Pipelines {
+		if pipeline.FromPlugin == "" {
+			continue
+		}
+		if _, ok := registry.Get(pipeline.FromPlugin); !ok {
+			return fmt.Errorf("pipeline %q: from_plugin references unknown plugin %q", pipelineName, pipeline.FromPlugin)
+		}
+	}
+	return nil
 }
 
 func validateUsesNodesExist(set *dsl.Set, registry *plugin.Registry) error {

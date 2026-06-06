@@ -1,0 +1,84 @@
+package dispatch
+
+import (
+	"errors"
+	"fmt"
+	"log/slog"
+
+	"github.com/mattjoyce/ductile/internal/vault"
+)
+
+// SecretComposer resolves the secrets a principal may receive. It is satisfied
+// by *vault.Store. Defined here, at the point of use, so the dispatch package
+// depends on the narrow query it needs — not the whole vault surface.
+type SecretComposer interface {
+	Compose(principal string) (vault.Composition, error)
+}
+
+// PluginVerifier re-verifies a plugin's live bytes against its recorded keyed
+// fingerprint at spawn (ADR §3.3), closing the runtime-swap window for the secret
+// path: a binary swapped after the last reload is caught before its secrets are
+// delivered. Defined at the point of use; satisfied by a runtime adapter that
+// wraps the plugin registry, .checksums, and the vault nonce. A nil verifier
+// disables the gate (back-compat).
+type PluginVerifier interface {
+	// VerifyIdentity returns nil when the plugin's live bytes match its recorded
+	// attestation, or an error to fail closed (mismatch / no recorded
+	// fingerprint / unreadable bytes / no nonce).
+	VerifyIdentity(plugin string) error
+}
+
+// ErrFingerprintMismatch marks a compose-time attestation failure. composePlugin-
+// Secrets wraps the verifier's error with it so the dispatcher's audit fact carries
+// the fingerprint_mismatch reason and downstream alerting (#25) can branch with
+// errors.Is. Its text IS the vault DenialFingerprintMismatch reason.
+var ErrFingerprintMismatch = errors.New(string(vault.DenialFingerprintMismatch))
+
+// composePluginSecrets resolves the secrets to deliver to a plugin at spawn.
+//
+// Registration as a vault principal is purely about secret *authorization*; a
+// plugin's identity and right to run are governed elsewhere (the plugin
+// registry + .checksums attestation). The vault is therefore an opt-in overlay,
+// and this contract reflects that:
+//
+//   - composer nil          -> no secrets, no error (vault not wired)
+//   - unknown principal      -> no secrets, no error (the plugin is simply not in
+//     the secret model; it runs and resolves via its normal config)
+//   - registered + revoked   -> error (fail closed: an explicit revocation is a
+//     "must not operate" signal and must stop the spawn, not run secret-less)
+//   - registered + active    -> the composed secrets; withheld (revoked) grants
+//     are surfaced as logged denials, not a fatal error
+//
+// Any Compose error other than a benign unknown-principal also fails closed — a
+// composer that cannot answer is never treated as "no secrets."
+func composePluginSecrets(composer SecretComposer, verifier PluginVerifier, plugin string, logger *slog.Logger) (map[string]string, error) {
+	if composer == nil {
+		return nil, nil
+	}
+
+	comp, err := composer.Compose(plugin)
+	if err != nil {
+		if errors.Is(err, vault.ErrUnknownPrincipal) {
+			return nil, nil // opt-out: plugin is not a vault principal
+		}
+		return nil, err // revoked principal or any other error: fail closed
+	}
+
+	// The plugin IS a vault principal about to receive secrets. Re-verify its live
+	// bytes against the recorded keyed fingerprint right before delivery (§3.3) —
+	// closing the window where a binary swapped since the last reload would be
+	// handed this principal's secrets. Fail closed; a non-principal never reaches
+	// here, so attestation gates only the secret path. A nil verifier disables the
+	// gate (deployments not wired for attestation behave as before).
+	if verifier != nil {
+		if vErr := verifier.VerifyIdentity(plugin); vErr != nil {
+			return nil, fmt.Errorf("%w: %v", ErrFingerprintMismatch, vErr)
+		}
+	}
+
+	for _, d := range comp.Denials {
+		logger.Warn("secret withheld from plugin",
+			"plugin", plugin, "secret", d.Secret, "reason", string(d.Reason))
+	}
+	return comp.Secrets, nil
+}

@@ -7,7 +7,9 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
+	"time"
 
 	"github.com/mattjoyce/ductile/internal/config"
 	"github.com/mattjoyce/ductile/internal/doctor"
@@ -67,6 +69,18 @@ func runConfigNoun(args []string) int {
 			return 0
 		}
 		return runConfigCheck(actionArgs)
+	case "schema":
+		if hasHelpFlag(actionArgs) {
+			printConfigSchemaHelp()
+			return 0
+		}
+		return runConfigSchema(actionArgs)
+	case "validate":
+		if hasHelpFlag(actionArgs) {
+			printConfigValidateHelp()
+			return 0
+		}
+		return runConfigValidate(actionArgs)
 	case "show":
 		if hasHelpFlag(actionArgs) {
 			printConfigShowHelp()
@@ -85,10 +99,6 @@ func runConfigNoun(args []string) int {
 			return 0
 		}
 		return runConfigSet(actionArgs)
-	case "token":
-		return runConfigToken(actionArgs)
-	case "scope":
-		return runConfigScope(actionArgs)
 	case "plugin":
 		return runConfigPlugin(actionArgs)
 	case "route":
@@ -210,10 +220,12 @@ func runConfigShow(args []string) int {
 	var configPath, configDir string
 	var jsonOut bool
 
+	var effective bool
 	fs := flag.NewFlagSet("show", flag.ExitOnError)
 	fs.StringVar(&configPath, "config", "", "Path to configuration file or directory")
 	fs.StringVar(&configDir, "config-dir", "", "Path to configuration directory")
 	fs.BoolVar(&jsonOut, "json", false, "Output in structured JSON format")
+	fs.BoolVar(&effective, "effective", false, "Resolve per-plugin defaults and tag each value explicit/default")
 
 	var entity string
 	remainingArgs := args
@@ -230,6 +242,15 @@ func runConfigShow(args []string) int {
 		} else {
 			remainingArgs = nil
 		}
+	}
+
+	if effective {
+		cfg, err := loadRawConfigForTool(configPath, configDir)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Load error: %v\n", err)
+			return 1
+		}
+		return runConfigShowEffective(cfg, entity, jsonOut)
 	}
 
 	cfg, err := loadConfigForToolWithDir(configPath, configDir)
@@ -262,10 +283,12 @@ func runConfigGet(args []string) int {
 	var configPath, configDir string
 	var jsonOut bool
 
+	var effective bool
 	fs := flag.NewFlagSet("get", flag.ExitOnError)
 	fs.StringVar(&configPath, "config", "", "Path to configuration file or directory")
 	fs.StringVar(&configDir, "config-dir", "", "Path to configuration directory")
 	fs.BoolVar(&jsonOut, "json", false, "Output in structured JSON format")
+	fs.BoolVar(&effective, "effective", false, "Resolve a plugin field's effective value and tag it explicit/default")
 
 	var path string
 	remainingArgs := args
@@ -285,8 +308,17 @@ func runConfigGet(args []string) int {
 	}
 
 	if path == "" {
-		fmt.Fprintf(os.Stderr, "Usage: ductile config get <path> [--json]\n")
+		fmt.Fprintf(os.Stderr, "Usage: ductile config get <path> [--json] [--effective]\n")
 		return 1
+	}
+
+	if effective {
+		cfg, err := loadRawConfigForTool(configPath, configDir)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Load error: %v\n", err)
+			return 1
+		}
+		return runConfigGetEffective(cfg, path, jsonOut)
 	}
 
 	cfg, err := loadConfigForToolWithDir(configPath, configDir)
@@ -315,8 +347,31 @@ func loadConfigForTool(configPath string) (*config.Config, error) {
 }
 
 func loadConfigForToolWithDir(configPath, configDir string) (*config.Config, error) {
+	target, err := resolveConfigTargetForTool(configPath, configDir)
+	if err != nil {
+		return nil, err
+	}
+	return config.Load(target)
+}
+
+// loadRawConfigForTool resolves the --config/--config-dir flags and loads the
+// config WITHOUT folding per-plugin defaults (config.LoadRaw), for the effective
+// view which needs the raw values to tell explicit from inherited.
+func loadRawConfigForTool(configPath, configDir string) (*config.Config, error) {
+	target, err := resolveConfigTargetForTool(configPath, configDir)
+	if err != nil {
+		return nil, err
+	}
+	return config.LoadRaw(target)
+}
+
+// resolveConfigTargetForTool turns the --config/--config-dir flag pair into a
+// single config path (discovering the default location when neither is given).
+// Split out from loadConfigForToolWithDir so the effective view can feed the same
+// resolved target to config.LoadRaw instead of config.Load.
+func resolveConfigTargetForTool(configPath, configDir string) (string, error) {
 	if configPath != "" && configDir != "" {
-		return nil, fmt.Errorf("use only one of --config or --config-dir")
+		return "", fmt.Errorf("use only one of --config or --config-dir")
 	}
 	if configDir != "" {
 		configPath = configDir
@@ -324,11 +379,149 @@ func loadConfigForToolWithDir(configPath, configDir string) (*config.Config, err
 	if configPath == "" {
 		discovered, err := config.DiscoverConfigDir()
 		if err != nil {
-			return nil, err
+			return "", err
 		}
 		configPath = discovered
 	}
-	return config.Load(configPath)
+	return configPath, nil
+}
+
+// effEntry is one resolved plugin field in display order: its dotted key, the
+// value in force, and whether that value was set in the file (explicit) or
+// inherited from code defaults (default).
+type effEntry struct {
+	Key    string
+	Value  any
+	Source string
+}
+
+// effectiveJSONField is the per-field JSON shape for `--effective --json`.
+type effectiveJSONField struct {
+	Value  any    `json:"value"`
+	Source string `json:"source"`
+}
+
+// orderedEffectiveFields flattens a resolved PluginConf + its source map into a
+// stable, display-ordered list (core fields first, then sorted per-command
+// timeout overrides).
+func orderedEffectiveFields(eff config.PluginConf, src map[string]string) []effEntry {
+	entries := []effEntry{
+		{"enabled", eff.Enabled, src["enabled"]},
+		{"retry.max_attempts", eff.Retry.MaxAttempts, src["retry.max_attempts"]},
+		{"retry.backoff_base", eff.Retry.BackoffBase, src["retry.backoff_base"]},
+		{"timeouts.poll", eff.Timeouts.Poll, src["timeouts.poll"]},
+		{"timeouts.handle", eff.Timeouts.Handle, src["timeouts.handle"]},
+		{"timeouts.health", eff.Timeouts.Health, src["timeouts.health"]},
+		{"timeouts.init", eff.Timeouts.Init, src["timeouts.init"]},
+		{"circuit_breaker.threshold", eff.CircuitBreaker.Threshold, src["circuit_breaker.threshold"]},
+		{"circuit_breaker.reset_after", eff.CircuitBreaker.ResetAfter, src["circuit_breaker.reset_after"]},
+		{"max_outstanding_polls", eff.MaxOutstandingPolls, src["max_outstanding_polls"]},
+		{"parallelism", eff.Parallelism, src["parallelism"]},
+	}
+	if len(eff.Timeouts.Overrides) > 0 {
+		ovKeys := make([]string, 0, len(eff.Timeouts.Overrides))
+		for k := range eff.Timeouts.Overrides {
+			ovKeys = append(ovKeys, k)
+		}
+		sort.Strings(ovKeys)
+		for _, k := range ovKeys {
+			entries = append(entries, effEntry{"timeouts." + k, eff.Timeouts.Overrides[k], src["timeouts."+k]})
+		}
+	}
+	return entries
+}
+
+// effDisplayValue renders durations as their human string (e.g. 5m0s) and
+// everything else verbatim, for both the human and JSON effective views.
+func effDisplayValue(v any) any {
+	if d, ok := v.(time.Duration); ok {
+		return d.String()
+	}
+	return v
+}
+
+// effectiveTargetPlugins resolves which configured plugins the effective view
+// covers: the named one, or all (sorted) when no entity is given.
+func effectiveTargetPlugins(cfg *config.Config, entity string) ([]string, error) {
+	if entity != "" {
+		if _, ok := cfg.Plugins[entity]; !ok {
+			return nil, fmt.Errorf("--effective applies to a configured plugin; %q is not one", entity)
+		}
+		return []string{entity}, nil
+	}
+	names := make([]string, 0, len(cfg.Plugins))
+	for n := range cfg.Plugins {
+		names = append(names, n)
+	}
+	sort.Strings(names)
+	return names, nil
+}
+
+// runConfigShowEffective renders the resolved plugin config(s) with per-field
+// provenance. cfg must be raw (config.LoadRaw) so explicit vs default is real.
+func runConfigShowEffective(cfg *config.Config, entity string, jsonOut bool) int {
+	names, err := effectiveTargetPlugins(cfg, entity)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		return 1
+	}
+	if jsonOut {
+		out := make(map[string]map[string]effectiveJSONField, len(names))
+		for _, n := range names {
+			eff, src := config.EffectivePluginConf(cfg.Plugins[n], cfg.Service.MaxWorkers)
+			fields := make(map[string]effectiveJSONField)
+			for _, e := range orderedEffectiveFields(eff, src) {
+				fields[e.Key] = effectiveJSONField{Value: effDisplayValue(e.Value), Source: e.Source}
+			}
+			out[n] = fields
+		}
+		data, _ := json.MarshalIndent(out, "", "  ")
+		fmt.Println(string(data))
+		return 0
+	}
+	for i, n := range names {
+		if i > 0 {
+			fmt.Println()
+		}
+		fmt.Printf("plugin: %s\n", n)
+		eff, src := config.EffectivePluginConf(cfg.Plugins[n], cfg.Service.MaxWorkers)
+		for _, e := range orderedEffectiveFields(eff, src) {
+			fmt.Printf("  %s: %v (%s)\n", e.Key, effDisplayValue(e.Value), e.Source)
+		}
+	}
+	return 0
+}
+
+// runConfigGetEffective resolves a single effective plugin value. path is
+// <plugin> (whole resolved block) or <plugin>.<field> (e.g. birda.timeouts.handle).
+func runConfigGetEffective(cfg *config.Config, path string, jsonOut bool) int {
+	parts := strings.SplitN(path, ".", 2)
+	name := parts[0]
+	if _, ok := cfg.Plugins[name]; !ok {
+		fmt.Fprintf(os.Stderr, "Error: --effective applies to a configured plugin; %q is not one\n", name)
+		return 1
+	}
+	// Whole-plugin request: delegate to the show renderer (which resolves once).
+	if len(parts) == 1 {
+		return runConfigShowEffective(cfg, name, jsonOut)
+	}
+
+	eff, src := config.EffectivePluginConf(cfg.Plugins[name], cfg.Service.MaxWorkers)
+	field := parts[1]
+	for _, e := range orderedEffectiveFields(eff, src) {
+		if e.Key != field {
+			continue
+		}
+		if jsonOut {
+			data, _ := json.MarshalIndent(effectiveJSONField{Value: effDisplayValue(e.Value), Source: e.Source}, "", "  ")
+			fmt.Println(string(data))
+		} else {
+			fmt.Printf("%v (%s)\n", effDisplayValue(e.Value), e.Source)
+		}
+		return 0
+	}
+	fmt.Fprintf(os.Stderr, "Error: %q is not an effective field of plugin %q\n", field, name)
+	return 1
 }
 
 func applyConfigSetFallback(configTarget, path, value string) error {
@@ -392,12 +585,14 @@ func hasHelpFlag(args []string) bool {
 
 func printConfigNounHelp(w *os.File) {
 	_, _ = fmt.Fprintln(w, "Usage: ductile config <action> [flags]")
-	_, _ = fmt.Fprintln(w, "Actions: lock, check, show, get, set, token, scope, plugin, route, webhook, init, backup, restore")
+	_, _ = fmt.Fprintln(w, "Actions: lock, check, schema, validate, show, get, set, plugin, route, webhook, init, backup, restore")
 }
 
 func printConfigLockHelp() {
 	fmt.Println("Usage: ductile config lock [--config PATH | --config-dir PATH] [-v|--verbose] [--dry-run]")
-	fmt.Println("Authorize current configuration state by regenerating scope file integrity hashes.")
+	fmt.Println("Authorize the config files by regenerating their integrity hashes. Recorded plugin")
+	fmt.Println("attestations are preserved (de-configured ones pruned); use 'ductile plugin lock' to")
+	fmt.Println("(re-)attest a plugin's bytes.")
 }
 
 func printConfigCheckHelp() {
@@ -406,13 +601,17 @@ func printConfigCheckHelp() {
 }
 
 func printConfigShowHelp() {
-	fmt.Println("Usage: ductile config show [entity] [--config PATH | --config-dir PATH] [--json]")
+	fmt.Println("Usage: ductile config show [entity] [--config PATH | --config-dir PATH] [--json] [--effective]")
 	fmt.Println("Show full resolved configuration or a filtered entity node.")
+	fmt.Println("--effective [plugin]: render each plugin's in-force values (folding code defaults)")
+	fmt.Println("  with every field tagged (explicit) when file-set or (default) when inherited.")
 }
 
 func printConfigGetHelp() {
-	fmt.Println("Usage: ductile config get <path> [--config PATH | --config-dir PATH] [--json]")
+	fmt.Println("Usage: ductile config get <path> [--config PATH | --config-dir PATH] [--json] [--effective]")
 	fmt.Println("Read a single value from the resolved configuration.")
+	fmt.Println("--effective <plugin>[.<field>]: resolve a plugin's in-force value(s) with explicit/default tags")
+	fmt.Println("  e.g. ductile config get --effective birda.timeouts.handle")
 }
 
 func printConfigSetHelp() {
@@ -422,13 +621,15 @@ func printConfigSetHelp() {
 
 func runConfigCheck(args []string) int {
 	var configPath, configDir string
-	var strict, jsonOut bool
+	var strict, strictAlias, jsonOut bool
 	var format string
 
 	fs := flag.NewFlagSet("check", flag.ExitOnError)
 	fs.StringVar(&configPath, "config", "", "Path to configuration")
 	fs.StringVar(&configDir, "config-dir", "", "Path to configuration directory")
-	fs.BoolVar(&strict, "strict", false, "Treat warnings as errors")
+	fs.BoolVar(&strict, "fail-on-warnings", false, "Treat warnings as errors")
+	// --strict is the deprecated alias for --fail-on-warnings, kept for back-compat.
+	fs.BoolVar(&strictAlias, "strict", false, "Deprecated alias for --fail-on-warnings")
 	fs.StringVar(&format, "format", "human", "Output format (human, json)")
 	// Handle -json alias for format=json
 	fs.BoolVar(&jsonOut, "json", false, "Output in JSON")
@@ -436,6 +637,11 @@ func runConfigCheck(args []string) int {
 	if err := fs.Parse(args); err != nil {
 		fmt.Fprintf(os.Stderr, "Flag error: %v\n", err)
 		return 1
+	}
+
+	if strictAlias {
+		fmt.Fprintln(os.Stderr, "Note: --strict is deprecated; use --fail-on-warnings")
+		strict = true
 	}
 
 	if jsonOut {
@@ -571,18 +777,33 @@ func runConfigHashUpdate(args []string) int {
 				fmt.Fprintf(os.Stderr, "Failed to load config for plugin locking in %s: %v\n", dir, err)
 				return 1
 			}
-			resolved, err := resolveConfiguredPluginFingerprints(cfg, configPath)
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "Failed to resolve plugin fingerprints in %s: %v\n", dir, err)
-				return 1
+			// §3.1 (ADR Plugin Attestation): a routine `config lock` re-hashes the
+			// config files only and PRESERVES the recorded plugin_fingerprints for
+			// still-configured plugins (pruning de-configured ones). It never re-
+			// hashes plugin bytes — that closes Threat A (lock-laundering): a lock
+			// done for an unrelated reason can no longer bless a swapped binary.
+			// Attestation is the explicit, per-plugin act of `ductile plugin lock`.
+			// This path needs no vault nonce (nothing keyed is computed here).
+			configured := make(map[string]bool, len(cfg.Plugins))
+			for name, pc := range cfg.Plugins {
+				configured[name] = pc.Enabled
 			}
-			if isVerbose {
-				for _, rp := range resolved {
-					fmt.Printf("  DISCOVER [plugin] %s manifest=%s entrypoint=%s enabled=%t\n",
-						rp.Name, rp.ManifestPath, rp.EntrypointPath, rp.Enabled)
+			var preserved []config.PluginFingerprint
+			if existing, lerr := config.LoadChecksums(dir); lerr == nil {
+				preserved = config.PreservePluginFingerprints(existing.PluginFingerprints, configured)
+				if isVerbose {
+					for _, fp := range preserved {
+						fmt.Printf("  PRESERVE [plugin] %s manifest=%s entrypoint=%s\n",
+							fp.Name, fp.ManifestPath, fp.EntrypointPath)
+					}
+					for _, fp := range existing.PluginFingerprints {
+						if _, ok := configured[fp.Name]; !ok {
+							fmt.Printf("  PRUNE [plugin] %s (no longer configured)\n", fp.Name)
+						}
+					}
 				}
 			}
-			if err := config.GenerateChecksumsWithPlugins(files, resolved, dryRun); err != nil {
+			if err := config.GenerateChecksumsWithFingerprints(files, preserved, dryRun); err != nil {
 				fmt.Fprintf(os.Stderr, "Failed to lock config in %s: %v\n", dir, err)
 				return 1
 			}
@@ -600,7 +821,7 @@ func runConfigHashUpdate(args []string) int {
 			return 1
 		}
 
-		scopeFiles := []string{"tokens.yaml", "webhooks.yaml"}
+		scopeFiles := []string{"webhooks.yaml"}
 		report, err := config.GenerateChecksumsWithReport(dir, scopeFiles, dryRun)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Failed to lock config in %s: %v\n", dir, err)

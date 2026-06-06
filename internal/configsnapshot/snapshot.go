@@ -21,7 +21,9 @@ import (
 
 const (
 	// SnapshotFormat is the serialization version for config_snapshots payloads.
-	SnapshotFormat = 1
+	// v2: secret-use entries serialize as {name, key} sourced from the vault
+	// (epic #48 retired the tokens.yaml shape: scopes_file/scopes_hash/created_at).
+	SnapshotFormat = 2
 
 	ReasonStartup = "startup"
 	ReasonReload  = "reload"
@@ -283,19 +285,21 @@ func sanitizeConfig(cfg *config.Config) (map[string]any, []SecretUse) {
 		})
 	}
 
-	tokenByName := make(map[string]string, len(cfg.Tokens))
-	tokens := make([]map[string]any, 0, len(cfg.Tokens))
-	for _, token := range cfg.Tokens {
-		tokenByName[token.Name] = token.Key
-		purpose := "tokens." + token.Name + ".key"
-		secretUses = append(secretUses, secretUse(purpose, token.Name, "tokens.yaml", token.Key))
+	// Secrets resolve from the vault (epic #48): cfg.ResolvedSecrets is the
+	// projected name->value table. Emit names (redacted) in deterministic order.
+	tokenByName := cfg.ResolvedSecrets
+	secretNames := make([]string, 0, len(tokenByName))
+	for name := range tokenByName {
+		secretNames = append(secretNames, name)
+	}
+	sort.Strings(secretNames)
+	tokens := make([]map[string]any, 0, len(secretNames))
+	for _, name := range secretNames {
+		purpose := "secret." + name
+		secretUses = append(secretUses, secretUse(purpose, name, "vault", tokenByName[name]))
 		tokens = append(tokens, map[string]any{
-			"name":        token.Name,
-			"key":         "[redacted:" + purpose + "]",
-			"scopes_file": token.ScopesFile,
-			"scopes_hash": token.ScopesHash,
-			"created_at":  token.CreatedAt,
-			"description": token.Description,
+			"name": name,
+			"key":  "[redacted:" + purpose + "]",
 		})
 	}
 
@@ -309,7 +313,7 @@ func sanitizeConfig(cfg *config.Config) (map[string]any, []SecretUse) {
 				if endpoint.Name == "" {
 					purpose = "webhooks." + endpoint.Path + ".secret_ref"
 				}
-				secretUses = append(secretUses, secretUsePresent(purpose, endpoint.SecretRef, "tokens.yaml", value, present))
+				secretUses = append(secretUses, secretUsePresent(purpose, endpoint.SecretRef, "vault", value, present))
 			}
 			endpoints = append(endpoints, map[string]any{
 				"name":             endpoint.Name,
@@ -372,7 +376,7 @@ func sanitizeConfig(cfg *config.Config) (map[string]any, []SecretUse) {
 			"job_log_retention":   durationString(cfg.Service.JobLogRetention),
 			"job_queue_retention": durationString(cfg.Service.JobQueueRetention),
 			"max_workers":         cfg.Service.MaxWorkers,
-			"strict_mode":         cfg.Service.StrictMode,
+			"admission":           renderAdmission(cfg.Service.AdmissionPolicy()),
 			"allow_symlinks":      cfg.Service.AllowSymlinks,
 		},
 		"state": map[string]any{
@@ -548,6 +552,18 @@ func durationString(d time.Duration) string {
 		return ""
 	}
 	return d.String()
+}
+
+// renderAdmission renders the resolved (alias-applied) admission policy so the
+// snapshot reflects what the daemon actually enforces, not the raw strict_mode
+// alias — there is one authoritative admission view, not two.
+func renderAdmission(a config.AdmissionConfig) map[string]any {
+	return map[string]any{
+		"verify_integrity_on_boot": a.VerifyIntegrityOnBoot,
+		"fail_on_drift":            a.FailOnDrift,
+		"validate_config_on_boot":  a.ValidateConfigOnBoot,
+		"require_api_auth":         a.RequireAPIAuth,
+	}
 }
 
 func renderRetry(retry *config.RetryConfig) any {

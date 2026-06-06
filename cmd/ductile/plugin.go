@@ -39,6 +39,12 @@ func runPluginNoun(args []string) int {
 			return 0
 		}
 		return runPluginRun(actionArgs)
+	case "lock":
+		if hasHelpFlag(actionArgs) {
+			printPluginLockHelp()
+			return 0
+		}
+		return runPluginLock(actionArgs)
 	case "help":
 		printPluginNounHelp(os.Stdout)
 		return 0
@@ -51,7 +57,7 @@ func runPluginNoun(args []string) int {
 
 func printPluginNounHelp(w *os.File) {
 	_, _ = fmt.Fprintln(w, "Usage: ductile plugin <action>")
-	_, _ = fmt.Fprintln(w, "Actions: list, run")
+	_, _ = fmt.Fprintln(w, "Actions: list, run, lock")
 }
 
 func printPluginListHelp() {
