@@ -707,6 +707,23 @@ func (d *Dispatcher) spawnPlugin(
 		if err != nil {
 			return nil, protocol.ResponseCompat{}, nil, nil, "", 0, fmt.Errorf("resolve worker: %w", err)
 		}
+		// Bind the grant to the plugin's fingerprint (#93): a binary swapped since
+		// its grant is downgraded to the most-restricted tier so it cannot inherit a
+		// trusted worker's siblings (fail-closed if there is nothing to downgrade to).
+		granted := resolved
+		resolved, err = bindWorkerToFingerprint(resolved, d.cfg, pluginName, d.pluginVerifier)
+		if err != nil {
+			return nil, protocol.ResponseCompat{}, nil, nil, "", 0, fmt.Errorf("bind worker to fingerprint: %w", err)
+		}
+		if resolved.Source == WorkerDowngraded {
+			logger.Warn("privsep: fingerprint mismatch — worker grant downgraded",
+				"plugin", pluginName, "from", granted.Name, "to", resolved.Name)
+			if d.events != nil {
+				d.events.Publish("plugin.worker_downgraded", map[string]any{
+					"plugin": pluginName, "from": granted.Name, "to": resolved.Name,
+				})
+			}
+		}
 	}
 	executor := newSubprocessExecutor(d.events, d.cfg.Service.PluginEnvPassthrough, resolved)
 	return executor.execute(ctx, pluginName, entrypoint, req, timeout, logger)
