@@ -8,12 +8,13 @@ tags: [privsep, epic]
 # Privsep — uid separation (worker users) (EPIC)
 
 > [!status] WHERE WE'RE UP TO  *(a resuming agent reads this first; keep it current)*
-> - **State:** ADR accepted; **#92 tracer, #84 workers-map, #85 grant model — all DONE.** Resolve
->   half complete (resolveWorker: granted/default/unconfined, fail-closed, authority by construction).
-> - **Next action:** [[86-privsep-spawn-uid-drop]] — the *enforce* half: boot gate (capability ×
->   workers must agree), typed `plugin.drop_failed` event (no retry), generalize the drop. Then
->   [[93-privsep-fingerprint-bind-grant]] binds the grant to the fingerprint.
-> - **Done:** #92, #84, #85 — **Doing:** — **Branch:** `feat/privsep-uid-separation` (committed, not pushed).
+> - **State:** ADR accepted; **#92, #84, #85, #86 all DONE.** Resolve + enforce both complete and
+>   proven on privileged Linux: boot gate (capability × workers agree or refuse; `service.unconfined`
+>   override), drop per granted plugin, typed `plugin.drop_failed` (terminal), wall bites (EACCES).
+> - **Next action:** [[87-privsep-filesystem-permissions]] (full secrets surface `0600` + per-worker
+>   `0700` dirs, boot reconciliation fail-closed). Then [[88-privsep-deploy-systemd-launchd]] (prove
+>   under only `CAP_SETUID`, not full root), [[93-privsep-fingerprint-bind-grant]], [[90-privsep-negative-test-suite]].
+> - **Done:** #92, #84, #85, #86 — **Doing:** — **Branch:** `feat/privsep-uid-separation` (committed, not pushed).
 > - **Update rule:** when a card's `status:` changes, update this block + the table below.
 
 Make the secret-scoping wall **real**. Today plugins run as the gateway's own OS user
@@ -41,7 +42,7 @@ privileged (`CAP_SETUID`) gateway dropping privilege at spawn.
 | 84 | [[84-privsep-workers-table]] — two worker tiers in config (table deferred) | **done** | 92 |
 | 85 | [[85-privsep-per-plugin-worker-grant]] — per-plugin `worker:` grant (*which-worker*) | **done** | 84 |
 | 93 | [[93-privsep-fingerprint-bind-grant]] — bind grant to fingerprint (swap defence) | backlog | 85 |
-| 86 | [[86-privsep-spawn-uid-drop]] — uid/gid drop, fail-closed + group-reset | backlog | 84, 85 |
+| 86 | [[86-privsep-spawn-uid-drop]] — uid/gid drop, fail-closed + group-reset | **done** | 84, 85 |
 | 87 | [[87-privsep-filesystem-permissions]] — full secrets surface + per-worker dirs | backlog | 86 |
 | 88 | [[88-privsep-deploy-systemd-launchd]] — deploy host 1 (caps, never setuid) | backlog | 86 |
 | 90 | [[90-privsep-negative-test-suite]] — CI gate aggregating the negative tests | backlog | 86, 87 |

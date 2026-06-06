@@ -1,6 +1,6 @@
 ---
 id: 86
-status: backlog
+status: done
 priority: High
 blocked_by: [84, 85]
 tags: [privsep, dispatch, spawn]
@@ -54,6 +54,23 @@ groups provably reset; a refused drop fails closed with a typed `plugin.drop_fai
 never confused with a missing binary); the boot gate refuses on capability/workers disagreement
 (both mismatch directions) and on a non-Unix host with workers configured — unless `service.unconfined:
 true` is set; the no-workers+no-capability path = today's behaviour byte-for-byte.
+
+## Done (2026-06-06)
+- **Boot gate** (`internal/dispatch/bootgate.go` + wired in `cmd/ductile/runtime.go`): pure
+  `evaluateBootGate` (capability × workers must agree → refuse on disagreement; `service.unconfined`
+  override) — 8 cases tested. Platform probe `hasDropCapability` (root, or Linux CAP_SETUID/SETGID via
+  `/proc/self/status`), verified `true` as root on the Dell. Refuse aborts boot; enforce/unconfined/override
+  logged. `service.unconfined` config field added.
+- **Enforce gate:** `Dispatcher.enforcePrivsep` (`WithPrivsepEnforce`, set from the boot gate). The drop
+  is already general (every granted plugin, from the tracer); when not enforcing (dev/override) resolution
+  is skipped and plugins run at the gateway uid — today's behaviour byte-for-byte.
+- **Drop-failed contract:** `ErrWorkerDropFailed` + a `plugin.drop_failed` event, distinct from a missing
+  binary; the dispatcher classifies it **terminal (never retried)**. Verified on macOS (the unprivileged
+  EPERM-at-Start path is a typed drop failure) and re-verified on privileged Linux (wall still bites).
+- **Groups reset** to the worker's gid; **fail-closed** throughout.
+- **Next:** [[87-privsep-filesystem-permissions]] (generalize perms + per-worker dirs),
+  [[88-privsep-deploy-systemd-launchd]] (prove the drop under *only* CAP_SETUID, not full root),
+  [[93-privsep-fingerprint-bind-grant]], [[90-privsep-negative-test-suite]] (CI aggregate).
 
 ## Narrative
 - **Source:** PrivSec ADR §3 Layer 1b + §8 (the honest botched-drop risk).
