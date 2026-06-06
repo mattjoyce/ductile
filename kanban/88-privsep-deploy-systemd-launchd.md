@@ -1,6 +1,6 @@
 ---
 id: 88
-status: backlog
+status: done
 priority: Normal
 blocked_by: [86]
 tags: [privsep, deploy, systemd, launchd]
@@ -31,6 +31,20 @@ while, *then* do the Mac. Don't light up all hosts at once.
 **Acceptance:** the Linux host boots with exactly `CAP_SETUID`+`CAP_SETGID` (not full root),
 drops plugins to workers, binary has no setuid bit, utility subcommands still run as the
 caller and can't read the `0600` key. Mac follows once Linux is observed stable.
+
+## Done — Linux/systemd (2026-06-06)
+- **Templates shipped** (`deploy/systemd/`): `ductile.service` (User=ductile, `AmbientCapabilities=CAP_SETUID
+  CAP_SETGID`, `CapabilityBoundingSet=` same — **not** root; binary never setuid), `ductile-workers.sysusers.conf`
+  (stable worker accounts), `ductile-workers.tmpfiles.conf` (per-worker `0700` dirs owned by the workers).
+- **CAP_CHOWN finding (surfaced here):** a cap-only gateway can't chown worker dirs → they're init-provisioned
+  (tmpfiles.d) and the gateway *verifies* fail-closed (#87 `reconcileWorkerDir` refined accordingly).
+- **Proven on real systemd (Dell, `systemd-run`):** with **only** the two ambient caps (non-root, uid 1000) a
+  plugin drops to the worker uid (`TestPrivsepDropUnderCapabilityOnly` PASS); **without** the caps the confined
+  drop fails closed (`TestPrivsepConfinedSpawnFailsClosedWithoutPrivilege` PASS, cap-only test SKIPS — not a false pass).
+  This is the claim the full-root container could not show.
+- **Docs:** `docs/DEPLOYMENT.md §5b` (install steps, config `workers:` map, boot-gate behaviour, unprivileged-utility note).
+- **Deferred to [[95-privsep-launchd-and-live-rollout]]:** the Mac/launchd port + the live-host rollout
+  (Thinkpad #49 / Mac m1 #67) — the ADR's "one host → observe → next" step, an ops action, not code.
 
 ## Narrative
 - **Source:** PrivSec ADR §5 (per-host reality) + §11. Same model as sshd/nginx/CI runners.

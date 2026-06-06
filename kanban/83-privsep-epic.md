@@ -8,13 +8,12 @@ tags: [privsep, epic]
 # Privsep — uid separation (worker users) (EPIC)
 
 > [!status] WHERE WE'RE UP TO  *(a resuming agent reads this first; keep it current)*
-> - **State:** ADR accepted; **#92, #84, #85, #86, #87 all DONE** — resolve + enforce + filesystem
->   floor, all proven on privileged Linux. Boot gate, drop, typed drop-failed, secrets-surface lock,
->   per-worker 0700 dirs. The privsep *mechanism* is complete; what remains is deploy, swap-defence, CI.
-> - **Next action:** [[88-privsep-deploy-systemd-launchd]] — prove the drop under *only* `CAP_SETUID`
->   (not full root) + ship `sysusers.d`. Then [[93-privsep-fingerprint-bind-grant]],
+> - **State:** ADR accepted; **#92, #84, #85, #86, #87, #88 DONE.** Mechanism + Linux systemd deploy
+>   complete; drop **proven under only CAP_SETUID+CAP_SETGID** (not root) on real systemd. Mac/launchd
+>   + live rollout carved to [[95-privsep-launchd-and-live-rollout]].
+> - **Next action:** [[93-privsep-fingerprint-bind-grant]] (bind grant→fingerprint, reuse #12), then
 >   [[90-privsep-negative-test-suite]] (CI aggregate), [[89-privsep-deploy-docker-unraid]] (last).
-> - **Done:** #92, #84, #85, #86, #87 — **Doing:** — **Branch:** `feat/privsep-uid-separation` (pushed to origin).
+> - **Done:** #92, #84, #85, #86, #87, #88 — **Doing:** — **Branch:** `feat/privsep-uid-separation` (pushed).
 > - **Update rule:** when a card's `status:` changes, update this block + the table below.
 
 Make the secret-scoping wall **real**. Today plugins run as the gateway's own OS user
@@ -44,7 +43,8 @@ privileged (`CAP_SETUID`) gateway dropping privilege at spawn.
 | 93 | [[93-privsep-fingerprint-bind-grant]] — bind grant to fingerprint (swap defence) | backlog | 85 |
 | 86 | [[86-privsep-spawn-uid-drop]] — uid/gid drop, fail-closed + group-reset | **done** | 84, 85 |
 | 87 | [[87-privsep-filesystem-permissions]] — full secrets surface + per-worker dirs | **done** | 86 |
-| 88 | [[88-privsep-deploy-systemd-launchd]] — deploy host 1 (caps, never setuid) | backlog | 86 |
+| 88 | [[88-privsep-deploy-systemd-launchd]] — deploy host 1 (caps, never setuid) | **done** (Linux) | 86 |
+| 95 | [[95-privsep-launchd-and-live-rollout]] — launchd (Mac) + live rollout (observe-then-next) | backlog | 88 |
 | 90 | [[90-privsep-negative-test-suite]] — CI gate aggregating the negative tests | backlog | 86, 87 |
 | 89 | [[89-privsep-deploy-docker-unraid]] — Docker/Unraid LAST, maybe hygiene-only | backlog | 88 |
 
