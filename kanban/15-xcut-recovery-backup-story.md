@@ -28,6 +28,13 @@ Verified the mechanism already implements this posture (no code change needed be
 So the acceptance ("a documented, tested recovery path exists before the vault is relied on") is met:
 `system backup` + the KeePass-held key is the path.
 
+**Pairing UID added 2026-06-06 (operator request).** Each `system backup` now stamps a 5-char
+unambiguous-alphanumeric UID: printed on completion, written to `uid.txt` at the archive root, and
+recorded as `backup_uid` in `BACKUP_MANIFEST.txt`. The operator saves the UID **with the age key** in
+KeePass so an archive can be paired to the key that decrypts it — needed once `rotate-key` has
+produced more than one key. `newBackupUID` (`cmd/ductile/system_backup.go`), tested by
+`TestBackupUIDWrittenAndPaired`; documented in `docs/SECRETS.md` §"Backup and restore".
+
 **Follow-up (minor, not blocking):** the older `ductile config backup` (`createConfigBackup`,
 `config_manage.go:1396`) does **not** include `vault.age` — operators must use `system backup` for a
 recoverable vault archive. Worth either folding `config backup` into `system backup` or warning on it;

@@ -275,6 +275,12 @@ compromise. The blob and its key are a **pair**, custodied apart:
 - **the age key → out-of-band**, saved by you (e.g. a password manager). The
   `BACKUP_MANIFEST.txt` records the key as excluded with this pairing note.
 
+Each backup also stamps a short **pairing UID** (5 chars, e.g. `K7P2Q`): printed
+on completion, written to `uid.txt` at the archive root, and recorded as
+`backup_uid` in `BACKUP_MANIFEST.txt`. Save this UID **next to the age key** in
+your password manager — once `vault rotate-key` has produced more than one key,
+the UID is how you tell which archive a given key unlocks.
+
 Restore:
 
 ```bash

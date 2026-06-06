@@ -188,7 +188,7 @@ func TestWriteBackupArchiveScopeDB(t *testing.T) {
 		t.Fatalf("writeBackupArchive: %v", err)
 	}
 	got := tarPaths(t, dest)
-	want := []string{"BACKUP_MANIFEST.txt", "db/ductile.sqlite"}
+	want := []string{"BACKUP_MANIFEST.txt", "uid.txt", "db/ductile.sqlite"}
 	if !equalSorted(got, want) {
 		t.Fatalf("scope=db archive contents\n got: %v\nwant: %v", got, want)
 	}
@@ -204,6 +204,7 @@ func TestWriteBackupArchiveScopeConfig(t *testing.T) {
 	got := tarPaths(t, dest)
 	want := []string{
 		"BACKUP_MANIFEST.txt",
+		"uid.txt",
 		"db/ductile.sqlite",
 		"config/.checksums",
 		"config/api.yaml",
@@ -349,6 +350,51 @@ func TestBackupIncludesVaultBlobNotKey(t *testing.T) {
 	body := string(tarReadFile(t, dest, "BACKUP_MANIFEST.txt"))
 	if !strings.Contains(body, "vault.age") || !strings.Contains(body, "out-of-band") {
 		t.Errorf("manifest should record the vault.age + out-of-band-key pairing; got:\n%s", body)
+	}
+}
+
+func TestBackupUIDWrittenAndPaired(t *testing.T) {
+	fx := newBackupFixture(t)
+	cfg := &config.Config{}
+	cfg.State.Path = fx.dbPath
+
+	plan, err := buildBackupPlan(scopeConfig, cfg, fx.configDir, fx.dbPath)
+	if err != nil {
+		t.Fatalf("buildBackupPlan: %v", err)
+	}
+
+	uid := plan.manifest.BackupUID
+	if len(uid) != backupUIDLen {
+		t.Fatalf("backup uid %q length = %d, want %d", uid, len(uid), backupUIDLen)
+	}
+	for _, r := range uid {
+		if !strings.ContainsRune(backupUIDAlphabet, r) {
+			t.Fatalf("backup uid %q contains out-of-alphabet char %q", uid, r)
+		}
+	}
+
+	dest := filepath.Join(t.TempDir(), "out.tar.gz")
+	if err := writeBackupArchive(dest, plan); err != nil {
+		t.Fatalf("writeBackupArchive: %v", err)
+	}
+
+	// uid.txt is present and matches the manifest UID.
+	if got := strings.TrimSpace(string(tarReadFile(t, dest, "uid.txt"))); got != uid {
+		t.Errorf("uid.txt = %q, want manifest uid %q", got, uid)
+	}
+	// The manifest carries the same UID for the pairing record.
+	body := string(tarReadFile(t, dest, "BACKUP_MANIFEST.txt"))
+	if !strings.Contains(body, "backup_uid: "+uid) {
+		t.Errorf("manifest must record backup_uid %q; got:\n%s", uid, body)
+	}
+
+	// Two backups get distinct UIDs.
+	plan2, err := buildBackupPlan(scopeConfig, cfg, fx.configDir, fx.dbPath)
+	if err != nil {
+		t.Fatalf("buildBackupPlan (2): %v", err)
+	}
+	if plan2.manifest.BackupUID == uid {
+		t.Errorf("expected distinct UIDs across backups; both = %q", uid)
 	}
 }
 

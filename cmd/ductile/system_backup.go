@@ -4,6 +4,7 @@ import (
 	"archive/tar"
 	"compress/gzip"
 	"context"
+	"crypto/rand"
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
@@ -11,6 +12,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"math/big"
 	"os"
 	"path/filepath"
 	"sort"
@@ -99,6 +101,7 @@ var configRuntimeExcludes = []string{
 // It is the self-documenting record of what the archive contains, when, and
 // from where.
 type backupManifest struct {
+	BackupUID      string               `yaml:"backup_uid"`
 	DuctileVersion string               `yaml:"ductile_version"`
 	DuctileCommit  string               `yaml:"ductile_commit"`
 	Hostname       string               `yaml:"hostname"`
@@ -127,6 +130,31 @@ type manifestPluginRoot struct {
 type manifestEnvFile struct {
 	ArchivePath string `yaml:"archive_path"`
 	SourcePath  string `yaml:"source_path"`
+}
+
+// backupUIDLen and backupUIDAlphabet define the per-backup pairing code written
+// to uid.txt and BACKUP_MANIFEST.txt. The operator records it alongside the
+// out-of-band age key (e.g. in a password manager) so an archive can be matched
+// to the key that decrypts it — essential once `vault rotate-key` means more
+// than one key has existed. The alphabet omits visually ambiguous characters
+// (0/O, 1/I/L) so the code survives hand-transcription.
+const (
+	backupUIDLen      = 5
+	backupUIDAlphabet = "ABCDEFGHJKMNPQRSTUVWXYZ23456789"
+)
+
+// newBackupUID returns a short random alphanumeric pairing code.
+func newBackupUID() (string, error) {
+	out := make([]byte, backupUIDLen)
+	max := big.NewInt(int64(len(backupUIDAlphabet)))
+	for i := range out {
+		n, err := rand.Int(rand.Reader, max)
+		if err != nil {
+			return "", err
+		}
+		out[i] = backupUIDAlphabet[n.Int64()]
+	}
+	return string(out), nil
 }
 
 // runSystemBackup writes a consistent, scoped snapshot of ductile state to
@@ -216,6 +244,10 @@ func runSystemBackup(args []string) int {
 
 	fmt.Printf("\nbackup written: %s (%d bytes, %.2fs)\n",
 		resolvedDest, info.Size(), time.Since(start).Seconds())
+	fmt.Printf("backup UID: %s — record this with the age key you custody "+
+		"(e.g. in your password manager) so you can pair this archive to the key "+
+		"that decrypts it. The UID is also in uid.txt and BACKUP_MANIFEST.txt.\n",
+		plan.manifest.BackupUID)
 	return 0
 }
 
@@ -271,8 +303,14 @@ func buildBackupPlan(
 		configDir: configDir,
 	}
 
+	uid, err := newBackupUID()
+	if err != nil {
+		return nil, fmt.Errorf("generate backup uid: %w", err)
+	}
+
 	hostname, _ := os.Hostname()
 	plan.manifest = backupManifest{
+		BackupUID:      uid,
 		DuctileVersion: version,
 		DuctileCommit:  gitCommit,
 		Hostname:       hostname,
@@ -325,6 +363,8 @@ func buildBackupPlan(
 				plan.manifest.Warnings = append(plan.manifest.Warnings,
 					"archive contains "+plan.vaultBlobArchive+" (encrypted vault); its age key is "+
 						"EXCLUDED by design — store it out-of-band, restore needs both",
+					"save this backup's UID ("+plan.manifest.BackupUID+", also in uid.txt) with the "+
+						"out-of-band age key so the archive can be paired to its decrypting key",
 					"after `vault rotate-key` the previous key is destroyed, so a vault.age backup is "+
 						"only restorable with the key that was current when the backup was taken")
 			} else if !errors.Is(err, os.ErrNotExist) {
@@ -503,6 +543,12 @@ func writeBackupArchive(dest string, plan *backupPlan) error {
 				return err
 			}
 		}
+	}
+
+	// uid.txt: the pairing code, on its own so an operator can read it without
+	// parsing the manifest. Save it with the out-of-band age key.
+	if err := tarAddBytes(tw, "uid.txt", []byte(plan.manifest.BackupUID+"\n"), 0o644); err != nil {
+		return err
 	}
 
 	manifestYAML, err := yaml.Marshal(plan.manifest)
