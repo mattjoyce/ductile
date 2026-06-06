@@ -830,10 +830,56 @@ func validate(cfg *Config) error {
 		}
 	}
 
+	if err := validateWorkers(cfg); err != nil {
+		return err
+	}
+
 	if err := validateRelayConfig(cfg); err != nil {
 		return err
 	}
 
+	return nil
+}
+
+// validateWorkers checks the privsep `workers` map (PrivSec ADR §5; epic card #84).
+// The map is open — any number of rows is accepted — but each must describe a real,
+// unprivileged, isolated identity:
+//
+//   - uid/gid positive: rejects 0, so a worker can never be root (the whole point is
+//     dropping privilege), and rejects negatives.
+//   - state_dir absolute: each worker owns a persistent directory (#87); a relative
+//     or empty path cannot be reconciled at boot.
+//   - no two workers share a uid: a duplicate uid is *false isolation* — #87 chowns
+//     both state_dirs to one owner and same-uid ptrace/memory access is back, so the
+//     wall is painted on. This is correctness, not ergonomics, hence validated now.
+//
+// Deferred (named in #84): kebab-case naming rules and arbitrary-N ergonomics.
+func validateWorkers(cfg *Config) error {
+	// Deterministic iteration so a config with multiple problems fails the same way
+	// every load (and duplicate-uid errors name a stable pair).
+	names := make([]string, 0, len(cfg.Workers))
+	for name := range cfg.Workers {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+
+	uidOwner := make(map[int]string, len(cfg.Workers))
+	for _, name := range names {
+		w := cfg.Workers[name]
+		if w.UID <= 0 {
+			return fmt.Errorf("workers.%s: uid must be positive (got %d) — a worker is an unprivileged user, never root", name, w.UID)
+		}
+		if w.GID <= 0 {
+			return fmt.Errorf("workers.%s: gid must be positive (got %d)", name, w.GID)
+		}
+		if !filepath.IsAbs(w.StateDir) {
+			return fmt.Errorf("workers.%s: state_dir must be an absolute path (got %q)", name, w.StateDir)
+		}
+		if owner, dup := uidOwner[w.UID]; dup {
+			return fmt.Errorf("workers.%s and workers.%s share uid %d — duplicate uids are false isolation; give each worker a distinct uid", owner, name, w.UID)
+		}
+		uidOwner[w.UID] = name
+	}
 	return nil
 }
 
