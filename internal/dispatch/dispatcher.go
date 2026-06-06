@@ -666,7 +666,14 @@ func (d *Dispatcher) spawnPlugin(
 	timeout time.Duration,
 	logger *slog.Logger,
 ) (*protocol.Response, protocol.ResponseCompat, json.RawMessage, []byte, string, int, error) {
-	executor := newSubprocessExecutor(d.events, d.cfg.Service.PluginEnvPassthrough)
+	// Resolve the plugin's privsep worker from the operator's core config. A grant
+	// to an undefined worker fails the spawn closed rather than silently running
+	// unconfined (PrivSec ADR §4; the fail-closed stance from the 2026-06-06 grill).
+	resolved, err := resolveWorker(d.cfg, pluginName)
+	if err != nil {
+		return nil, protocol.ResponseCompat{}, nil, nil, "", 0, fmt.Errorf("resolve worker: %w", err)
+	}
+	executor := newSubprocessExecutor(d.events, d.cfg.Service.PluginEnvPassthrough, resolved)
 	return executor.execute(ctx, pluginName, entrypoint, req, timeout, logger)
 }
 

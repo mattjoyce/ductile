@@ -18,10 +18,13 @@ type subprocessExecutor struct {
 	// extraEnv lists operator-granted environment variable names passed through
 	// to plugin children on top of the built-in allowlist (see buildPluginEnv).
 	extraEnv []string
+	// worker is the resolved privsep identity this plugin spawns under. The zero
+	// value (Confined=false) means unconfined — spawn at the gateway uid, as today.
+	worker ResolvedWorker
 }
 
-func newSubprocessExecutor(events *events.Hub, extraEnv []string) *subprocessExecutor {
-	return &subprocessExecutor{events: events, extraEnv: extraEnv}
+func newSubprocessExecutor(events *events.Hub, extraEnv []string, worker ResolvedWorker) *subprocessExecutor {
+	return &subprocessExecutor{events: events, extraEnv: extraEnv, worker: worker}
 }
 
 // spawnPlugin spawns the plugin subprocess, writes the request to stdin, and reads the response from stdout.
@@ -46,6 +49,12 @@ func (e *subprocessExecutor) execute(
 	// never receives a copy of the gateway's environment (1a spawn hygiene).
 	cmd.Env = buildPluginEnv(e.extraEnv)
 	configurePluginProcess(cmd)
+	// Compose the privsep uid/gid drop onto the lifecycle-configured command. A
+	// confined worker on a platform that cannot drop fails the spawn closed here —
+	// never a silent run at gateway privilege (PrivSec ADR §3 Layer 1b, §8).
+	if err := applyWorkerCredential(cmd, e.worker); err != nil {
+		return nil, protocol.ResponseCompat{}, nil, nil, "", 0, fmt.Errorf("apply worker credential: %w", err)
+	}
 
 	// Prepare stdin pipe
 	stdin, err := cmd.StdinPipe()
