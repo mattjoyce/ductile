@@ -44,13 +44,18 @@ func TestBindAccountToFingerprint(t *testing.T) {
 		}
 	})
 
-	t.Run("mismatch with no most-restricted tier fails closed (terminal)", func(t *testing.T) {
+	t.Run("mismatch with no most-restricted tier fails closed (terminal, honest taxonomy)", func(t *testing.T) {
 		noUntrusted := &config.Config{Accounts: map[string]config.AccountConf{
 			"default": {UID: 1001, GID: 1001, StateDir: "/w/default"},
 		}}
 		_, err := bindAccountToFingerprint(grantedDefault, noUntrusted, "swapped", fakeFingerprintVerifier{fail: map[string]bool{"swapped": true}})
-		if !errors.Is(err, ErrAccountDropFailed) {
-			t.Fatalf("expected ErrAccountDropFailed (terminal), got %v", err)
+		// This is neither "at spawn" nor "a drop" — it is a missing downgrade tier.
+		// It must carry its own sentinel (O×L F1), NOT borrow ErrAccountDropFailed.
+		if !errors.Is(err, ErrNoDowngradeTarget) {
+			t.Fatalf("expected ErrNoDowngradeTarget, got %v", err)
+		}
+		if errors.Is(err, ErrAccountDropFailed) {
+			t.Fatalf("must NOT reuse ErrAccountDropFailed for a no-tier condition: %v", err)
 		}
 	})
 

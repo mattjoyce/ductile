@@ -835,6 +835,10 @@ func validate(cfg *Config) error {
 		return err
 	}
 
+	if err := validateAccountGrants(cfg); err != nil {
+		return err
+	}
+
 	if err := validateRelayConfig(cfg); err != nil {
 		return err
 	}
@@ -883,6 +887,34 @@ func validateAccounts(cfg *Config) error {
 			return fmt.Errorf("accounts.%s and accounts.%s share uid %d — duplicate uids are false isolation; give each account a distinct uid", owner, name, w.UID)
 		}
 		uidOwner[w.UID] = name
+	}
+	return nil
+}
+
+// validateAccountGrants verifies, at config load, that every plugin's `run_as`
+// grant resolves to an account defined in the `accounts` map (PrivSec ADR §4/§5;
+// luminary review Hickey A3/B3, Brooks F1, O×L F2). validateAccounts proves the host
+// CAN enforce; this proves every declared wall is BUILDABLE — moving a knowable fault
+// from spawn-time/per-plugin/late to boot-time/whole-config/early, consistent with
+// the all-or-refuse stance. An empty grant (no privsep request) is always fine; a
+// grant naming an undefined account (typo, or no accounts map at all) fails closed.
+func validateAccountGrants(cfg *Config) error {
+	// Deterministic ordering so a config with multiple bad grants fails identically
+	// every load.
+	names := make([]string, 0, len(cfg.Plugins))
+	for name := range cfg.Plugins {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+
+	for _, name := range names {
+		grant := cfg.Plugins[name].RunAs
+		if grant == "" {
+			continue // no privsep grant — resolves to default/unconfined at runtime
+		}
+		if _, ok := cfg.Accounts[grant]; !ok {
+			return fmt.Errorf("plugins.%s: run_as names an undefined account %q — define it in the accounts map or remove the grant (a declared wall must be buildable at boot, not fail per-job at first spawn)", name, grant)
+		}
 	}
 	return nil
 }

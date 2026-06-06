@@ -75,7 +75,7 @@ func reconcileSecretPath(path string, euid int) error {
 		}
 	}
 	if info.Mode().Perm()&0o077 != 0 {
-		return fmt.Errorf("privsep: %q has insecure permissions %#o — a account uid could read it", path, info.Mode().Perm())
+		return fmt.Errorf("privsep: %q has insecure permissions %#o — an account uid could read it", path, info.Mode().Perm())
 	}
 	return nil
 }
@@ -85,7 +85,7 @@ func reconcileSecretPath(path string, euid int) error {
 // It is deliberately provision-best-effort, verify-fail-closed. A privileged
 // gateway (root / dev) self-heals: create, chown to the account, chmod 0700. But a
 // cap-only gateway (CAP_SETUID+CAP_SETGID, the ADR §5 "two caps, nothing more")
-// holds NEITHER CAP_CHOWN nor ownership of a account-owned dir, so its chown/chmod
+// holds NEITHER CAP_CHOWN nor ownership of an account-owned dir, so its chown/chmod
 // EPERM — and that is fine *iff* the init layer already provisioned the dir
 // (sysusers.d + tmpfiles.d, #88). The final stat is the real wall: 0700, owned by
 // the account, or fail closed. So the same code is correct under both root and the

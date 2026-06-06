@@ -35,18 +35,18 @@ func (m BootMode) String() string {
 //	capability + no accounts    → REFUSE (privileged daemon, nothing to drop to)
 //	no capability + accounts    → REFUSE (a wall declared the host cannot build)
 //	unconfinedOverride         → unconfined, always (explicit opt-out)
-func evaluateBootGate(capabilityHeld, workersConfigured, unconfinedOverride bool) (BootMode, error) {
+func evaluateBootGate(capabilityHeld, accountsConfigured, unconfinedOverride bool) (BootMode, error) {
 	if unconfinedOverride {
 		return BootUnconfined, nil
 	}
 	switch {
-	case capabilityHeld && workersConfigured:
+	case capabilityHeld && accountsConfigured:
 		return BootEnforce, nil
-	case !capabilityHeld && !workersConfigured:
+	case !capabilityHeld && !accountsConfigured:
 		return BootUnconfined, nil
-	case capabilityHeld && !workersConfigured:
-		return BootUnconfined, fmt.Errorf("privsep boot gate: gateway holds the uid-drop capability but no accounts are configured — refusing to run plugins at gateway privilege (configure a accounts table, launch without CAP_SETUID, or set service.unconfined: true)")
-	default: // !capabilityHeld && workersConfigured
+	case capabilityHeld && !accountsConfigured:
+		return BootUnconfined, fmt.Errorf("privsep boot gate: gateway holds the uid-drop capability but no accounts are configured — refusing to run plugins at gateway privilege (configure an accounts table, launch without CAP_SETUID, or set service.unconfined: true)")
+	default: // !capabilityHeld && accountsConfigured
 		return BootUnconfined, fmt.Errorf("privsep boot gate: accounts are configured but the gateway lacks the uid-drop capability (CAP_SETUID/SETGID) — refusing to run with a wall it cannot enforce (grant the capability via the init system, remove the accounts table, or set service.unconfined: true)")
 	}
 }

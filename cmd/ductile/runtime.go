@@ -625,9 +625,9 @@ func buildRuntime(cfg *config.Config, configPath string, configSource string, re
 	}
 
 	// Privsep boot gate (#86): the capability to drop privilege and a configured
-	// workers table must agree, or the gateway refuses to start — no silent run at
+	// accounts table must agree, or the gateway refuses to start — no silent run at
 	// gateway privilege. Evaluated once here (boot and reload); the result drives
-	// whether the dispatcher drops each plugin to its worker.
+	// whether the dispatcher drops each plugin to its account.
 	privsepMode, gateErr := dispatch.BootGate(cfg)
 	if gateErr != nil {
 		logger.Error("privsep boot gate refused startup", "error", gateErr)
@@ -635,12 +635,27 @@ func buildRuntime(cfg *config.Config, configPath string, configSource string, re
 	}
 	switch {
 	case privsepMode == dispatch.BootEnforce:
-		logger.Info("privsep enforcing: plugins drop to their resolved worker", "workers", len(cfg.Accounts))
+		logger.Info("privsep enforcing: plugins drop to their resolved account", "accounts", len(cfg.Accounts))
+		// Surface the conventional-tier dependencies at boot (luminary review T1/T2):
+		// the `default`/`untrusted` tier roles are matched by NAME in code, so their
+		// absence silently changes posture. Warn loudly rather than fail — both
+		// directions are fail-safe (no default → ungranted run unconfined; no
+		// untrusted → a mismatch fails closed), but the operator must not learn it
+		// per-job at first spawn.
+		if _, ok := cfg.Accounts["default"]; !ok {
+			logger.Warn("privsep: no `default` account tier configured — ungranted plugins will run UNCONFINED (at the gateway uid), not behind a wall")
+		}
+		if _, ok := cfg.Accounts["untrusted"]; !ok {
+			logger.Warn("privsep: no `untrusted` account tier configured — a fingerprint-mismatched plugin has no downgrade target, so its spawn fails closed")
+		}
 		// Reconcile the filesystem floor (#87) before any plugin can spawn: lock the
-		// secrets surface (gateway-owned, 0600/0700) and give each worker its private
+		// secrets surface (gateway-owned, 0600/0700) and give each account its private
 		// 0700 dir. All-or-refuse — a failure here aborts the boot (never run
-		// half-confined). The age key is already enforced fail-closed at load.
-		secretPaths := []string{configPath, cfg.State.Path}
+		// half-confined). The age key is already enforced fail-closed at load. The
+		// surface is single-sourced in dispatch.SecretSurfacePaths and reconciles the
+		// config DIRECTORY, so sibling secret files (tokens, vault blob, .checksums)
+		// are covered even when the config path is a single file (review T4).
+		secretPaths := dispatch.SecretSurfacePaths(cfg, configDir)
 		if err := dispatch.ReconcileAccountFilesystem(cfg, secretPaths); err != nil {
 			logger.Error("privsep filesystem reconciliation failed", "error", err)
 			return nil, err
@@ -649,7 +664,7 @@ func buildRuntime(cfg *config.Config, configPath string, configSource string, re
 		// Unconfined despite a configured/privileged host is the explicit override —
 		// say so loudly so it can never pass unnoticed.
 		logger.Warn("privsep UNCONFINED: plugins run at the gateway uid despite configuration",
-			"workers", len(cfg.Accounts), "unconfined_override", cfg.Service.Unconfined)
+			"accounts", len(cfg.Accounts), "unconfined_override", cfg.Service.Unconfined)
 	}
 
 	disp := dispatch.New(q, st, contextStore, routerEngine, registry, hub, cfg,

@@ -556,11 +556,14 @@ func (d *Dispatcher) executeJob(ctx context.Context, job *queue.Job) {
 			return
 		}
 
-		// A failed privilege drop is a misconfiguration, not a transient fault: fail
-		// terminal and NEVER retry — re-running the same doomed setuid is pointless
-		// churn that masks the misconfig (PrivSec ADR §8; #86). Distinct from a
-		// missing binary, which still flows through the generic spawn-error path.
-		if errors.Is(err, ErrAccountDropFailed) {
+		// A failed privilege drop OR an unbuildable wall (fingerprint mismatch with no
+		// downgrade tier) is a misconfiguration, not a transient fault: fail terminal
+		// and NEVER retry — re-running the same doomed setuid / re-resolving the same
+		// missing tier is pointless churn that masks the misconfig (PrivSec ADR §8;
+		// #86; luminary review O×L F1 split the two causes into distinct sentinels,
+		// both terminal). Distinct from a missing binary, which still flows through the
+		// generic spawn-error path.
+		if errors.Is(err, ErrAccountDropFailed) || errors.Is(err, ErrNoDowngradeTarget) {
 			errMsg := fmt.Sprintf("plugin spawn failed (privsep drop refused): %v", err)
 			jobLogger.Error(errMsg)
 			decision := retryDecision{Retryable: false, Reason: retryReasonDropFailed}

@@ -1,10 +1,19 @@
 package dispatch
 
 import (
+	"errors"
 	"fmt"
 
 	"github.com/mattjoyce/ductile/internal/config"
 )
+
+// ErrNoDowngradeTarget marks a fingerprint-mismatched plugin that cannot be
+// downgraded because no most-restricted tier exists to downgrade TO. It is
+// deliberately distinct from ErrAccountDropFailed (luminary review O×L F1): the
+// kernel never refused a setuid here — the operator simply did not define the
+// downgrade tier, so the spawn is refused fail-closed. The dispatcher treats both
+// sentinels as terminal/no-retry, but the taxonomy must not lie about the cause.
+var ErrNoDowngradeTarget = errors.New("privsep: fingerprint mismatch and no most-restricted tier to downgrade to")
 
 // mostRestrictedAccountName is, by convention in the shipped two-tier model, the
 // isolated tier a fingerprint-mismatched plugin is downgraded to (it never shares
@@ -12,7 +21,7 @@ import (
 // downgrade has no safe target and the spawn fails closed instead.
 const mostRestrictedAccountName = "untrusted"
 
-// AccountDowngraded marks a account identity that was downgraded from its granted
+// AccountDowngraded marks an account identity that was downgraded from its granted
 // tier because the plugin failed fingerprint attestation (#93).
 const AccountDowngraded AccountSource = "downgraded"
 
@@ -41,7 +50,7 @@ func bindAccountToFingerprint(resolved ResolvedAccount, cfg *config.Config, plug
 		restricted, ok := mostRestrictedAccount(cfg)
 		if !ok {
 			return ResolvedAccount{}, fmt.Errorf("%w: plugin %q failed fingerprint attestation and no %q tier exists to downgrade to: %v",
-				ErrAccountDropFailed, plugin, mostRestrictedAccountName, err)
+				ErrNoDowngradeTarget, plugin, mostRestrictedAccountName, err)
 		}
 		return restricted, nil
 	}

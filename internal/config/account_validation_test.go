@@ -66,3 +66,62 @@ func TestValidateAccounts(t *testing.T) {
 		})
 	}
 }
+
+// TestValidateAccountGrants covers the boot-time grant-resolution pass the luminary
+// review (Hickey A3/B3, Brooks F1, O×L F2) asked for: a `run_as` grant naming an
+// account the `accounts` map does not define is a misconfiguration knowable at boot,
+// not a per-job surprise at first spawn. Fail closed at config load.
+func TestValidateAccountGrants(t *testing.T) {
+	accounts := func() map[string]AccountConf {
+		return map[string]AccountConf{
+			"default":   {UID: 1001, GID: 1001, StateDir: "/app/data/accounts/default"},
+			"untrusted": {UID: 1002, GID: 1002, StateDir: "/app/data/accounts/untrusted"},
+		}
+	}
+
+	t.Run("grant naming a defined account is valid", func(t *testing.T) {
+		cfg := &Config{
+			Accounts: accounts(),
+			Plugins: map[string]PluginConf{
+				"withings": {RunAs: "default"},
+				"sys_exec": {RunAs: "untrusted"},
+			},
+		}
+		if err := validateAccountGrants(cfg); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+	})
+
+	t.Run("ungranted plugin (empty run_as) is valid", func(t *testing.T) {
+		cfg := &Config{
+			Accounts: accounts(),
+			Plugins:  map[string]PluginConf{"fetch": {}},
+		}
+		if err := validateAccountGrants(cfg); err != nil {
+			t.Fatalf("ungranted plugin rejected: %v", err)
+		}
+	})
+
+	t.Run("typo'd grant fails at config load, not at spawn", func(t *testing.T) {
+		cfg := &Config{
+			Accounts: accounts(),
+			Plugins:  map[string]PluginConf{"withings": {RunAs: "defualt"}},
+		}
+		err := validateAccountGrants(cfg)
+		if err == nil || !strings.Contains(err.Error(), "undefined account") {
+			t.Fatalf("expected undefined-account rejection, got %v", err)
+		}
+		if !strings.Contains(err.Error(), "withings") || !strings.Contains(err.Error(), "defualt") {
+			t.Fatalf("error should name the plugin and the bad grant, got %v", err)
+		}
+	})
+
+	t.Run("grant with no accounts table at all fails closed", func(t *testing.T) {
+		cfg := &Config{
+			Plugins: map[string]PluginConf{"withings": {RunAs: "default"}},
+		}
+		if err := validateAccountGrants(cfg); err == nil {
+			t.Fatal("a run_as grant with no accounts map must fail closed")
+		}
+	})
+}

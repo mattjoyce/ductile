@@ -44,7 +44,7 @@ type ResolvedAccount struct {
 	Source   AccountSource
 }
 
-// ErrAccountGrantUndefined marks a plugin granted a account that is not defined in
+// ErrAccountGrantUndefined marks a plugin granted an account that is not defined in
 // the `accounts` map — a misconfiguration. Resolution fails closed rather than
 // silently downgrading to unconfined: a declared-but-unbuildable wall is an error,
 // not a quiet run at gateway privilege (the fail-closed stance the grill settled).
