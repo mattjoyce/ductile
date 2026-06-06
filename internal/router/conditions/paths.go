@@ -5,6 +5,35 @@ import (
 	"strings"
 )
 
+// ReferencesRoot reports whether any atomic predicate in the tree reads from the
+// named scope root (e.g. "context"). Used to detect predicates whose scope root
+// is structurally unavailable on a given dispatch path, so an unsatisfiable
+// predicate can be made observable instead of silently evaluating false.
+func ReferencesRoot(cond *Condition, root string) bool {
+	if cond == nil {
+		return false
+	}
+	if trimmed := strings.TrimSpace(cond.Path); trimmed != "" {
+		if before, _, _ := strings.Cut(trimmed, "."); before == root {
+			return true
+		}
+	}
+	for i := range cond.All {
+		if ReferencesRoot(&cond.All[i], root) {
+			return true
+		}
+	}
+	for i := range cond.Any {
+		if ReferencesRoot(&cond.Any[i], root) {
+			return true
+		}
+	}
+	if cond.Not != nil {
+		return ReferencesRoot(cond.Not, root)
+	}
+	return false
+}
+
 // ResolvePath resolves a dotted path from the supported scope roots.
 func ResolvePath(scope Scope, path string) (bool, any, error) {
 	trimmed := strings.TrimSpace(path)

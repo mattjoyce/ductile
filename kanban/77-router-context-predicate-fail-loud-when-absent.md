@@ -1,12 +1,21 @@
 ---
 id: 77
-status: backlog
+status: done
 priority: High
 blocked_by: []
 tags: [router, conditions, predicates, armstrong, silent-misroute, fault, sprint-17]
 ---
 
 # A `context.*` predicate must fail loud when context is structurally absent
+
+**DONE 2026-06-06.** Added `conditions.ReferencesRoot(cond, root)` (`conditions/paths.go`) which
+walks a predicate tree for atomic paths under a scope root. In `engine.go`, both `Next` and
+`NextHook` now emit a `Warn` when a route's `If` references `context.*` **and** the incoming context
+is nil — the structurally-unavailable case — distinguishing it from a present-but-missing key (which
+stays a quiet non-match). Dispatch outcomes are unchanged (still no match), so existing semantics
+hold; the silent dead-route is now observable. Test `TestReferencesRoot` covers atomic/any/all/not
+trees. Router + conditions suites green. Pairs with card 78 (load-time rejection for hooks, where
+context is *always* absent).
 
 **Origin: Hickey×Armstrong audit of #75, 2026-06-06. Finding A1 (Armstrong: silent fault, no supervisor).**
 

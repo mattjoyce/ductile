@@ -2,6 +2,49 @@ package conditions
 
 import "testing"
 
+func TestReferencesRoot(t *testing.T) {
+	tests := []struct {
+		name string
+		cond *Condition
+		root string
+		want bool
+	}{
+		{name: "nil", cond: nil, root: "context", want: false},
+		{name: "atomic context", cond: &Condition{Path: "context.role", Op: OpEq, Value: "admin"}, root: "context", want: true},
+		{name: "atomic payload not context", cond: &Condition{Path: "payload.kind", Op: OpEq, Value: "v"}, root: "context", want: false},
+		{name: "context exact root", cond: &Condition{Path: "context", Op: OpExists}, root: "context", want: true},
+		{name: "payload prefix is not context", cond: &Condition{Path: "context_id.x", Op: OpExists}, root: "context", want: false},
+		{
+			name: "nested in any",
+			cond: &Condition{Any: []Condition{
+				{Path: "payload.a", Op: OpExists},
+				{Path: "context.b", Op: OpExists},
+			}},
+			root: "context", want: true,
+		},
+		{
+			name: "nested in not",
+			cond: &Condition{Not: &Condition{Path: "context.b", Op: OpExists}},
+			root: "context", want: true,
+		},
+		{
+			name: "all branch no context",
+			cond: &Condition{All: []Condition{
+				{Path: "payload.a", Op: OpExists},
+				{Path: "config.b", Op: OpExists},
+			}},
+			root: "context", want: false,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := ReferencesRoot(tt.cond, tt.root); got != tt.want {
+				t.Fatalf("ReferencesRoot = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestResolvePath(t *testing.T) {
 	scope := Scope{
 		Payload: map[string]any{"status": "error", "nested": map[string]any{"count": 2}},

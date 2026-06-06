@@ -157,6 +157,12 @@ func (r *Router) Next(ctx context.Context, req Request) ([]Dispatch, error) {
 				continue
 			}
 			if route.Source.If != nil {
+				if req.SourceContext == nil && conditions.ReferencesRoot(route.Source.If, "context") {
+					r.logger.Warn("trigger predicate references context.* but no source context is available on this path; predicate cannot match",
+						"route_id", route.ID,
+						"pipeline", route.Pipeline,
+						"event_type", eventType)
+				}
 				ok, err := conditions.Eval(route.Source.If, conditions.Scope{Payload: req.Event.Payload, Context: req.SourceContext})
 				if err != nil {
 					// Fault isolation: a poison predicate on one route must not
@@ -238,6 +244,13 @@ func (r *Router) NextHook(ctx context.Context, plugin, signal string, payload ma
 			continue
 		}
 		if route.Source.If != nil {
+			if sourceContext == nil && conditions.ReferencesRoot(route.Source.If, "context") {
+				r.logger.Warn("hook trigger predicate references context.* but no source context is available at hook time; predicate cannot match",
+					"route_id", route.ID,
+					"pipeline", route.Pipeline,
+					"signal", signal,
+					"source_plugin", plugin)
+			}
 			ok, err := conditions.Eval(route.Source.If, conditions.Scope{Payload: payload, Context: sourceContext})
 			if err != nil {
 				// Fault isolation: one hook route's poison predicate must not
