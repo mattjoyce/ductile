@@ -1,11 +1,20 @@
 ---
 id: 1
-status: todo
+status: done
 priority: High
 tags: [vault, epic]
 ---
 
 # Vault — age-backed, ductile-owned secret store (EPIC)
+
+**CLOSED 2026-06-06.** The whole build ladder is shipped: Rung 1 (#2–#7 store / principals /
+secret model / Compose / `vault init` / tests), Architecture (#8 daemon sole-writer + mgmt API),
+Rung 2 (#9 migration + `secret_ref:`), Rung 3 (#10 lifecycle, #11 `vault_audit`), Rung 4 (#12
+attestation upgrade), and cross-cutting (#14 dispatch delivery, #15 recovery/backup, #16 prereqs) —
+**all `done`**. The vault is built and **deployed to all three hosts** (Thinkpad #49 / Mac m1 #67 /
+Unraid #68). The only open rung is **#13 `vaultd` daemon — `wontfix` ("maybe never")**, explicitly
+optional in this epic. Remaining vault-adjacent work lives in its own cards: #48 (retire `tokens.yaml`,
+acceptance deploy-gated) and #30 (live `rotate-key`, YAGNI / blocked on #13).
 
 Build a ductile-owned secret store: a single whole-store **age**-encrypted blob held
 in memory, with registered **principals**, `authorized_principals` grants, a lifecycle
