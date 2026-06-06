@@ -1,6 +1,6 @@
 ---
 id: 84
-status: backlog
+status: done
 priority: Normal
 blocked_by: [92]
 tags: [privsep, config, schema]
@@ -34,6 +34,16 @@ its own worker, config-only, no code change; ADR §5 "one uid + one table row").
 at two); invalid uid/gid/state_dir **and any duplicate uid** fail load loudly; an absent/empty map
 resolves via the #86 boot gate (no capability → `unconfined`; CAP_SETUID → refuse), never a
 synthesized `default`.
+
+## Done (2026-06-06)
+- `validateWorkers` (`internal/config/loader.go`) wired into `validate()`: uid/gid > 0 (so a worker
+  can never be root), `state_dir` absolute, no two workers share a uid (false-isolation guard).
+  Deterministic iteration so multi-problem configs fail identically. 9 cases in `worker_validation_test.go`.
+- Open map confirmed by test (a third `isolated` row loads); absent/empty map is valid here (the
+  capability/refuse boot gate is [[86-privsep-spawn-uid-drop]], not this card).
+- `workers` + `WorkerConf` added to `schemas/config.schema.json` (authoring aid, ADR §11).
+- **Next:** [[85-privsep-per-plugin-worker-grant]] — the *which-worker* grant: no-grant → shared
+  `default` tier (currently resolves to unconfined), and the manifest-hint-ignored authority split.
 
 ## Narrative
 - **Source:** PrivSec ADR §5 ("capability for many, two tiers by default"). The map stays open
