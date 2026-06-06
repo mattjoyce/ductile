@@ -28,43 +28,58 @@ This is a **personal integration server** processing roughly 50 jobs per day. De
 ## 2. Architecture
 
 ```
-┌─────────────────────────────────────────────┐
-│                 ductile                  │
-│              (Go binary, ~1 process)         │
-│                                              │
-│  ┌───────────┐  ┌──────────┐  ┌───────────┐ │
-│  │ Scheduler  │  │ Webhook  │  │   CLI     │ │
-│  │ (heartbeat)│  │ Receiver │  │ Commands  │ │
-│  └─────┬──────┘  └────┬─────┘  └─────┬─────┘ │
-│        │              │              │        │
-│        ▼              ▼              ▼        │
-│  ┌────────────────────────────────────────┐  │
-│  │            WORK QUEUE                  │  │
-│  │  (in-memory, SQLite-backed for         │  │
-│  │   persistence/crash recovery)          │  │
-│  └──────────────────┬─────────────────────┘  │
-│                     │                         │
-│                     ▼                         │
-│  ┌────────────────────────────────────────┐  │
-│  │         DISPATCH LOOP (serial)         │  │
-│  │  pull job → spawn plugin → collect     │  │
-│  │  result → route events → update        │  │
-│  │  state → repeat                        │  │
-│  └──────────────────┬─────────────────────┘  │
-│                     │                         │
-│  ┌──────────┐  ┌────┴─────┐  ┌────────────┐ │
-│  │  Config  │  │  State   │  │  Plugin    │ │
-│  │  Loader  │  │  Store   │  │  Registry  │ │
-│  │  (YAML)  │  │ (SQLite) │  │            │ │
-│  └──────────┘  └──────────┘  └────────────┘ │
-└─────────────────────┬───────────────────────┘
-                      │ stdin/stdout JSON protocol
-        ┌─────────────┼─────────────┐
-        ▼             ▼             ▼
-   ┌─────────┐  ┌──────────┐  ┌─────────┐
-   │withings/ │  │ google/  │  │ notify/ │
-   │ run.py   │  │ run.py   │  │ run.sh  │
-   └─────────┘  └──────────┘  └─────────┘
+┌────────────────────────────────────────────────────────────────────────┐
+│                                ductile                                 │
+│                        (Go binary, ~1 process)                         │
+│                                                                        │
+│   INGRESS (Producers)                                                  │
+│   ┌───────────┐      ┌──────────┐      ┌──────────┐      ┌───────────┐ │
+│   │ Scheduler │      │ Webhook  │      │   API    │      │    CLI    │ │
+│   │ (heartbeat)      │ Receiver │      │  Server  │      │  Commands │ │
+│   └─────┬─────┘      └────┬─────┘      └────┬─────┘      └─────┬─────┘ │
+│         │                 │                 │                  │       │
+│         ▼                 ▼                 ▼                  ▼       │
+│   ┌──────────────────────────────────────────────────────────────────┐ │
+│   │                     SQLite WORK QUEUE (FIFO)                     │◄┼┐
+│   │      (Single source of truth & transactional durability)         │ ││
+│   └──────────────────────────────┬───────────────────────────────────┘ ││
+│                                  │                                     ││
+│                                  ▼                                     ││
+│   ┌──────────────────────────────────────────────────────────────────┐ ││
+│   │                        DISPATCHER LOOP                           │ ││
+│   │   pull job → execute subprocess → collect result → route events   │ ││
+│   └─────────────────┬────────────────────────────────────────────────┘ ││
+│                     │                                                  ││
+│                     │ plugin stdout                                    ││
+│                     ▼                                                  ││
+│             [ emitted events? ]                                        ││
+│                     │                                                  ││
+│            yes      ▼                                                  ││
+│         ┌───────────┴──────────┐                                       ││
+│         │     Event Router     ├─ (calculates downstream dispatches) ──┘│
+│         │  (Pipeline Engine)   │                                        │
+│         └──────────────────────┘                                        │
+│                     │                                                   │
+│                     │ observation/telemetry                           │
+│                     ▼                                                   │
+│         ┌──────────────────────┐        ┌──────────────────────┐        │
+│         │      Event Hub       ├───────►│    TUI / Streaming   │        │
+│         │ (Observation Pub/Sub)│        │    API Observers     │        │
+│         └──────────────────────┘        └──────────────────────┘        │
+│                                                                        │
+│   ┌──────────┐      ┌──────────┐      ┌────────────┐                   │
+│   │  Config  │      │  State   │      │   Plugin   │                   │
+│   │  Loader  │      │  Store   │      │  Registry  │                   │
+│   │  (YAML)  │      │ (SQLite) │      │            │                   │
+│   └──────────┘      └──────────┘      └────────────┘                   │
+└──────────────────────────────────┬─────────────────────────────────────┘
+                                   │ stdin/stdout JSON protocol
+                     ┌─────────────┼─────────────┐
+                     ▼             ▼             ▼
+                ┌─────────┐  ┌──────────┐  ┌─────────┐
+                │withings/ │  │ google/  │  │ notify/ │
+                │ run.py   │  │ run.py   │  │ run.sh  │
+                └─────────┘  └──────────┘  └─────────┘
 ```
 
 ### 2.1 Key Decisions
@@ -75,13 +90,40 @@ This is a **personal integration server** processing roughly 50 jobs per day. De
 | Plugin coupling | Subprocess (JSON over stdin/stdout) | Language-agnostic, fault-isolated, drop-in plugins |
 | Scheduling | Heartbeat with fuzzy intervals | Human-friendly, avoids thundering herd |
 | Execution | Bounded Worker Pool | High-throughput, resource-safe, per-plugin concurrency caps |
-| Routing | Config-declared, fan-out, exact match | Plugins stay dumb, core controls flow |
+| Routing | Config-declared, queue-centric, exact match | Plugins stay dumb; the core controls flow via the Work Queue |
 | Pipeline Execution | Async by default; Sync opt-in | Preserves event-driven core while enabling interactive results |
 | State | SQLite | Proven, zero-ops; append-only `plugin_facts` with derived compatibility view |
 | Delivery | At-least-once | Plugins own idempotency; core never drops work |
 | Plugin lifecycle | Spawn-per-command | Eliminates daemon management, memory leaks, zombie processes |
 
-### 2.2 Governance Hybrid (The "Control Plane")
+### 2.2 Execution Boundaries: Queue-Centric vs. Event Bus
+
+To maintain fault isolation, transactional durability, and predictable recovery, Ductile enforces a strict separation between **Core Execution** and **Observation**:
+
+*   **Core Execution is strictly Queue-Centric and Router-Driven**:
+    *   Ductile does *not* utilize an active in-memory "event bus" for routing execution between plugins.
+    *   Instead, the **SQLite-backed Work Queue** serves as the transactional boundary. When a plugin completes and emits events, the **Event Router** (`internal/router`) deterministically evaluates active pipelines/global routing rules, calculates downstream dispatches, and enqueues them immediately back to the SQLite Work Queue. 
+    *   This design guarantees that every execution transition is durable. If the service crashes or is restarted mid-pipeline, the exact state is recovered from the SQLite Work Queue on startup, avoiding lost messages.
+*   **Observation is Pub/Sub-Driven via the Event Hub**:
+    *   For live diagnostics and TUI updates, the **Event Hub** (`internal/events`) provides a lightweight, in-memory pub/sub ring-buffer.
+    *   The Dispatcher publishes passive lifecycle telemetry events (e.g. `job.succeeded`, `router.enqueued`) to the Event Hub.
+    *   This observation stream is completely decoupled from execution. Slow or blocked subscribers (such as a stalled TUI client or a streaming API consumer) can never block core workers or delay job execution.
+
+### 2.3 Core Component Roles
+
+1.  **Ingress Gateway (Producers)**: Handles external and internal triggers. Includes the **Scheduler** (initiating scheduled poll jobs), the **Webhook Receiver** (verifying HMAC signatures on inbound HTTP payloads), the **API Server** (accepting programmatic job/pipeline triggers), and the **CLI**. All producers write transactionally to the SQLite Work Queue.
+2.  **SQLite Work Queue**: The single, durable source of truth. Manages job FIFO sequencing, attempts, retries, and deduplication states.
+3.  **Dispatcher**: The bounded worker pool consumer. Dequeues eligible jobs, spawns isolated polyglot plugin subprocesses (communicating via protocol v2), enforces command timeouts, and captures execution results.
+4.  **Event Router (Pipeline & Event Routing Engine)**: The deterministic routing coordinator. Interprets event payloads emitted by plugins and matches them against YAML-defined DSL pipelines to generate downstream queue enqueues.
+5.  **Event Hub**: An observational sidecar providing real-time pub/sub streams of telemetry events for external diagnostic clients.
+6.  **State Store**: Backed by SQLite, maintains both the append-only `plugin_facts` observed history and the auto-derived `plugin_state` compatibility cache views.
+
+> [!NOTE]
+> **Remote Event Relay Boundaries**: Remote Event Relay is purposefully omitted from the high-level overview diagram to keep boundaries clear and prevent cluttering core architecture with feature-level extensions. Both inbound and outbound relays leverage existing primitives:
+> - **Inbound Relay** is a specialized HTTP API route mounted directly on the **API Server** (`/ingest/peer`).
+> - **Outbound Relay** executes as an on-demand pipeline step (`relay:` or `uses: core.relay`) dispatched by a standard **Dispatcher** worker via an outbound HTTP client.
+
+### 2.4 Governance Hybrid (The "Control Plane")
 
 Ductile employs a "Governance Hybrid" model to manage state across
 multi-hop plugin chains. Filesystem state is the plugin's concern; the
@@ -919,10 +961,12 @@ Core requirements:
 
 ## 12. Database Schema
 
+Ductile uses a persistent SQLite database for the work queue, append-only logs, metrics telemetry, and state store. 
+
 ### 12.1 Tables
 
 ```sql
--- Job queue (active and historical)
+-- Job queue (active and pending jobs)
 job_queue (
   id              TEXT PRIMARY KEY,   -- UUID
   plugin          TEXT NOT NULL,
@@ -939,17 +983,57 @@ job_queue (
   next_retry_at   TEXT,
   last_error      TEXT,
   parent_job_id   TEXT,                -- FK to job_queue.id
-  source_event_id TEXT                 -- UUID assigned by core
+  source_event_id TEXT,                -- UUID assigned by core
+  event_context_id TEXT,               -- ID of associated baggage row
+  enqueued_config_snapshot_id TEXT,     -- Config snapshot active at enqueue
+  started_config_snapshot_id TEXT       -- Config snapshot active at start
+);
+
+-- Append-only job status transitions history
+job_transitions (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  job_id      TEXT NOT NULL,           -- Joined to job_queue.id (no FK to allow pruning)
+  from_status TEXT,
+  to_status   TEXT NOT NULL,
+  reason      TEXT,
+  created_at  TEXT NOT NULL            -- ISO8601
+);
+
+-- Append-only job execution attempt log
+job_attempts (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  job_id     TEXT NOT NULL,            -- Joined to job_queue.id (no FK to allow pruning)
+  attempt    INTEGER NOT NULL,
+  created_at TEXT NOT NULL,            -- ISO8601
+  UNIQUE(job_id, attempt)
+);
+
+-- Config snapshots (durable record of active configurations)
+config_snapshots (
+  id                  TEXT PRIMARY KEY,
+  config_hash         TEXT NOT NULL,
+  source_hash         TEXT,
+  source_path         TEXT,
+  source              TEXT,
+  reason              TEXT NOT NULL,
+  loaded_at           TEXT NOT NULL,
+  ductile_version     TEXT,
+  binary_path         TEXT,
+  snapshot_format     INTEGER NOT NULL DEFAULT 1,
+  semantics           JSON,
+  plugin_fingerprints JSON,
+  sanitized_config    JSON,
+  secret_fingerprints JSON
 );
 
 -- Append-only durable plugin record (primary).
 plugin_facts (
-  id          INTEGER PRIMARY KEY AUTOINCREMENT,
-  seq         INTEGER NOT NULL,         -- Ductile-owned monotonic
+  id          TEXT PRIMARY KEY,
+  seq         INTEGER,                  -- Ductile-owned monotonic sequence
   plugin_name TEXT NOT NULL,
   fact_type   TEXT NOT NULL,            -- e.g. "<plugin>.snapshot"
-  job_id      TEXT,
-  command     TEXT,
+  job_id      TEXT NOT NULL,
+  command     TEXT NOT NULL,
   fact_json   JSON NOT NULL,
   created_at  TEXT NOT NULL
 );

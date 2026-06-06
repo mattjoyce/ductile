@@ -39,6 +39,11 @@
       "description": "macOS-only: paths stat()-ed on cold start to surface TCC permission popups synchronously.",
       "items": { "type": "string", "minLength": 1 }
     },
+    "tcc_paths": {
+      "type": "array",
+      "description": "macOS-only: List of absolute paths to stat() on cold start to surface TCC popups synchronously.",
+      "items": { "type": "string" }
+    },
     "plugins": {
       "type": "object",
       "description": "Per-plugin configuration keyed by plugin name.",

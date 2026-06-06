@@ -135,8 +135,17 @@ service:
   dedupe_ttl: 24h
   job_log_retention: 30d
   job_queue_retention: 24h
+
+  # DB table history retention
+  job_transitions_retention: 30d   # historical job state transitions
+  job_attempts_retention: 30d      # job execution attempt logs
+  breaker_transitions_retention: 90d  # circuit breaker state changes
+
+  # Concurrency & limits
   # Omit to use the default: max(1, CPU-1). Set to 1 to force global serial dispatch.
   max_workers: 4
+  hook_max_depth: 4                # max on-hook lifecycle chain depth, prevents loops (default: 4)
+
   # Admission control: four independent gates the daemon applies at boot/reload.
   # Each defaults to false (permissive). Enable only what you need.
   admission:
@@ -145,6 +154,7 @@ service:
     validate_config_on_boot: true    # require config validation to pass at startup
     require_api_auth: true           # reject an enabled API with no auth tokens
   # strict_mode: true  # DEPRECATED alias — enables all four admission gates above
+  allow_symlinks: false              # permit resolving symbolic links under config/plugin roots
   # Spawn-hygiene allowlist: extra env var NAMES passed through to plugin child
   # processes, on top of the built-in minimal set (PATH, HOME, TZ, LANG, ...).
   # Secrets do NOT go here — they reach plugins via the vault `secrets` envelope
@@ -158,6 +168,11 @@ plugin_roots:
 api:
   enabled: true
   listen: 127.0.0.1:8080
+  allowed_origins:                        # List of allowed CORS origins (empty by default)
+    - http://localhost:3000
+    - https://my-dashboard.example
+  max_concurrent_sync: 10                 # Simultaneous blocking synchronous request semaphore
+  max_sync_timeout: 5m                    # Hard cap on synchronous request timeout duration
 
 state:
   path: ./data/state.db
@@ -182,10 +197,15 @@ tcc_paths:
   - /Volumes/Projects                      # triggers NetworkVolumes grant
 ```
 
-Relative paths (like `./data/state.db`) are resolved against the directory containing `config.yaml`.
+### 4.1.1 Config Key Clarifications
 
-`dedupe_ttl` uses recent terminal rows in `job_queue`, so `job_queue_retention`
-must be at least as long as `dedupe_ttl`. The defaults are both 24h.
+*   **Database/State Alias**: To support operator intuition, `database:` can be used as an interchangeable alias for `state:`. Both point to the SQLite DB:
+    ```yaml
+    database:
+      path: ./data/state.db
+    ```
+*   **Path Resolution**: Relative paths (like `./data/state.db`) are resolved against the directory containing `config.yaml`.
+*   **Deduplication Durations**: `dedupe_ttl` matches terminal rows in `job_queue`, so `job_queue_retention` must be at least as long as `dedupe_ttl`. The defaults are both 24h.
 
 > **Note:** the core does not provision per-job filesystem workspaces;
 > the `workspace:` config section has been removed. Plugins that need a
@@ -255,11 +275,23 @@ plugin: birda
 (`5m0s (explicit)`); add `--json` for `{ "value": ..., "source": ... }`. Plain
 `config show` (no `--effective`) is unchanged and renders the config as written.
 
-### 4.3 webhooks.yaml (High Security - Experimental)
+### 4.3 webhooks.yaml (High Security)
 
-> [!IMPORTANT]  
-> Webhook support is currently in early development and may not be fully functional in the current MVP.
+Webhook definitions in standalone `webhooks.yaml` can be authored in two formats:
 
+**Option A: Documented Nested Form (Recommended)**
+```yaml
+webhooks:
+  endpoints:
+    - name: github
+      path: /webhook/github
+      plugin: github-handler
+      secret_ref: github_webhook_secret
+      signature_header: X-Hub-Signature-256
+      max_body_size: 1MB
+```
+
+**Option B: Legacy Flat Form (Preserved for compatibility)**
 ```yaml
 webhooks:
   - name: github
@@ -267,6 +299,7 @@ webhooks:
     plugin: github-handler
     secret_ref: github_webhook_secret
     signature_header: X-Hub-Signature-256
+    max_body_size: 1MB
 ```
 
 See [WEBHOOKS.md](WEBHOOKS.md) for full configuration details, include-mode caveats, and signing examples.

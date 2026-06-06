@@ -1,26 +1,108 @@
+# ts-bun-greet — canonical TypeScript/Bun exemplar for ductile plugin
+# authors.
+#
+# Read this manifest top-to-bottom alongside docs/PLUGIN_DEVELOPMENT.md
+# and skills/ductile-plugin-developer/SKILL.md. Mirrors py-greet's
+# contract field-for-field — the only differences are entrypoint
+# (run.ts), name, and the per-event fact_type. That intentional
+# symmetry is the proof that ductile's plugin protocol is
+# language-agnostic.
 manifest_spec: ductile.plugin
 manifest_version: 1
 name: ts-bun-greet
-version: 0.1.0
+version: 0.2.0
 protocol: 2
+
+# entrypoint: run.ts. Bun is installed in the image (see the Dockerfile
+# stage that runs `curl -fsSL https://bun.sh/install | bash`) and a
+# .ts entrypoint is invoked via `bun run`.
 entrypoint: run.ts
-description: "TypeScript/Bun example plugin - greets the user with a configurable message"
+
+# concurrency_safe: true for the same reason as py-greet — pure
+# function of config, no shared state, parallel-safe.
+concurrency_safe: true
+
+description: "Canonical TypeScript/Bun plugin exemplar for ductile (protocol v2). Demonstrates the stdin/stdout JSON envelope, the poll/health command split, returning state_updates with fact_outputs persistence, and config-driven defaults. Mirrors py-greet field-for-field — the protocol is language-agnostic. Copy this directory as the starting point for any TypeScript/Bun plugin."
+
 commands:
   - name: poll
-    type: read
-    description: "Returns a greeting heartbeat and updates last-run state."
+    type: write   # writes state_updates → must be write, not read
+    description: "Build a greeting from config.greeting + config.name and return it as the result. Snapshots {last_run, last_greeting} into state_updates so fact_outputs can record an append-only plugin_facts row plus refresh the latest-snapshot compatibility view."
+    idempotent: false
+    retry_safe: true
+    input_schema: {}
+    output_schema:
+      type: object
+      properties:
+        status:
+          type: string
+          enum: [ok, error]
+          description: "Plugin envelope status."
+        result:
+          type: string
+          description: "Present on ok — the rendered greeting (e.g. 'Hello, World!')."
+        events:
+          type: array
+          description: "Always empty for ts-bun-greet — this exemplar does not emit signals."
+          items:
+            type: object
+        state_updates:
+          type: object
+          description: "Present on ok — { last_run, last_greeting }. Snapshotted as ts-bun-greet.snapshot via fact_outputs."
+          properties:
+            last_run:
+              type: string
+              description: "ISO 8601 UTC timestamp of this poll."
+            last_greeting:
+              type: string
+              description: "Rendered greeting that was returned."
+          required: [last_run, last_greeting]
+          additionalProperties: false
+        logs:
+          type: array
+          description: "Single info entry mirroring the greeting + job_id for traceability."
+          items:
+            type: object
+      required: [status, logs]
+      additionalProperties: false
     values:
       consume: []
       emit: []
+
   - name: health
     type: read
-    description: "Returns plugin health and version information."
+    description: "Liveness probe. Returns ok unconditionally — ts-bun-greet has no external dependencies."
+    idempotent: true
+    retry_safe: true
+    input_schema: {}
+    output_schema:
+      type: object
+      properties:
+        status:
+          type: string
+          enum: [ok]
+        result:
+          type: string
+          description: "Always 'healthy'."
+        logs:
+          type: array
+          items:
+            type: object
+      required: [status, logs]
+      additionalProperties: false
+    values:
+      consume: []
+      emit: []
+
 fact_outputs:
   - when:
       command: poll
     from: state_updates
     fact_type: ts-bun-greet.snapshot
     compatibility_view: mirror_object
+
 config_keys:
   required: []
-  optional: [greeting, name]
+  optional:
+    - greeting
+    - name

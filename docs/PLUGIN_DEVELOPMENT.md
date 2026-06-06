@@ -889,9 +889,21 @@ is dispatch, state, and routing; filesystem is the plugin's concern.
 - **Trust.** Ductile refuses to load plugins with world-writable directories
   or `..` in their `entrypoint`. The entrypoint must be `chmod +x`.
 - **No persistent state outside what is declared.** Plugins must not write
-  to their own plugin directory at runtime. Anything durable goes through
-  `state_updates` (subject to the manifest's `fact_outputs` rule); anything
-  ephemeral goes to a plugin-managed scratch path.
+  to their own plugin directory at runtime. 
+
+## 10.5 Resource & Execution Limits
+
+To ensure system reliability, prevent memory exhaustion, and avoid rogue plugin processes from consuming all supervisor resources, Ductile enforces strict limits:
+
+*   **Stdout Cap (10 MiB)**: The supervisor captures at most 10 MiB of data written to `stdout`. Exceeding this cap is considered a protocol/output failure, the supervisor terminates the process, and the job is marked `failed`.
+*   **Stderr Cap (64 KiB)**: The supervisor captures at most 64 KiB of data written to `stderr` for diagnostics (which is saved in the database `job_log.stderr`). Excess `stderr` output is truncated with a warning in the core log stream.
+*   **State Update Size (1 MiB)**: The JSON payload returned in `state_updates` (which represents the facts the plugin wishes to record or its compatibility state view updates) is strictly limited to 1 MiB per row. Updates exceeding this size are rejected, and the job is marked `failed`.
+*   **Command Timeouts**: Standard lifecycle commands are strictly timed out to prevent zombie processes. The defaults are:
+    *   `poll`: 60s
+    *   `handle`: 120s
+    *   `health`: 10s
+    *   `init`: 30s
+    Timeouts can be overridden per plugin in `config.yaml` under `plugins.<name>.timeouts`.
 
 ---
 

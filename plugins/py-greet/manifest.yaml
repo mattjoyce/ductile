@@ -1,26 +1,123 @@
+# py-greet — canonical Python exemplar for ductile plugin authors.
+#
+# Read this manifest top-to-bottom alongside docs/PLUGIN_DEVELOPMENT.md
+# and skills/ductile-plugin-developer/SKILL.md. Every field below is
+# present for a reason that those documents explain; the comments here
+# are the *why*, not the *what* (the spec is enforced by
+# schemas/plugin-manifest.schema.json).
 manifest_spec: ductile.plugin
 manifest_version: 1
 name: py-greet
-version: 0.1.0
+version: 0.2.0
 protocol: 2
+
+# entrypoint is resolved relative to the plugin directory. run.py is
+# made executable by the Docker build step; if you swap runtimes (e.g.
+# replace with run.sh), update this field.
 entrypoint: run.py
-description: "Python example plugin - greets the user with a configurable message"
+
+# concurrency_safe: the gateway may dispatch multiple invocations in
+# parallel. py-greet is a pure function of config — no shared mutable
+# state, no external I/O, no file writes — so parallel runs are safe.
+# Real plugins that touch a DB, a network socket, or a filesystem
+# usually want false here.
+concurrency_safe: true
+
+description: "Canonical Python plugin exemplar for ductile (protocol v2). Demonstrates the stdin/stdout JSON envelope, the poll/health command split, returning state_updates with fact_outputs persistence, and config-driven defaults. Copy this directory as the starting point for any Python plugin. Pairs with ts-bun-greet (TypeScript/Bun) which mirrors the same contract in a different runtime — useful for confirming the protocol is language-agnostic."
+
 commands:
+  # poll — type: write because it returns state_updates. The contract
+  # is: write commands modify state (events / state_updates / external
+  # side effects); read commands are pure queries. py-greet's poll
+  # advances `last_run` and `last_greeting` in state, so it is a write.
   - name: poll
-    type: read
-    description: "Returns a greeting heartbeat and updates last-run state."
+    type: write
+    description: "Build a greeting from config.greeting + config.name and return it as the result. Snapshots {last_run, last_greeting} into state_updates so fact_outputs can record an append-only plugin_facts row plus refresh the latest-snapshot compatibility view."
+    idempotent: false   # last_run changes every invocation
+    retry_safe: true    # re-running just overwrites the snapshot — no harm
+    input_schema: {}    # poll takes no payload (scheduler-driven)
+    output_schema:
+      type: object
+      properties:
+        status:
+          type: string
+          enum: [ok, error]
+          description: "Plugin envelope status."
+        result:
+          type: string
+          description: "Present on ok — the rendered greeting (e.g. 'Hello, World!')."
+        events:
+          type: array
+          description: "Always empty for py-greet — this exemplar does not emit signals."
+          items:
+            type: object
+        state_updates:
+          type: object
+          description: "Present on ok — { last_run, last_greeting }. Snapshotted as py-greet.snapshot via fact_outputs."
+          properties:
+            last_run:
+              type: string
+              description: "ISO 8601 UTC timestamp of this poll."
+            last_greeting:
+              type: string
+              description: "Rendered greeting that was returned."
+          required: [last_run, last_greeting]
+          additionalProperties: false
+        logs:
+          type: array
+          description: "Single info entry mirroring the greeting + job_id for traceability."
+          items:
+            type: object
+      required: [status, logs]
+      additionalProperties: false
     values:
       consume: []
       emit: []
+
+  # health — type: read because it is a pure probe. No state, no
+  # events, no side effects. The gateway uses this for liveness;
+  # idempotent + retry_safe are both true.
   - name: health
     type: read
-    description: "Returns plugin health and version information."
+    description: "Liveness probe. Returns ok unconditionally — py-greet has no external dependencies."
+    idempotent: true
+    retry_safe: true
+    input_schema: {}
+    output_schema:
+      type: object
+      properties:
+        status:
+          type: string
+          enum: [ok]
+        result:
+          type: string
+          description: "Always 'healthy'."
+        logs:
+          type: array
+          items:
+            type: object
+      required: [status, logs]
+      additionalProperties: false
+    values:
+      consume: []
+      emit: []
+
+# fact_outputs — the gateway snapshots state_updates as durable
+# plugin_facts rows when (and only when) a fact_outputs rule matches.
+# Without this block, py-greet's state_updates would be silently
+# discarded at runtime — the snapshot would not survive a restart.
 fact_outputs:
   - when:
-      command: poll
-    from: state_updates
+      command: poll          # only the poll command writes state
+    from: state_updates       # snapshot the state_updates object
     fact_type: py-greet.snapshot
-    compatibility_view: mirror_object
+    compatibility_view: mirror_object   # plugin_state shows the latest snapshot
+
+# config_keys — both optional, both with code-side defaults in run.py
+# (greeting="Hello", name="World"). Required: [] because the plugin
+# is callable with zero config.
 config_keys:
   required: []
-  optional: [greeting, name]
+  optional:
+    - greeting
+    - name

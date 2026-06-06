@@ -615,6 +615,118 @@ The matching CLI clients are `ductile vault set` / `roll` / `revoke` / `register
 
 ---
 
+### 14. System Topology Graph
+
+Retrieve the full plugin-to-signal-to-plugin pipeline graph representation. Requires `plugin:catalog:ro`, `plugin:rw`, or `*` scope.
+
+**Endpoint**: `GET /topology`
+
+**Response (200 OK)**:
+```json
+{
+  "captured_at": "2026-02-13T10:00:00Z",
+  "plugins": [
+    {
+      "name": "withings",
+      "active": true,
+      "inputs": [],
+      "outputs": [{"signal": "new_health_data", "command": "poll"}]
+    }
+  ],
+  "signals": [
+    {
+      "name": "new_health_data",
+      "producers": [{"plugin": "withings", "command": "poll"}],
+      "consumers": [{"plugin": "health-analyzer", "command": "handle"}]
+    }
+  ]
+}
+```
+
+---
+
+### 15. Plugin Latency Stopwatch
+
+Retrieve runtime-captured latency telemetry (percentile aggregations) for a specific plugin. Requires `jobs:status:ro`, `jobs:rw`, or `*` scope.
+
+**Endpoint**: `GET /stopwatch/{plugin}`
+
+**Query Parameters**:
+- `since` (String, optional): RFC3339 timestamp filter.
+- `include_subs` (Boolean, optional): Include named sub-spans stats (requires results read scope).
+
+**Response (200 OK)**:
+```json
+{
+  "plugin": "withings",
+  "window": "24h",
+  "captured_at": "2026-02-13T10:00:00Z",
+  "steps": [
+    {
+      "step": "poll",
+      "sample_count": 24,
+      "p50_ms": 1200,
+      "p95_ms": 1800,
+      "p99_ms": 2500,
+      "trend_p95_ms": [1700, 1750, 1800, 1800, 1780, 1800]
+    }
+  ]
+}
+```
+
+---
+
+### 16. Real-Time Event Stream
+
+Establish a Server-Sent Events (SSE) stream to receive real-time observation and lifecycle events published to the Event Hub. Requires `events:ro`, `events:rw`, or `*` scope.
+
+**Endpoint**: `GET /events`
+
+**Response Header**:
+```http
+Content-Type: text/event-stream
+Cache-Control: no-cache
+Connection: keep-alive
+```
+
+---
+
+### 17. System Diagnostic Utilities
+
+Retrieve diagnostic checks and run self-check invariant validation. Requires `system:ro`, `system:rw`, or `*` scope.
+
+#### System Doctor Checks
+**Endpoint**: `GET /system/doctor`
+
+Runs startup preflight and environmental health checks.
+
+**Response (200 OK)**:
+```json
+{
+  "status": "healthy",
+  "checks": [
+    { "name": "sqlite_connection", "passed": true },
+    { "name": "plugin_roots_readable", "passed": true }
+  ]
+}
+```
+
+#### In-memory Selfchecks
+**Endpoint**: `GET /system/selfcheck`
+
+Verifies local in-memory invariants.
+
+**Response (200 OK)**:
+```json
+{
+  "status": "ok",
+  "invariants_checked": 12,
+  "failures": []
+}
+```
+
+---
+
 ## Error Codes
 
 - `401 Unauthorized`: Missing or invalid Bearer token.
