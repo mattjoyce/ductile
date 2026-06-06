@@ -636,6 +636,15 @@ func buildRuntime(cfg *config.Config, configPath string, configSource string, re
 	switch {
 	case privsepMode == dispatch.BootEnforce:
 		logger.Info("privsep enforcing: plugins drop to their resolved worker", "workers", len(cfg.Workers))
+		// Reconcile the filesystem floor (#87) before any plugin can spawn: lock the
+		// secrets surface (gateway-owned, 0600/0700) and give each worker its private
+		// 0700 dir. All-or-refuse — a failure here aborts the boot (never run
+		// half-confined). The age key is already enforced fail-closed at load.
+		secretPaths := []string{configPath, cfg.State.Path}
+		if err := dispatch.ReconcileWorkerFilesystem(cfg, secretPaths); err != nil {
+			logger.Error("privsep filesystem reconciliation failed", "error", err)
+			return nil, err
+		}
 	case len(cfg.Workers) > 0 || cfg.Service.Unconfined:
 		// Unconfined despite a configured/privileged host is the explicit override —
 		// say so loudly so it can never pass unnoticed.

@@ -2,6 +2,7 @@ package dispatch
 
 import (
 	"fmt"
+	"os"
 
 	"github.com/mattjoyce/ductile/internal/config"
 )
@@ -57,4 +58,15 @@ func BootGate(cfg *config.Config) (BootMode, error) {
 		return BootUnconfined, nil
 	}
 	return evaluateBootGate(hasDropCapability(), len(cfg.Workers) > 0, cfg.Service.Unconfined)
+}
+
+// ReconcileWorkerFilesystem enforces the privsep filesystem floor at boot (#87) —
+// the secrets surface must be gateway-owned and unreadable by workers, and each
+// worker gets a private 0700 dir it owns. All-or-refuse: a returned error must
+// abort the boot. Call only when the gate decided to enforce.
+func ReconcileWorkerFilesystem(cfg *config.Config, secretPaths []string) error {
+	if cfg == nil {
+		return nil
+	}
+	return reconcileWorkerFilesystem(cfg, secretPaths, os.Geteuid())
 }
