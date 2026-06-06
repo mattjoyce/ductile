@@ -10,6 +10,10 @@ import (
 
 func configurePluginProcess(cmd *exec.Cmd) {}
 
+// hasDropCapability is always false on a platform with no Unix uid-drop model, so
+// the boot gate refuses any host that configures workers here (fail-closed).
+func hasDropCapability() bool { return false }
+
 // errWorkerDropUnsupported fails a confined spawn closed on a platform that
 // cannot drop privilege (no Unix credential model). The full boot gate (#86)
 // refuses such a host at startup; the tracer's minimal guarantee is that a

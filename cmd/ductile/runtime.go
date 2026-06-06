@@ -624,9 +624,29 @@ func buildRuntime(cfg *config.Config, configPath string, configSource string, re
 		logger.Info("vault secret delivery enabled (compose-time attestation on)")
 	}
 
+	// Privsep boot gate (#86): the capability to drop privilege and a configured
+	// workers table must agree, or the gateway refuses to start — no silent run at
+	// gateway privilege. Evaluated once here (boot and reload); the result drives
+	// whether the dispatcher drops each plugin to its worker.
+	privsepMode, gateErr := dispatch.BootGate(cfg)
+	if gateErr != nil {
+		logger.Error("privsep boot gate refused startup", "error", gateErr)
+		return nil, gateErr
+	}
+	switch {
+	case privsepMode == dispatch.BootEnforce:
+		logger.Info("privsep enforcing: plugins drop to their resolved worker", "workers", len(cfg.Workers))
+	case len(cfg.Workers) > 0 || cfg.Service.Unconfined:
+		// Unconfined despite a configured/privileged host is the explicit override —
+		// say so loudly so it can never pass unnoticed.
+		logger.Warn("privsep UNCONFINED: plugins run at the gateway uid despite configuration",
+			"workers", len(cfg.Workers), "unconfined_override", cfg.Service.Unconfined)
+	}
+
 	disp := dispatch.New(q, st, contextStore, routerEngine, registry, hub, cfg,
 		dispatch.WithAdmitter(admitter), dispatch.WithSecretComposer(secretComposer),
-		dispatch.WithPluginVerifier(pluginVerifier))
+		dispatch.WithPluginVerifier(pluginVerifier),
+		dispatch.WithPrivsepEnforce(privsepMode == dispatch.BootEnforce))
 	rt.dispatcher = disp
 
 	relayReceiver, err := relay.NewReceiver(cfg, q, routerEngine, contextStore, admitter, log.WithComponent("relay"))

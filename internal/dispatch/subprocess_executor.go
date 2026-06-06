@@ -4,7 +4,9 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io/fs"
 	"log/slog"
 	"os/exec"
 	"time"
@@ -25,6 +27,23 @@ type subprocessExecutor struct {
 
 func newSubprocessExecutor(events *events.Hub, extraEnv []string, worker ResolvedWorker) *subprocessExecutor {
 	return &subprocessExecutor{events: events, extraEnv: extraEnv, worker: worker}
+}
+
+// publishDropFailed emits the privsep drop-failure signal — its own event, distinct
+// from a generic spawn failure, so an operator (and #90) can tell "the wall could
+// not be built" from "the binary is missing."
+func (e *subprocessExecutor) publishDropFailed(req *protocol.Request, pluginName string, cause error) {
+	if e.events == nil {
+		return
+	}
+	e.events.Publish("plugin.drop_failed", map[string]any{
+		"job_id": req.JobID,
+		"plugin": pluginName,
+		"worker": e.worker.Name,
+		"uid":    e.worker.UID,
+		"gid":    e.worker.GID,
+		"error":  cause.Error(),
+	})
 }
 
 // spawnPlugin spawns the plugin subprocess, writes the request to stdin, and reads the response from stdout.
@@ -53,7 +72,8 @@ func (e *subprocessExecutor) execute(
 	// confined worker on a platform that cannot drop fails the spawn closed here —
 	// never a silent run at gateway privilege (PrivSec ADR §3 Layer 1b, §8).
 	if err := applyWorkerCredential(cmd, e.worker); err != nil {
-		return nil, protocol.ResponseCompat{}, nil, nil, "", 0, fmt.Errorf("apply worker credential: %w", err)
+		e.publishDropFailed(req, pluginName, err)
+		return nil, protocol.ResponseCompat{}, nil, nil, "", 0, fmt.Errorf("%w: %v", ErrWorkerDropFailed, err)
 	}
 
 	// Prepare stdin pipe
@@ -72,8 +92,15 @@ func (e *subprocessExecutor) execute(
 
 	logger.Info("plugin executing", "entrypoint", entrypoint, "timeout", timeout)
 
-	// Start the process
+	// Start the process. When the plugin is confined, the kernel performs the
+	// uid/gid drop in the fork-child before execve — so a Start failure on a
+	// confined spawn that is NOT a missing binary is a failed drop, not a generic
+	// spawn error. Classify it as such so it fails closed and terminal (no retry).
 	if err := cmd.Start(); err != nil {
+		if e.worker.Confined && !errors.Is(err, fs.ErrNotExist) {
+			e.publishDropFailed(req, pluginName, err)
+			return nil, protocol.ResponseCompat{}, nil, nil, "", 0, fmt.Errorf("%w (worker %q uid %d): %v", ErrWorkerDropFailed, e.worker.Name, e.worker.UID, err)
+		}
 		return nil, protocol.ResponseCompat{}, nil, nil, "", 0, fmt.Errorf("start process: %w", err)
 	}
 

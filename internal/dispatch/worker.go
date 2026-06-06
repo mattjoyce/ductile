@@ -50,6 +50,13 @@ type ResolvedWorker struct {
 // not a quiet run at gateway privilege (the fail-closed stance the grill settled).
 var ErrWorkerGrantUndefined = errors.New("plugin grants an undefined worker")
 
+// ErrWorkerDropFailed marks a spawn that failed because the privilege drop itself
+// could not be performed (the kernel refused setgroups/setgid/setuid, or the
+// platform has no uid-drop). It is deliberately distinct from a missing-binary
+// start error so the dispatcher can fail it CLOSED and TERMINAL: a botched drop is
+// a misconfiguration, and retrying re-runs the same doomed setuid (ADR §8; #86).
+var ErrWorkerDropFailed = errors.New("privsep: worker uid/gid drop failed at spawn")
+
 // resolveWorker maps a plugin to its worker identity using the operator's core
 // config ALONE — the plugin manifest is never consulted (ADR §4 authority split:
 // the untrusted author declares needs, the trusted operator grants privilege).

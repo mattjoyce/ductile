@@ -4,6 +4,7 @@ package dispatch
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"os"
 	"os/exec"
@@ -80,10 +81,15 @@ func TestPrivsepConfinedSpawnFailsClosedWithoutPrivilege(t *testing.T) {
 	cfg.Workers = map[string]config.WorkerConf{"untrusted": {UID: 65534, GID: 65534}}
 	cfg.Plugins = map[string]config.PluginConf{"sys_exec": {Worker: "untrusted"}}
 
-	d := &Dispatcher{events: events.NewHub(16), cfg: cfg}
+	d := &Dispatcher{events: events.NewHub(16), cfg: cfg, enforcePrivsep: true}
 	req := &protocol.Request{Protocol: 2, JobID: "job-failclosed", Command: "poll"}
 	_, _, _, _, _, _, err := d.spawnPlugin(context.Background(), "sys_exec", scriptPath, req, time.Second, slog.Default())
 	if err == nil {
 		t.Fatal("a confined spawn the gateway cannot perform must fail closed, not run at gateway privilege")
+	}
+	// And it must be the *typed* drop failure (so the dispatcher fails it terminal,
+	// never retried), not a generic spawn error.
+	if !errors.Is(err, ErrWorkerDropFailed) {
+		t.Fatalf("expected ErrWorkerDropFailed, got %v", err)
 	}
 }

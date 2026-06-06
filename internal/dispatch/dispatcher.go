@@ -50,6 +50,11 @@ type Dispatcher struct {
 	events   *events.Hub
 	logger   *slog.Logger
 
+	// enforcePrivsep reflects the boot gate (#86): when true, spawnPlugin resolves
+	// each plugin to its worker and drops privilege; when false (dev / unconfined
+	// override) the drop is skipped and plugins run at the gateway uid.
+	enforcePrivsep bool
+
 	// secretComposer resolves per-plugin vault secrets delivered over stdin at
 	// spawn. Nil when no vault is wired, in which case no secrets are delivered.
 	secretComposer SecretComposer
@@ -106,6 +111,17 @@ func WithSecretComposer(c SecretComposer) Option {
 func WithPluginVerifier(v PluginVerifier) Option {
 	return func(d *Dispatcher) {
 		d.pluginVerifier = v
+	}
+}
+
+// WithPrivsepEnforce sets whether the dispatcher drops each granted plugin to its
+// resolved worker. It reflects the boot gate's decision (BootEnforce): true only
+// when the gateway holds the drop capability AND workers are configured. When
+// false (the dev path, or an explicit service.unconfined override) plugins spawn
+// at the gateway uid and worker resolution is skipped entirely.
+func WithPrivsepEnforce(enforce bool) Option {
+	return func(d *Dispatcher) {
+		d.enforcePrivsep = enforce
 	}
 }
 
@@ -540,6 +556,18 @@ func (d *Dispatcher) executeJob(ctx context.Context, job *queue.Job) {
 			return
 		}
 
+		// A failed privilege drop is a misconfiguration, not a transient fault: fail
+		// terminal and NEVER retry — re-running the same doomed setuid is pointless
+		// churn that masks the misconfig (PrivSec ADR §8; #86). Distinct from a
+		// missing binary, which still flows through the generic spawn-error path.
+		if errors.Is(err, ErrWorkerDropFailed) {
+			errMsg := fmt.Sprintf("plugin spawn failed (privsep drop refused): %v", err)
+			jobLogger.Error(errMsg)
+			decision := retryDecision{Retryable: false, Reason: retryReasonDropFailed}
+			d.failOrRetry(ctx, jobLogger, job, pluginCfg, queue.StatusFailed, rawResp, &errMsg, &stderr, decision)
+			return
+		}
+
 		// Handle other spawn errors
 		errMsg := fmt.Sprintf("plugin spawn failed: %v", err)
 		jobLogger.Error(errMsg)
@@ -666,12 +694,19 @@ func (d *Dispatcher) spawnPlugin(
 	timeout time.Duration,
 	logger *slog.Logger,
 ) (*protocol.Response, protocol.ResponseCompat, json.RawMessage, []byte, string, int, error) {
-	// Resolve the plugin's privsep worker from the operator's core config. A grant
-	// to an undefined worker fails the spawn closed rather than silently running
-	// unconfined (PrivSec ADR §4; the fail-closed stance from the 2026-06-06 grill).
-	resolved, err := resolveWorker(d.cfg, pluginName)
-	if err != nil {
-		return nil, protocol.ResponseCompat{}, nil, nil, "", 0, fmt.Errorf("resolve worker: %w", err)
+	// Resolve the plugin's privsep worker from the operator's core config, but only
+	// when the boot gate decided to enforce. When not enforcing (dev host, or an
+	// explicit service.unconfined override) the drop is skipped entirely and the
+	// plugin runs at the gateway uid — today's behaviour. A grant to an undefined
+	// worker fails the spawn closed rather than silently running unconfined
+	// (PrivSec ADR §4; the fail-closed stance from the 2026-06-06 grill).
+	var resolved ResolvedWorker
+	if d.enforcePrivsep {
+		var err error
+		resolved, err = resolveWorker(d.cfg, pluginName)
+		if err != nil {
+			return nil, protocol.ResponseCompat{}, nil, nil, "", 0, fmt.Errorf("resolve worker: %w", err)
+		}
 	}
 	executor := newSubprocessExecutor(d.events, d.cfg.Service.PluginEnvPassthrough, resolved)
 	return executor.execute(ctx, pluginName, entrypoint, req, timeout, logger)

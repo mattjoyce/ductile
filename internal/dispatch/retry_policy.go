@@ -17,6 +17,7 @@ const (
 	retryReasonExitCode78        = "exit_code_78"
 	retryReasonTimeout           = "timeout"
 	retryReasonSpawnError        = "spawn_error"
+	retryReasonDropFailed        = "worker_drop_failed"
 	retryReasonNilResponse       = "nil_response"
 	retryReasonAttemptsExhausted = "attempts_exhausted"
 )

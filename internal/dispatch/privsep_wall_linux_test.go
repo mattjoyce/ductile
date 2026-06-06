@@ -86,7 +86,7 @@ while :; do sleep 1; done
 		"sys_exec": {Worker: "untrusted"},
 	}
 
-	d := &Dispatcher{events: events.NewHub(16), cfg: cfg}
+	d := &Dispatcher{events: events.NewHub(16), cfg: cfg, enforcePrivsep: true}
 	req := &protocol.Request{Protocol: 2, JobID: "job-wall", Command: "poll"}
 	// The script idles after probing, so the spawn will hit the timeout; we only
 	// care about the verdict file it wrote as the dropped worker. Keep stderr/err

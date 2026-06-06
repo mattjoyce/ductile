@@ -6,8 +6,44 @@ import (
 	"errors"
 	"os"
 	"os/exec"
+	"strconv"
+	"strings"
 	"syscall"
 )
+
+// hasDropCapability reports whether this process can drop a child to another
+// uid/gid — root holds it implicitly, and a non-root process can hold it via
+// CAP_SETUID+CAP_SETGID (e.g. systemd AmbientCapabilities, the #88 deploy). It is
+// the privsep boot gate's capability probe (ADR §5); evaluated once at startup.
+func hasDropCapability() bool {
+	if os.Geteuid() == 0 {
+		return true
+	}
+	return hasLinuxSetuidCaps()
+}
+
+// hasLinuxSetuidCaps inspects the effective capability set for CAP_SETUID (7) and
+// CAP_SETGID (6) via /proc/self/status. On non-Linux Unix the file is absent, so
+// it returns false — there, only root (handled above) can drop.
+func hasLinuxSetuidCaps() bool {
+	data, err := os.ReadFile("/proc/self/status")
+	if err != nil {
+		return false
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		hex, ok := strings.CutPrefix(line, "CapEff:")
+		if !ok {
+			continue
+		}
+		mask, err := strconv.ParseUint(strings.TrimSpace(hex), 16, 64)
+		if err != nil {
+			return false
+		}
+		const capSetgid, capSetuid = 6, 7
+		return mask&(1<<capSetgid) != 0 && mask&(1<<capSetuid) != 0
+	}
+	return false
+}
 
 func configurePluginProcess(cmd *exec.Cmd) {
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}

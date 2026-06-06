@@ -82,6 +82,12 @@ type ServiceConfig struct {
 	// Set to 0 to use the default (DefaultHookMaxDepth). Negative is rejected
 	// by config validation. P2-11.
 	HookMaxDepth int `yaml:"hook_max_depth,omitempty"`
+	// Unconfined is the privsep boot-gate escape hatch (PrivSec ADR §5). When true,
+	// the gateway runs plugins at its own uid (no drop) even on a host that holds the
+	// drop capability and configures workers — the one explicit, audited way to opt
+	// out of enforcement. The boot gate logs it loudly. Default false: capability and
+	// workers-configured must agree or the gateway refuses to start.
+	Unconfined bool `yaml:"unconfined,omitempty"`
 }
 
 // AdmissionConfig is the decomplected set of admission-control policies that the
