@@ -27,7 +27,7 @@ const armorHeader = "-----BEGIN AGE ENCRYPTED FILE-----"
 
 // IsEncrypted reports whether data is an age ciphertext (binary or armored).
 // Detection is content-based, not extension-based, so an operator may name an
-// encrypted file anything (e.g. tokens.yaml) and the loader still recognises it.
+// encrypted file anything (e.g. an included scope file) and the loader still recognises it.
 func IsEncrypted(data []byte) bool {
 	trimmed := bytes.TrimLeft(data, " \t\r\n")
 	return bytes.HasPrefix(trimmed, []byte(binaryHeader)) ||

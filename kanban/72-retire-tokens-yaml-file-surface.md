@@ -1,12 +1,22 @@
 ---
 id: 72
-status: doing
+status: done
 priority: Normal
 blocked_by: [48]
 tags: [vault, tokens-yaml, decomplect, cleanup, cli]
 ---
 
 # Retire the tokens.yaml *file* surface (config token CLI + file types) — #48 slice 3b
+
+**DONE 2026-06-06 — acceptance met.** Three-host cutover complete (MacM1/ThinkPad/Unraid all
+tokens.yaml-free, vault sole source, verified incl. cross-node relay HMAC). Final code step landed:
+removed `dedicatedScopeDomains["tokens"]` + the loader's tokens.yaml scope-file recognition
+(`loader.go` DiscoverScopeDirs + verifyScopeFilesRecursively) + the tokens.yaml entries in the
+backup/checksum lists (`config_manage.go`); fixed the now-false comments (age.go, types.go). Tests
+re-pointed to webhooks.yaml (TestHashVerification, TestDiscoverScopeDirsFromIncludes); obsolete
+TestStrictDecodeWarningsSkipsTokensScope removed. `grep -r tokens.yaml` over non-test code returns
+only historical comments. `go build ./...` + `go test ./...` green (2 pre-existing dispatch timing
+flakes pass isolated).
 
 > Status note (2026-06-06): primary surface deletion **shipped** (`a7e592c`); card stays `doing` because
 > its acceptance (`grep -r tokens.yaml` clean + per-instance include/file drop) is not yet met. The

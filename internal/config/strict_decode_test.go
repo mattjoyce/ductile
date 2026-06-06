@@ -89,20 +89,3 @@ func TestStrictDecodeWarningsSkipsPipelinesScope(t *testing.T) {
 		t.Fatalf("pipelines scope file should be skipped, got warnings: %v", w)
 	}
 }
-
-func TestStrictDecodeWarningsSkipsTokensScope(t *testing.T) {
-	// tokens.yaml carries `tokens:` (Config has it as yaml:"-", loaded by the
-	// directory-mode graft like pipelines), so a tokens-only file must NOT be
-	// reported as an unknown Config key. Regression for #65: validate_config_on_boot
-	// falsely rejected a real split config because tokens.yaml was strict-decoded
-	// against Config.
-	cfg := cfgFromSources(t, map[string]string{
-		"tokens.yaml": "tokens:\n  - name: hmac-secret\n    key: deadbeef\n",
-	})
-	if w := StrictDecodeWarnings(cfg); len(w) != 0 {
-		t.Fatalf("tokens scope file should be skipped, got warnings: %v", w)
-	}
-	if err := StrictDecodeError(cfg); err != nil {
-		t.Fatalf("tokens scope file should not trip the boot gate: %v", err)
-	}
-}

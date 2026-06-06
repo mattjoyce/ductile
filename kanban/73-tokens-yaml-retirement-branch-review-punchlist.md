@@ -1,11 +1,16 @@
 ---
 id: 73
-status: backlog
+status: done
 priority: Low
 tags: [vault, config, tokens-yaml, branch-review, decomplect, cleanup, backlog]
 ---
 
 # #48 tokens.yaml-retirement · branch-review punch-list (2026-06-06)
+
+**DONE 2026-06-06.** The last open item — deleting the `dedicatedScopeDomains["tokens"]` no-op shim
+once the prod boxes dropped the include — is complete: all three hosts cut over (MacM1/ThinkPad/Unraid),
+the shim + loader tokens.yaml recognition were removed, `grep -r tokens.yaml` over non-test code is
+history-only. All other punch-list items were already done. See #72.
 
 Consolidated follow-ups from the four 2026-06-06 branch reviews of the commits above `3b33b9a`
 (`fbad7a0` → `8917cf8` → `0baf11e` → `a7e592c`, epic [[48-epic-retire-tokens-yaml]] / [[72-retire-tokens-yaml-file-surface]]).

@@ -383,7 +383,7 @@ func printValidationSummary(result *doctor.Result) {
 func refreshConfigIntegrity(configDir string) error {
 	files, err := config.DiscoverConfigFiles(configDir)
 	if err != nil {
-		_, includeErr := config.GenerateChecksumsWithReport(configDir, []string{"tokens.yaml", "webhooks.yaml"}, false)
+		_, includeErr := config.GenerateChecksumsWithReport(configDir, []string{"webhooks.yaml"}, false)
 		if includeErr != nil {
 			return err
 		}
@@ -1409,7 +1409,7 @@ const (
 )
 
 func createConfigBackup(configDir, outputPath string) ([]string, error) {
-	items := []string{"config.yaml", "routes.yaml", "tokens.yaml", "webhooks.yaml", ".checksums", "plugins", "scopes"}
+	items := []string{"config.yaml", "routes.yaml", "webhooks.yaml", ".checksums", "plugins", "scopes"}
 	// #nosec G304 -- output path is operator-controlled local input.
 	archiveFile, err := os.Create(outputPath)
 	if err != nil {

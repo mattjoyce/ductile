@@ -141,7 +141,7 @@ func load(configPath string, verifyScopes bool, validateConfig bool, applyPlugin
 	logSecretProjectionWarnings(warnings)
 
 	if verifyScopes {
-		// Hash-verify scope files (tokens.yaml, webhooks.yaml)
+		// Hash-verify scope files (webhooks.yaml)
 		if err := verifyScopeFilesRecursively(includedPaths); err != nil {
 			return nil, nil, err
 		}
@@ -212,7 +212,7 @@ func DiscoverConfigDir() (string, error) {
 // DiscoverScopeDirs returns config directories that need .checksums updates.
 // It accepts either a config file path or a directory containing config.yaml.
 // In include-based mode, it returns directories containing included scope files
-// (tokens.yaml, webhooks.yaml). If no scope includes are found, it falls back
+// (webhooks.yaml). If no scope includes are found, it falls back
 // to the root config directory for legacy single-directory behavior.
 func DiscoverScopeDirs(configPath string) ([]string, error) {
 	absPath, err := filepath.Abs(configPath)
@@ -260,7 +260,7 @@ func DiscoverScopeDirs(configPath string) ([]string, error) {
 
 		for includePath := range visited {
 			basename := filepath.Base(includePath)
-			if basename == "tokens.yaml" || basename == "webhooks.yaml" {
+			if basename == "webhooks.yaml" {
 				scopeDirs[filepath.Dir(includePath)] = struct{}{}
 			}
 		}
@@ -349,12 +349,6 @@ func loadIncludeFile(cfg *Config, includeIndex int, includePath string, absPath 
 	if err != nil {
 		return fmt.Errorf("include[%d] (%s): %w", includeIndex, includePath, err)
 	}
-
-	// tokens.yaml is no longer a secret source — the vault is the sole source
-	// (epic #48). A lingering tokens.yaml include is a harmless no-op: its `tokens:`
-	// key is ignored by the lenient decode and skipped by the strict-decode gate
-	// (dedicatedScopeDomains), so existing configs keep booting until the include
-	// is removed.
 
 	// Deep merge included config into main config
 	if err := deepMergeConfig(cfg, includedCfg); err != nil {
@@ -585,13 +579,13 @@ func deepMergeConfig(dst, src *Config) error {
 }
 
 // verifyScopeFilesRecursively verifies hash for any scope files found in the included paths.
-// Scope files are auto-detected by basename (tokens.yaml, webhooks.yaml).
+// Scope files are auto-detected by basename (webhooks.yaml).
 func verifyScopeFilesRecursively(paths []string) error {
 	// Group paths by directory to avoid loading the same checksums file multiple times
 	dirToFiles := make(map[string][]string)
 	for _, path := range paths {
 		basename := filepath.Base(path)
-		if basename == "tokens.yaml" || basename == "webhooks.yaml" {
+		if basename == "webhooks.yaml" {
 			dir := filepath.Dir(path)
 			dirToFiles[dir] = append(dirToFiles[dir], path)
 		}
@@ -602,7 +596,7 @@ func verifyScopeFilesRecursively(paths []string) error {
 		checksums, err := LoadChecksums(dir)
 		if err != nil {
 			return fmt.Errorf("checksum verification failed in %s: %w\n"+
-				"Scope files (tokens.yaml, webhooks.yaml) require hash verification.\n"+
+				"Scope files (webhooks.yaml) require hash verification.\n"+
 				"Run: ductile config lock --config-dir %s", dir, err, dir)
 		}
 

@@ -1,10 +1,16 @@
 ---
 id: 48
-status: doing
+status: done
 priority: Normal
 blocked_by: []
 tags: [vault, epic, back-compat, decomplect, tokens-yaml]
 ---
+
+> **EPIC CLOSED 2026-06-06.** All slices shipped: slice 1 (verify tool), slice 2 (single-decrypt),
+> slice 3a (runtime back-compat demolished — vault sole source), slice 3b (#72, file surface deleted),
+> and the final shim removal (#73). Three-host cutover complete and verified (MacM1/ThinkPad/Unraid,
+> incl. cross-node relay HMAC). Acceptance met: a fresh deploy with no tokens.yaml resolves every
+> secret_ref from the vault; `grep -r tokens.yaml` over non-test code is history-only. Closes #72/#73.
 
 ## Progress (2026-06-05) — blockers [9,14,68] all DONE; epic unblocked, execution started
 

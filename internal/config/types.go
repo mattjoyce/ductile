@@ -441,7 +441,7 @@ type WebhookEndpoint struct {
 	MaxBodySize     string `yaml:"max_body_size"`
 }
 
-// ChecksumManifest stores BLAKE3 hashes for scope files (tokens.yaml, webhooks.yaml)
+// ChecksumManifest stores BLAKE3 hashes for scope files (webhooks.yaml)
 // and plugin identity fingerprints (manifest.yaml + entrypoint bytes) for each
 // configured plugin when the operator runs `ductile config lock`.
 type ChecksumManifest struct {
