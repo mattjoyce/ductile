@@ -1,12 +1,21 @@
 ---
 id: 78
-status: backlog
+status: done
 priority: Medium
 blocked_by: []
 tags: [router, dsl, conditions, hickey, decomplect, predicates, sprint-17]
 ---
 
 # Make "this predicate needs context" an explicit, validated contract
+
+**DONE 2026-06-06.** `compilePipeline` (`internal/router/dsl/compiler.go`) now rejects an `on-hook:`
+pipeline whose `if:` references `context.*` — context is provably never available at hook time, so
+such a predicate could only ever silently dead-route. Error at load:
+`on-hook trigger predicate cannot reference context.* — context is not available at hook time`.
+`on:` triggers are unchanged (context.* there is path-dependent, covered by the runtime warn in card
+77). Test `TestCompileSpecsRejectsHookContextPredicate` covers reject (hook+context.*) and accept
+(hook+payload.*). `docs/PIPELINES.md` "Context availability at trigger time" updated to document the
+rejection. This makes the param in card 80 provably dead. Router + dsl suites green.
 
 **Origin: Hickey×Armstrong audit of #75, 2026-06-06. Finding H1 (Hickey: value complected with dispatch path) + H4 (easy over simple).**
 

@@ -1161,10 +1161,12 @@ func TestRouterNextRootTriggerIfAbsentContextPredicateFails(t *testing.T) {
 	}
 }
 
-func TestRouterNextHookIfEvaluatesAgainstSourceContext(t *testing.T) {
-	// Hook-side context-aware if: — predicate evaluates against the
-	// upstream job's accumulated context passed by the dispatcher.
-	set, err := dsl.CompileSpecs([]dsl.PipelineSpec{{
+func TestCompileSpecsRejectsHookContextPredicate(t *testing.T) {
+	// Context is never available at hook time (the dispatcher short-circuits
+	// hooks for context-bearing jobs), so a context.* predicate on an on-hook:
+	// trigger can never match. It must be rejected at load, not silently
+	// dead-route at runtime.
+	_, err := dsl.CompileSpecs([]dsl.PipelineSpec{{
 		Name:   "page-on-high-severity",
 		OnHook: "job.failed",
 		If: &conditions.Condition{
@@ -1174,29 +1176,25 @@ func TestRouterNextHookIfEvaluatesAgainstSourceContext(t *testing.T) {
 		},
 		Steps: []dsl.StepSpec{{ID: "page", Uses: "pagerduty"}},
 	}})
-	if err != nil {
-		t.Fatalf("CompileSpecs: %v", err)
+	if err == nil {
+		t.Fatalf("expected compile error for on-hook trigger predicate referencing context.*")
 	}
-	r := New(set, nil)
-
-	out, err := r.NextHook(context.Background(), "claude_harvest", "job.failed",
-		map[string]any{"plugin": "claude_harvest"},
-		map[string]any{"severity": "high"})
-	if err != nil {
-		t.Fatalf("NextHook (high): %v", err)
-	}
-	if len(out) != 1 {
-		t.Fatalf("dispatch count = %d, want 1 (predicate-true on hook context.*)", len(out))
+	if !strings.Contains(err.Error(), "context is not available at hook time") {
+		t.Fatalf("error = %v, want hook-context rejection message", err)
 	}
 
-	out, err = r.NextHook(context.Background(), "claude_harvest", "job.failed",
-		map[string]any{"plugin": "claude_harvest"},
-		map[string]any{"severity": "low"})
-	if err != nil {
-		t.Fatalf("NextHook (low): %v", err)
-	}
-	if len(out) != 0 {
-		t.Fatalf("dispatch count = %d, want 0 (predicate-false on hook context.*)", len(out))
+	// A payload.* predicate on the same hook is fine — context-free.
+	if _, err := dsl.CompileSpecs([]dsl.PipelineSpec{{
+		Name:   "page-on-high-severity",
+		OnHook: "job.failed",
+		If: &conditions.Condition{
+			Path:  "payload.severity",
+			Op:    conditions.OpEq,
+			Value: "high",
+		},
+		Steps: []dsl.StepSpec{{ID: "page", Uses: "pagerduty"}},
+	}}); err != nil {
+		t.Fatalf("payload predicate on hook should compile: %v", err)
 	}
 }
 
