@@ -1,12 +1,40 @@
 ---
 id: 15
-status: backlog
+status: done
 priority: Normal
 blocked_by: [2]
 tags: [vault, ops, recovery, deferred]
 ---
 
 # Cross-cutting · recovery / backup story
+
+**DECIDED + CLOSED 2026-06-06 (operator call).** Posture: the **age key is custodied out-of-band in
+the operator's KeePass**, so key loss is covered there; backup is a **filesystem-safe tar of all
+config + the encrypted vault blob** — which is exactly what `ductile system backup` already produces.
+This is a variant of Option A (key held off-host) without a second *age recipient*: one key, custodied
+in KeePass, paired with an encrypted-blob archive.
+
+Verified the mechanism already implements this posture (no code change needed beyond a stale-help fix):
+- `system backup` (`--scope config` and up) includes the encrypted `vault.age` in the archive and
+  **deliberately excludes the age key**, recording the blob/key pairing in `BACKUP_MANIFEST.txt`
+  (`cmd/ductile/system_backup.go:305-330`). Tested: `system_backup_test.go:296-344` asserts the blob
+  is included and the age key is **never** in the manifest or the tar.
+- Restore runbook (untar → reinstall key from KeePass at the resolved path → start) is documented in
+  `docs/SECRETS.md` §"Backup and restore".
+- **Fixed 2026-06-06:** the `system backup --help` NOTE wrongly claimed "vault blob … NOT yet in any
+  scope" — contradicting the implemented+tested behaviour. Corrected to state the blob IS included
+  from scope `config` up and the key is excluded by design.
+
+So the acceptance ("a documented, tested recovery path exists before the vault is relied on") is met:
+`system backup` + the KeePass-held key is the path.
+
+**Follow-up (minor, not blocking):** the older `ductile config backup` (`createConfigBackup`,
+`config_manage.go:1396`) does **not** include `vault.age` — operators must use `system backup` for a
+recoverable vault archive. Worth either folding `config backup` into `system backup` or warning on it;
+captured here, not carded.
+
+---
+_Original framing retained below for the trail._
 
 Before the vault holds real secrets, decide how to recover it.
 
