@@ -67,10 +67,14 @@ func applyWorkerCredential(cmd *exec.Cmd, w ResolvedWorker) error {
 	if cmd.SysProcAttr == nil {
 		cmd.SysProcAttr = &syscall.SysProcAttr{}
 	}
+	// uid/gid are validated positive and within range at config load (validateWorkers,
+	// #84), so these conversions cannot overflow or go negative.
+	uid := uint32(w.UID) // #nosec G115 -- worker uid validated positive + bounded at config load
+	gid := uint32(w.GID) // #nosec G115 -- worker gid validated positive + bounded at config load
 	cmd.SysProcAttr.Credential = &syscall.Credential{
-		Uid:    uint32(w.UID),
-		Gid:    uint32(w.GID),
-		Groups: []uint32{uint32(w.GID)},
+		Uid:    uid,
+		Gid:    gid,
+		Groups: []uint32{gid},
 	}
 	return nil
 }

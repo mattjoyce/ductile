@@ -50,9 +50,10 @@ func TestValidateWorkers(t *testing.T) {
 		worker WorkerConf
 		want   string
 	}{
-		{"uid zero (root) rejected", WorkerConf{UID: 0, GID: 1001, StateDir: "/s"}, "uid must be positive"},
-		{"negative uid rejected", WorkerConf{UID: -5, GID: 1001, StateDir: "/s"}, "uid must be positive"},
-		{"gid zero rejected", WorkerConf{UID: 1001, GID: 0, StateDir: "/s"}, "gid must be positive"},
+		{"uid zero (root) rejected", WorkerConf{UID: 0, GID: 1001, StateDir: "/s"}, "uid must be a positive"},
+		{"negative uid rejected", WorkerConf{UID: -5, GID: 1001, StateDir: "/s"}, "uid must be a positive"},
+		{"gid zero rejected", WorkerConf{UID: 1001, GID: 0, StateDir: "/s"}, "gid must be a positive"},
+		{"absurd uid rejected (overflow guard)", WorkerConf{UID: 1 << 33, GID: 1001, StateDir: "/s"}, "uid must be a positive"},
 		{"relative state_dir rejected", WorkerConf{UID: 1001, GID: 1001, StateDir: "data/w"}, "must be an absolute path"},
 		{"empty state_dir rejected", WorkerConf{UID: 1001, GID: 1001, StateDir: ""}, "must be an absolute path"},
 	}

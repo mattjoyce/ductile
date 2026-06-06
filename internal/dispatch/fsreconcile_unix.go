@@ -99,7 +99,9 @@ func reconcileWorkerDir(name string, w config.WorkerConf) error {
 	// Best-effort ownership/mode — succeeds as root/dev, EPERMs (ignored) under a
 	// cap-only gateway where the init layer is expected to have provisioned the dir.
 	_ = os.Chown(w.StateDir, w.UID, w.GID)
-	_ = os.Chmod(w.StateDir, 0o700)
+	// 0700 on a DIRECTORY: the owner needs execute to enter it; this is the worker-
+	// isolation floor (no group/other access), not an over-permissive file mode.
+	_ = os.Chmod(w.StateDir, 0o700) // #nosec G302 -- 0700 on a directory is the isolation floor, not a file
 
 	// Verify — fail-closed regardless of who provisioned the dir.
 	info, err := os.Stat(w.StateDir)

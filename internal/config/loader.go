@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"fmt"
 	"maps"
+	"math"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -866,11 +867,14 @@ func validateWorkers(cfg *Config) error {
 	uidOwner := make(map[int]string, len(cfg.Workers))
 	for _, name := range names {
 		w := cfg.Workers[name]
-		if w.UID <= 0 {
-			return fmt.Errorf("workers.%s: uid must be positive (got %d) — a worker is an unprivileged user, never root", name, w.UID)
+		// Positive AND within range: rejects root (0) and negatives, and bounds the
+		// value so the spawn-time uint32 conversion (syscall.Credential) is provably
+		// safe — no overflow. No real uid approaches MaxInt32.
+		if w.UID <= 0 || w.UID > math.MaxInt32 {
+			return fmt.Errorf("workers.%s: uid must be a positive uid within range (got %d) — a worker is an unprivileged user, never root", name, w.UID)
 		}
-		if w.GID <= 0 {
-			return fmt.Errorf("workers.%s: gid must be positive (got %d)", name, w.GID)
+		if w.GID <= 0 || w.GID > math.MaxInt32 {
+			return fmt.Errorf("workers.%s: gid must be a positive gid within range (got %d)", name, w.GID)
 		}
 		if !filepath.IsAbs(w.StateDir) {
 			return fmt.Errorf("workers.%s: state_dir must be an absolute path (got %q)", name, w.StateDir)
