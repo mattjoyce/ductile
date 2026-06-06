@@ -765,10 +765,9 @@ func hookSignalForStatus(status queue.Status) string {
 }
 
 func (d *Dispatcher) computeRetryDelay(retryCfg *config.RetryConfig, attempt int) time.Duration {
-	base := config.DefaultPluginConf().Retry.BackoffBase
-	if retryCfg != nil && retryCfg.BackoffBase > 0 {
-		base = retryCfg.BackoffBase
-	}
+	// backoff_base resolved through the shared resolver — same default source as
+	// the view and every other site (card #75).
+	base := config.ResolvePluginConf(config.PluginConf{Retry: retryCfg}, 0).BackoffBase()
 
 	jitter := time.Duration(0)
 	maxJitter := base / 4
@@ -1667,42 +1666,10 @@ func buildPluginFact(job *queue.Job, updates json.RawMessage, factType string) (
 // (anything other than the four core lifecycle commands) are honored via the
 // Overrides map. P2-05.
 func (d *Dispatcher) getTimeout(timeouts *config.TimeoutsConfig, command string) time.Duration {
-	if timeouts == nil {
-		timeouts = config.DefaultPluginConf().Timeouts
-	}
-
-	if override, ok := timeouts.Overrides[command]; ok && override > 0 {
-		return override
-	}
-
-	// Per-command fallbacks come from DefaultPluginConf so this never re-hardcodes
-	// default timeout values that could silently drift from the canonical source
-	// (the view, EffectivePluginConf, resolves the same way) — card #75.
-	def := config.DefaultPluginConf().Timeouts
-	switch command {
-	case "poll":
-		if timeouts.Poll > 0 {
-			return timeouts.Poll
-		}
-		return def.Poll
-	case "handle":
-		if timeouts.Handle > 0 {
-			return timeouts.Handle
-		}
-		return def.Handle
-	case "health":
-		if timeouts.Health > 0 {
-			return timeouts.Health
-		}
-		return def.Health
-	case "init":
-		if timeouts.Init > 0 {
-			return timeouts.Init
-		}
-		return def.Init
-	default:
-		return def.Poll
-	}
+	// Single-sourced through the shared resolver so the runtime timeout, the
+	// `--effective` view, and every other site resolve identically — no silent
+	// drift if a default changes or a field is added (card #75).
+	return config.ResolvePluginConf(config.PluginConf{Timeouts: timeouts}, 0).Timeout(command)
 }
 
 func (d *Dispatcher) publishPollStarted(job *queue.Job) {

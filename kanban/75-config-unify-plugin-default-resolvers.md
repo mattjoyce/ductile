@@ -1,6 +1,6 @@
 ---
 id: 75
-status: doing
+status: done
 priority: Low
 blocked_by: []
 tags: [config, decomplect, hickey, tech-debt, drift]
@@ -8,7 +8,22 @@ tags: [config, decomplect, hickey, tech-debt, drift]
 
 # Collapse the duplicated per-plugin default resolvers onto one source
 
-> Progress (2026-06-06) — **drift trap closed + guarded.** The one site that genuinely
+> Closed (2026-06-06) — **structural half built; one resolver, all sites read from it.**
+> Introduced `config.ResolvedPluginConf` (built via `config.ResolvePluginConf(raw, maxWorkers)`):
+> the single place the `value-if-set(>0)-else-DefaultPluginConf` rule lives, exposing
+> `MaxAttempts/BackoffBase/Timeout(cmd)/BreakerThreshold/BreakerResetAfter/Parallelism`.
+> Every former duplicate now delegates to it — `MaxAttemptsForPlugin`, dispatcher
+> `getTimeout` + `computeRetryDelay`, scheduler `breakerThreshold`/`breakerResetAfter`, and the
+> `EffectivePluginConf` view (values from the resolver; the view keeps only provenance). The two
+> non-pure twists survive: dispatcher `pluginParallelism` still applies the manifest
+> `concurrency_safe:false` clamp on top of the resolved base, and `Timeout(cmd)` keeps the
+> per-command `Overrides` precedence. Acceptance test `TestEffectivePluginConfMatchesAllRuntimePaths`
+> rebuilds the resolver with each runtime site's exact call shape and pins the view to it
+> field-for-field across unset/explicit/partial configs — a divergent inline resolver now fails the
+> suite. `go build ./... && go test ./...` green. Behaviour-identical (literals already equalled defaults).
+>
+> ---
+> Earlier progress (2026-06-06) — **drift trap closed + guarded.** The one site that genuinely
 > *re-hardcoded* default values, dispatcher `getTimeout` (`60/120/10/30s` literals), now resolves
 > from `config.DefaultPluginConf().Timeouts` like everyone else (behaviour-identical — the literals
 > already equalled the defaults). The other five sites (`MaxAttemptsForPlugin`, `computeRetryDelay`,

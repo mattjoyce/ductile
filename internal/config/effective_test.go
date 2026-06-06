@@ -144,6 +144,54 @@ func TestEffectivePluginConfMatchesRuntimeResolver(t *testing.T) {
 	}
 }
 
+// TestEffectivePluginConfMatchesAllRuntimePaths is the drift backstop for the #75
+// decomplect: the `--effective` view and every runtime hot path now resolve through
+// the one ResolvedPluginConf, so the view must equal each runtime path field-for-field.
+// Each assertion rebuilds the resolver with the SAME call shape the runtime site uses
+// (sub-config pointers for the dispatcher, full conf for the scheduler), so if anyone
+// re-introduces a divergent inline resolver, the view and the runtime split and this fails.
+func TestEffectivePluginConfMatchesAllRuntimePaths(t *testing.T) {
+	const maxWorkers = 8
+	cases := map[string]PluginConf{
+		"all-unset":    {Enabled: true},
+		"all-explicit": {Enabled: true, Retry: &RetryConfig{MaxAttempts: 9, BackoffBase: 7 * time.Second}, Timeouts: &TimeoutsConfig{Poll: 11 * time.Second, Handle: 12 * time.Second, Health: 13 * time.Second, Init: 14 * time.Second, Overrides: map[string]time.Duration{"cpu": 15 * time.Second}}, CircuitBreaker: &CircuitBreakerConfig{Threshold: 4, ResetAfter: 90 * time.Second}, Parallelism: 3},
+		"partial":      {Enabled: true, Retry: &RetryConfig{MaxAttempts: 5}, Timeouts: &TimeoutsConfig{Handle: 20 * time.Second}},
+	}
+	for name, raw := range cases {
+		t.Run(name, func(t *testing.T) {
+			eff, _ := EffectivePluginConf(raw, maxWorkers)
+
+			// retry.max_attempts — enqueue path (MaxAttemptsForPlugin).
+			if eff.Retry.MaxAttempts != MaxAttemptsForPlugin(raw) {
+				t.Errorf("max_attempts: view %d != enqueue-path %d", eff.Retry.MaxAttempts, MaxAttemptsForPlugin(raw))
+			}
+			// retry.backoff_base — dispatcher computeRetryDelay shape.
+			if rt := ResolvePluginConf(PluginConf{Retry: raw.Retry}, 0).BackoffBase(); eff.Retry.BackoffBase != rt {
+				t.Errorf("backoff_base: view %v != dispatcher %v", eff.Retry.BackoffBase, rt)
+			}
+			// timeouts.* — dispatcher getTimeout shape (Timeouts pointer only).
+			tr := ResolvePluginConf(PluginConf{Timeouts: raw.Timeouts}, 0)
+			for cmd, got := range map[string]time.Duration{"poll": eff.Timeouts.Poll, "handle": eff.Timeouts.Handle, "health": eff.Timeouts.Health, "init": eff.Timeouts.Init} {
+				if rt := tr.Timeout(cmd); got != rt {
+					t.Errorf("timeouts.%s: view %v != dispatcher %v", cmd, got, rt)
+				}
+			}
+			// circuit_breaker.* — scheduler breakerThreshold/breakerResetAfter shape (full conf).
+			sr := ResolvePluginConf(raw, 0)
+			if eff.CircuitBreaker.Threshold != sr.BreakerThreshold() {
+				t.Errorf("breaker.threshold: view %d != scheduler %d", eff.CircuitBreaker.Threshold, sr.BreakerThreshold())
+			}
+			if eff.CircuitBreaker.ResetAfter != sr.BreakerResetAfter() {
+				t.Errorf("breaker.reset_after: view %v != scheduler %v", eff.CircuitBreaker.ResetAfter, sr.BreakerResetAfter())
+			}
+			// parallelism — resolver base value (before the dispatcher's concurrency_safe clamp).
+			if rt := ResolvePluginConf(raw, maxWorkers).Parallelism(); eff.Parallelism != rt {
+				t.Errorf("parallelism: view %d != resolver %d", eff.Parallelism, rt)
+			}
+		})
+	}
+}
+
 // TestEffectivePluginConfUnsetEqualsDefaults pins the view's unset-case resolution
 // to the single canonical default source (DefaultPluginConf) for every field, so a
 // change to a default value can never silently disagree with what the view reports.
