@@ -68,6 +68,33 @@ func WithRouteMaxDepth(updates json.RawMessage, maxDepth int) (json.RawMessage, 
 	})
 }
 
+// RouteControlPlane is the control-plane execution identity carried in a
+// context's accumulated durable baggage under the PipelineInstanceNamespace.
+type RouteControlPlane struct {
+	PipelineInstanceID string
+	RouteDepth         int
+	RouteMaxDepth      int
+}
+
+// RouteControlPlaneFromAccumulated decodes every control-plane field from
+// accumulated context baggage in a single pass, instead of re-unmarshalling the
+// blob once per field. Absent fields are zero. Use this where more than one
+// field is needed; the single-field helpers below remain for one-field callers.
+func RouteControlPlaneFromAccumulated(accumulated json.RawMessage) RouteControlPlane {
+	ductile, ok := pipelineControlPlane(accumulated)
+	if !ok {
+		return RouteControlPlane{}
+	}
+	instanceID, _ := ductile[PipelineInstanceIDField].(string)
+	depth, _ := intValue(ductile[RouteDepthField])
+	maxDepth, _ := intValue(ductile[RouteMaxDepthField])
+	return RouteControlPlane{
+		PipelineInstanceID: strings.TrimSpace(instanceID),
+		RouteDepth:         depth,
+		RouteMaxDepth:      maxDepth,
+	}
+}
+
 // PipelineInstanceIDFromAccumulated extracts the durable pipeline execution
 // instance ID from accumulated context baggage.
 func PipelineInstanceIDFromAccumulated(accumulated json.RawMessage) string {

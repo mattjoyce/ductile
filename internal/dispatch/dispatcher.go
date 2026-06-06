@@ -824,14 +824,15 @@ func (d *Dispatcher) loadRequestContext(ctx context.Context, job *queue.Job) (ma
 	if eventCtx.StepID != "" {
 		out["ductile_step_id"] = eventCtx.StepID
 	}
-	if pipelineInstanceID := state.PipelineInstanceIDFromAccumulated(eventCtx.AccumulatedJSON); pipelineInstanceID != "" {
-		out["ductile_pipeline_instance_id"] = pipelineInstanceID
+	cp := state.RouteControlPlaneFromAccumulated(eventCtx.AccumulatedJSON)
+	if cp.PipelineInstanceID != "" {
+		out["ductile_pipeline_instance_id"] = cp.PipelineInstanceID
 	}
-	if routeDepth := state.RouteDepthFromAccumulated(eventCtx.AccumulatedJSON); routeDepth > 0 {
-		out["ductile_route_depth"] = routeDepth
+	if cp.RouteDepth > 0 {
+		out["ductile_route_depth"] = cp.RouteDepth
 	}
-	if routeMaxDepth := state.RouteMaxDepthFromAccumulated(eventCtx.AccumulatedJSON); routeMaxDepth > 0 {
-		out["ductile_route_max_depth"] = routeMaxDepth
+	if cp.RouteMaxDepth > 0 {
+		out["ductile_route_max_depth"] = cp.RouteMaxDepth
 	}
 	return out, nil
 }
@@ -867,9 +868,10 @@ func (d *Dispatcher) routeEventsWithOptions(
 		}
 		sourcePipeline = currentCtx.PipelineName
 		sourceStepID = currentCtx.StepID
-		sourcePipelineInstanceID = state.PipelineInstanceIDFromAccumulated(currentCtx.AccumulatedJSON)
-		sourceDepth = state.RouteDepthFromAccumulated(currentCtx.AccumulatedJSON)
-		sourceMaxDepth = state.RouteMaxDepthFromAccumulated(currentCtx.AccumulatedJSON)
+		cp := state.RouteControlPlaneFromAccumulated(currentCtx.AccumulatedJSON)
+		sourcePipelineInstanceID = cp.PipelineInstanceID
+		sourceDepth = cp.RouteDepth
+		sourceMaxDepth = cp.RouteMaxDepth
 		if len(currentCtx.AccumulatedJSON) > 0 {
 			scope := make(map[string]any)
 			if err := json.Unmarshal(currentCtx.AccumulatedJSON, &scope); err != nil {
