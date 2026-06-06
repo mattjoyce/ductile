@@ -135,8 +135,8 @@ The daemon is the vault's **sole writer and key-holder**. Two op classes (model:
 ```bash
 # Local, key-touching — daemon STOPPED (PID-lock guarded):
 ductile vault init   --vault vault.age --key age.key      # genesis: core principal + nonce + one-time admin token
-ductile vault import --config <dir> --tokens tokens.yaml  # migrate tokens.yaml into the vault
 ductile vault rotate-key --config <dir>                   # rotate the at-rest age key
+ductile vault rotate-admin-token --config <dir>           # mint a fresh management-API admin token (old one stops working)
 
 # Keyless API clients — daemon RUNNING (admin token: --token / DUCTILE_VAULT_TOKEN):
 ductile vault register-principal --name <p> --kind plugin|consumer|gateway
@@ -205,7 +205,7 @@ recurring root cause.
 
 | Tier | Files | On mismatch |
 |---|---|---|
-| High Security | `tokens.yaml`, `webhooks.yaml`, `scopes/*.json` | Hard fail (refuses to start) |
+| High Security | `webhooks.yaml`, `scopes/*.json` | Hard fail (refuses to start) |
 | Operational | `config.yaml`, `plugins/*.yaml`, `pipelines/*.yaml` | Warn & continue |
 
 ## Entity addressing

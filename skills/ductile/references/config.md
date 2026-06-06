@@ -10,7 +10,6 @@
 ├── pipelines.yaml     [Operational] Pipeline definitions (include explicitly)
 ├── routes.yaml        [Operational] Global routing rules (include explicitly)
 ├── webhooks.yaml      [High Security] Webhook endpoints & secrets
-├── tokens.yaml        [High Security] API token registry
 ├── scopes/            [High Security] Token scope definitions
 │   └── admin-cli.json
 └── .checksums         BLAKE3 hash manifest (managed by `config lock`)
@@ -28,7 +27,12 @@ service:
   log_format: json             # json | text
   dedupe_ttl: 24h
   job_log_retention: 30d
-  strict_mode: true            # Hard-fail on any integrity mismatch
+  admission:                   # four independent boot/reload gates (each defaults to false)
+    verify_integrity_on_boot: true   # run .checksums + plugin-fingerprint preflight at startup
+    fail_on_drift: true              # promote config/routes drift from warning to admission failure
+    validate_config_on_boot: true    # require config validation to pass at startup
+    require_api_auth: true           # reject an enabled API with no auth tokens
+  # strict_mode: true          # DEPRECATED alias — enables all four admission gates above
   plugin_env_passthrough: [MY_PLUGIN_FLAG]  # extra env var NAMES for plugin children (allowlist; NOT for secrets)
 
 plugin_roots:
@@ -55,11 +59,10 @@ include:
 **Secrets & encryption at rest.** `secrets.age_key_file` is the age private key
 (mode 0600) that decrypts both encrypted config includes and the vault blob
 (`secrets.vault_file`). Key resolution: `DUCTILE_AGE_KEY_FILE` → `age_key_file` →
-default locations. The vault is the owned secret store; legacy `tokens.yaml`
-entries migrate into it via `ductile vault import --config <dir> --tokens
-tokens.yaml`. `service.plugin_env_passthrough` allowlists extra env var *names*
-for plugin children — secrets do **not** travel via env (they reach plugins over
-stdin). Full model: `docs/SECRETS.md`.
+default locations. The vault is the owned secret store: register principals and
+set secrets with `ductile vault` (see SKILL.md). `service.plugin_env_passthrough`
+allowlists extra env var *names* for plugin children — secrets do **not** travel
+via env (they reach plugins over stdin). Full model: `docs/SECRETS.md`.
 
 ## Modular Grafting (Merge Strategy)
 
@@ -89,25 +92,22 @@ plugins:
 
 ## Tokens & Scopes
 
-### tokens.yaml (High Security)
-```yaml
-tokens:
-  - name: admin-cli
-    key: ${ADMIN_API_KEY}          # env var interpolation
-    scopes_file: scopes/admin-cli.json
-    scopes_hash: blake3:a3f8c2d9...
-```
+API tokens are declared **inline** under `api.auth.tokens`. The standalone
+`tokens.yaml` file surface (and its external `scopes_file`/`scopes_hash` fields)
+was retired in epic #48 — a token now carries its `scopes` array directly:
 
-### Inline tokens (api.yaml / config.yaml)
 ```yaml
 api:
   auth:
     tokens:
-      - token: test_admin_token
+      - token: ${ADMIN_API_KEY}            # env var interpolation
         scopes: ["*"]
       - token: readonly_token
         scopes: ["plugin:ro", "jobs:ro", "events:ro"]
 ```
+
+Custom scope definitions still live in `scopes/*.json` (High Security tier —
+walked at discovery and integrity-checked at lock/boot).
 
 ### Available Scopes
 - `*` — Full admin access
@@ -123,7 +123,7 @@ webhooks:
     - name: astro_rebuild_staging
       path: /webhook/astro-rebuild-staging
       plugin: astro_rebuild_staging
-      secret_ref: astro_webhook_secret       # References tokens.yaml
+      secret_ref: astro_webhook_secret       # Resolved from the vault (ductile vault set)
       signature_header: X-Ductile-Signature-256
       max_body_size: 1MB                     # Optional, default 1MB
 ```
@@ -144,6 +144,24 @@ environment_vars:
     - .env
 ```
 Existing process env vars are NOT overridden.
+
+## Inspecting Effective Config
+
+Per-plugin `retry`, `timeouts`, `circuit_breaker`, `parallelism`, and
+`max_outstanding_polls` defaults live in code (single-sourced) and unset fields
+resolve to those defaults at runtime — so a stanza that omits them (or sets only
+part of a block) does not show the values actually in force. Use `--effective` to
+see what runs, each value tagged `(explicit)` (set in your file) or `(default)`
+(inherited from code):
+
+```bash
+ductile config show --effective birda          # whole plugin, every field tagged
+ductile config get  --effective birda.timeouts.handle   # one field; add --json for {value, source}
+```
+
+Plain `config show` / `config get` (no `--effective`) render the config as
+written, unchanged. The runtime resolver and this view share one source, so the
+view always matches what the dispatcher and scheduler actually use.
 
 ## Integrity Workflow
 
