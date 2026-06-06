@@ -12,10 +12,15 @@ tags: [privsep, epic]
 >   #93, #90, #89.** The privsep mechanism is complete, proven on macOS (units) + privileged Linux
 >   (Dell: wall, cap-only drop under exactly the two caps, fs reconciliation, negative suite). CI gates
 >   the wall under sudo. Docker/Unraid decided hygiene-only.
-> - **Only remaining:** [[95-privsep-launchd-and-live-rollout]] — Mac/launchd port + live-host rollout
->   (ops/observation, blocked on observing the Linux host first; not code).
-> - **Done:** #92, #84, #85, #86, #87, #88, #89, #90, #93 — **Doing:** — **Branch:** `feat/privsep-uid-separation` (pushed).
-> - **PR:** not opened yet — branch ready for review/merge once #95 rollout is planned.
+> - **Rename + rebase (2026-06-07):** branch **renamed worker→account / run_as** (commit `5590091`) to
+>   decouple from concurrency `workers`/vault `principal`; **rebased onto main** (gosec fix included).
+>   Full repo suite green, gofmt-clean.
+> - **Next action:** [[96-privsep-adr-vocab-sync]] (sync ADR vocab to the rename — **prereq for luminary
+>   code review**). Then **review order: code → docs** (design already grilled; code review may change
+>   impl, so docs reviewed last vs final code).
+> - **Open:** #96 (todo, review prereq), [[95-privsep-launchd-and-live-rollout]] (backlog, deferred ops).
+> - **Done:** #92, #84, #85, #86, #87, #88, #89, #90, #93 — **Branch:** `feat/privsep-uid-separation` (pushed, rebased on main).
+> - **PR:** not opened yet — ready for review after #96.
 > - **Update rule:** when a card's `status:` changes, update this block + the table below.
 
 Make the secret-scoping wall **real**. Today plugins run as the gateway's own OS user
