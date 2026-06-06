@@ -12,6 +12,50 @@ import (
 	"github.com/mattjoyce/ductile/internal/router/dsl"
 )
 
+func TestRouterNextPoisonPredicateIsolatedFromHealthyRoutes(t *testing.T) {
+	// Two pipelines on the same trigger. The first carries a predicate that
+	// errors at eval time (numeric gt against a string payload). The second is
+	// healthy. A poison predicate on one route must not abort routing for the
+	// other — and must not surface as an error from Next.
+	set, err := dsl.CompileSpecs([]dsl.PipelineSpec{
+		{
+			Name: "poison",
+			On:   "event.shared",
+			If:   &conditions.Condition{Path: "payload.count", Op: conditions.OpGT, Value: 1},
+			Steps: []dsl.StepSpec{
+				{ID: "poison_step", Uses: "plugin-poison"},
+			},
+		},
+		{
+			Name: "healthy",
+			On:   "event.shared",
+			Steps: []dsl.StepSpec{
+				{ID: "healthy_step", Uses: "plugin-healthy"},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("CompileSpecs: %v", err)
+	}
+
+	r := New(set, nil)
+	out, err := r.Next(context.Background(), Request{
+		Event: protocol.Event{
+			Type:    "event.shared",
+			Payload: map[string]any{"count": "not-a-number"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Next returned error for a poison predicate; want fault isolation: %v", err)
+	}
+	if len(out) != 1 {
+		t.Fatalf("dispatch count = %d, want 1 (healthy route survives poison route): %+v", len(out), out)
+	}
+	if out[0].Plugin != "plugin-healthy" {
+		t.Fatalf("surviving dispatch plugin = %q, want plugin-healthy", out[0].Plugin)
+	}
+}
+
 func TestValidateFromPluginExists(t *testing.T) {
 	compile := func(t *testing.T, fromPlugin string) *dsl.Set {
 		t.Helper()

@@ -159,7 +159,16 @@ func (r *Router) Next(ctx context.Context, req Request) ([]Dispatch, error) {
 			if route.Source.If != nil {
 				ok, err := conditions.Eval(route.Source.If, conditions.Scope{Payload: req.Event.Payload, Context: req.SourceContext})
 				if err != nil {
-					return nil, fmt.Errorf("pipeline %q: evaluate trigger if: %w", route.Pipeline, err)
+					// Fault isolation: a poison predicate on one route must not
+					// abort routing for every other pipeline that matched this
+					// event. Fail safe — skip this route without matching — and
+					// make it loud rather than silent.
+					r.logger.Warn("trigger predicate errored; skipping route (fail-safe no match)",
+						"route_id", route.ID,
+						"pipeline", route.Pipeline,
+						"event_type", eventType,
+						"error", err)
+					continue
 				}
 				if !ok {
 					r.logger.Debug("trigger predicate skipped pipeline",
@@ -231,7 +240,16 @@ func (r *Router) NextHook(ctx context.Context, plugin, signal string, payload ma
 		if route.Source.If != nil {
 			ok, err := conditions.Eval(route.Source.If, conditions.Scope{Payload: payload, Context: sourceContext})
 			if err != nil {
-				return nil, fmt.Errorf("hook pipeline %q: evaluate trigger if: %w", route.Pipeline, err)
+				// Fault isolation: one hook route's poison predicate must not
+				// suppress the other hook pipelines bound to this signal. Fail
+				// safe (skip, no match) and loud.
+				r.logger.Warn("hook trigger predicate errored; skipping route (fail-safe no match)",
+					"route_id", route.ID,
+					"pipeline", route.Pipeline,
+					"signal", signal,
+					"source_plugin", plugin,
+					"error", err)
+				continue
 			}
 			if !ok {
 				r.logger.Debug("hook trigger predicate skipped pipeline",

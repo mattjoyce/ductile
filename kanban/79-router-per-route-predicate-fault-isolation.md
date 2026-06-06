@@ -1,12 +1,20 @@
 ---
 id: 79
-status: backlog
+status: done
 priority: High
 blocked_by: []
 tags: [router, conditions, armstrong, fault-isolation, blast-radius, sprint-17]
 ---
 
 # Isolate predicate-eval failures per route instead of aborting the batch
+
+**DONE 2026-06-06.** In `internal/router/engine.go`, both predicate-eval sites (`Next` root-trigger
+and `NextHook`) now treat an eval error as a `Warn`-logged skip of that one route (fail safe = no
+match) instead of returning an error that aborted the whole batch. Other routes matched on the same
+event/signal still resolve; the dispatcher no longer aborts remaining events for one poison
+predicate. Test `TestRouterNextPoisonPredicateIsolatedFromHealthyRoutes` co-resolves a type-mismatch
+predicate with a healthy route and asserts the healthy dispatch survives with no error. Router suite
+green.
 
 **Origin: Hickey×Armstrong audit of #75, 2026-06-06. Finding A2 (Armstrong: routes must fail independently).**
 
