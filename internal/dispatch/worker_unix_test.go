@@ -65,6 +65,19 @@ func TestApplyWorkerCredential(t *testing.T) {
 	})
 }
 
+// TestHasDropCapabilityAsRoot verifies the boot-gate capability probe on a
+// privileged host: root must report the uid-drop capability. Asserts only as root
+// (the Dell test host / a privileged container); on a non-root dev box the probe's
+// true-case can't be forced, so it skips rather than pass vacuously.
+func TestHasDropCapabilityAsRoot(t *testing.T) {
+	if os.Geteuid() != 0 {
+		t.Skip("capability probe true-case asserts only as root; skipping on non-root dev host")
+	}
+	if !hasDropCapability() {
+		t.Fatal("root must report the uid-drop capability (boot gate would wrongly refuse)")
+	}
+}
+
 // TestPrivsepConfinedSpawnFailsClosedWithoutPrivilege verifies the fail-closed
 // half of the tracer (#92) on an UNPRIVILEGED host: a plugin granted a worker the
 // gateway lacks the privilege to drop to must fail the spawn, never silently run
