@@ -1,6 +1,6 @@
 ---
 id: 85
-status: backlog
+status: done
 priority: High
 blocked_by: [84]
 tags: [privsep, config, authority]
@@ -28,6 +28,20 @@ The *which-worker* decision — and **only** that decision. Fingerprint-binding 
 **Acceptance:** a plugin runs as the worker its per-instance config names; a manifest worker
 hint is ignored; an ungranted plugin resolves to `default`; resolution returns a `ResolvedWorker`
 value (no live spawn here — #86 enforces it).
+
+## Done (2026-06-06)
+- `resolveWorker` (`internal/dispatch/worker.go`) now: explicit `worker:` grant → that tier
+  (`granted`); no grant + configured `default` tier → the shared `default` (`default`, Q2); no grant
+  + no `default` → unconfined. Explicit grant wins over the fallback. `TestResolveWorkerDefaultTier`.
+- **Authority split holds by construction:** `resolveWorker(cfg, name)` takes only the Config — the
+  plugin manifest (which has no worker/tier field anyway) cannot reach the decision. Documented in
+  the function and proven by the signature.
+- **`ResolvedWorker.Source`** added (`granted`/`default`/`unconfined`) — the value's third member
+  (grill), for audit logging (#86 events) and #90 assertions.
+- **Note:** this changes the *default privilege* of ungranted plugins — but only when a `default`
+  worker is configured; deployments with no `workers` table are unaffected (still unconfined).
+- **Next:** [[86-privsep-spawn-uid-drop]] (boot gate + typed drop-failed event, generalize the drop)
+  and [[93-privsep-fingerprint-bind-grant]] (bind the grant to the fingerprint).
 
 ## Narrative
 - **Source:** PrivSec ADR §4. CI-runner model: the job declares wants; the admin-configured

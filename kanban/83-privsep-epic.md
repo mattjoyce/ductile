@@ -8,11 +8,12 @@ tags: [privsep, epic]
 # Privsep — uid separation (worker users) (EPIC)
 
 > [!status] WHERE WE'RE UP TO  *(a resuming agent reads this first; keep it current)*
-> - **State:** ADR accepted; **#92 tracer DONE** (wall proven on Linux); **#84 workers-map DONE**
->   (validation + open map + schema). Build chain progressing tracer → generalize.
-> - **Next action:** [[85-privsep-per-plugin-worker-grant]] — the *which-worker* grant: no-grant →
->   shared `default` tier (today resolves to unconfined), manifest-hint-ignored authority split.
-> - **Done:** #92, #84 — **Doing:** — **Branch:** `feat/privsep-uid-separation` (committed, not pushed).
+> - **State:** ADR accepted; **#92 tracer, #84 workers-map, #85 grant model — all DONE.** Resolve
+>   half complete (resolveWorker: granted/default/unconfined, fail-closed, authority by construction).
+> - **Next action:** [[86-privsep-spawn-uid-drop]] — the *enforce* half: boot gate (capability ×
+>   workers must agree), typed `plugin.drop_failed` event (no retry), generalize the drop. Then
+>   [[93-privsep-fingerprint-bind-grant]] binds the grant to the fingerprint.
+> - **Done:** #92, #84, #85 — **Doing:** — **Branch:** `feat/privsep-uid-separation` (committed, not pushed).
 > - **Update rule:** when a card's `status:` changes, update this block + the table below.
 
 Make the secret-scoping wall **real**. Today plugins run as the gateway's own OS user
@@ -38,7 +39,7 @@ privileged (`CAP_SETUID`) gateway dropping privilege at spawn.
 |---|------|--------|-----------|
 | 92 | [[92-privsep-tracer-wall-off-sys-exec]] — wall off `sys_exec` (1 worker/1 plugin/1 host/1 test) | **done** | — |
 | 84 | [[84-privsep-workers-table]] — two worker tiers in config (table deferred) | **done** | 92 |
-| 85 | [[85-privsep-per-plugin-worker-grant]] — per-plugin `worker:` grant (*which-worker*) | backlog | 84 |
+| 85 | [[85-privsep-per-plugin-worker-grant]] — per-plugin `worker:` grant (*which-worker*) | **done** | 84 |
 | 93 | [[93-privsep-fingerprint-bind-grant]] — bind grant to fingerprint (swap defence) | backlog | 85 |
 | 86 | [[86-privsep-spawn-uid-drop]] — uid/gid drop, fail-closed + group-reset | backlog | 84, 85 |
 | 87 | [[87-privsep-filesystem-permissions]] — full secrets surface + per-worker dirs | backlog | 86 |
