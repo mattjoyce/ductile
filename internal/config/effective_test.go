@@ -143,3 +143,40 @@ func TestEffectivePluginConfMatchesRuntimeResolver(t *testing.T) {
 		}
 	}
 }
+
+// TestEffectivePluginConfUnsetEqualsDefaults pins the view's unset-case resolution
+// to the single canonical default source (DefaultPluginConf) for every field, so a
+// change to a default value can never silently disagree with what the view reports.
+// The runtime resolvers (dispatcher getTimeout/computeRetryDelay, scheduler breaker)
+// resolve unset values from this same DefaultPluginConf — card #75.
+func TestEffectivePluginConfUnsetEqualsDefaults(t *testing.T) {
+	const maxWorkers = 8
+	def := DefaultPluginConf()
+	eff, src := EffectivePluginConf(PluginConf{Enabled: true}, maxWorkers)
+
+	checks := []struct {
+		field string
+		got   any
+		want  any
+	}{
+		{"retry.max_attempts", eff.Retry.MaxAttempts, def.Retry.MaxAttempts},
+		{"retry.backoff_base", eff.Retry.BackoffBase, def.Retry.BackoffBase},
+		{"timeouts.poll", eff.Timeouts.Poll, def.Timeouts.Poll},
+		{"timeouts.handle", eff.Timeouts.Handle, def.Timeouts.Handle},
+		{"timeouts.health", eff.Timeouts.Health, def.Timeouts.Health},
+		{"timeouts.init", eff.Timeouts.Init, def.Timeouts.Init},
+		{"circuit_breaker.threshold", eff.CircuitBreaker.Threshold, def.CircuitBreaker.Threshold},
+		{"circuit_breaker.reset_after", eff.CircuitBreaker.ResetAfter, def.CircuitBreaker.ResetAfter},
+		{"max_outstanding_polls", eff.MaxOutstandingPolls, def.MaxOutstandingPolls},
+		// parallelism's default is service.max_workers, not DefaultPluginConf().Parallelism.
+		{"parallelism", eff.Parallelism, maxWorkers},
+	}
+	for _, c := range checks {
+		if c.got != c.want {
+			t.Errorf("unset %s = %v, want default %v", c.field, c.got, c.want)
+		}
+		if c.field != "parallelism" && src[c.field] != SourceDefault {
+			t.Errorf("unset %s provenance = %q, want %q", c.field, src[c.field], SourceDefault)
+		}
+	}
+}

@@ -1675,29 +1675,33 @@ func (d *Dispatcher) getTimeout(timeouts *config.TimeoutsConfig, command string)
 		return override
 	}
 
+	// Per-command fallbacks come from DefaultPluginConf so this never re-hardcodes
+	// default timeout values that could silently drift from the canonical source
+	// (the view, EffectivePluginConf, resolves the same way) — card #75.
+	def := config.DefaultPluginConf().Timeouts
 	switch command {
 	case "poll":
 		if timeouts.Poll > 0 {
 			return timeouts.Poll
 		}
-		return 60 * time.Second
+		return def.Poll
 	case "handle":
 		if timeouts.Handle > 0 {
 			return timeouts.Handle
 		}
-		return 120 * time.Second
+		return def.Handle
 	case "health":
 		if timeouts.Health > 0 {
 			return timeouts.Health
 		}
-		return 10 * time.Second
+		return def.Health
 	case "init":
 		if timeouts.Init > 0 {
 			return timeouts.Init
 		}
-		return 30 * time.Second
+		return def.Init
 	default:
-		return 60 * time.Second
+		return def.Poll
 	}
 }
 

@@ -1,12 +1,30 @@
 ---
 id: 75
-status: backlog
+status: doing
 priority: Low
 blocked_by: []
 tags: [config, decomplect, hickey, tech-debt, drift]
 ---
 
 # Collapse the duplicated per-plugin default resolvers onto one source
+
+> Progress (2026-06-06) — **drift trap closed + guarded.** The one site that genuinely
+> *re-hardcoded* default values, dispatcher `getTimeout` (`60/120/10/30s` literals), now resolves
+> from `config.DefaultPluginConf().Timeouts` like everyone else (behaviour-identical — the literals
+> already equalled the defaults). The other five sites (`MaxAttemptsForPlugin`, `computeRetryDelay`,
+> `breakerThreshold`/`breakerResetAfter`, `EffectivePluginConf`) already single-source from
+> `DefaultPluginConf`; only `getTimeout` carried a copy. Added drift guards:
+> `TestEffectivePluginConfUnsetEqualsDefaults` (pins the view's unset resolution to `DefaultPluginConf`
+> for every field) and `TestGetTimeoutMatchesEffectiveView` (the runtime timeout path must equal the
+> `--effective` view per command). `go build ./...` + `go test ./...` green (the lone failure,
+> `TestSpawnPluginTimeoutKillsProcessGroup`, is the known pre-existing flake — passes isolated).
+>
+> **Remaining (the structural half, now low-urgency since drift is guarded):** the card's "one
+> resolver object that dispatcher/scheduler/view all read from" is not built — the resolution *logic*
+> (value-if->0-else-default) is still expressed per-site, just no longer with duplicated default
+> *values*. A `ResolvedPluginConf` type the hot paths consume would finish the decomplect; deferred
+> because the hot-path signatures (sub-config pointers) make it a larger, behaviour-sensitive change
+> and the silent-drift risk — the actual danger — is now covered by tests.
 
 **Origin: #71 (`config show --effective`) + its /simplify altitude review, 2026-06-06.**
 
