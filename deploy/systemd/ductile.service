@@ -2,15 +2,15 @@
 #
 # The gateway runs as an UNPRIVILEGED service account (User=ductile), NOT root.
 # Its only privilege is the two capabilities below — exactly enough to drop each
-# plugin to its worker uid at spawn (kernel setgroups→setgid→setuid). The on-disk
+# plugin to its account uid at spawn (kernel setgroups→setgid→setuid). The on-disk
 # binary is a plain root-owned 0755 and is NEVER setuid: privilege is init-conferred
 # here, not carried by the file (ADR §11). Utility subcommands (config validate,
 # secrets keygen) therefore run as the *caller*, with no elevated rights.
 #
 # Prerequisites (install once, as root):
-#   - /etc/sysusers.d/ductile-workers.conf   (creates the accounts)  → systemd-sysusers
-#   - /etc/tmpfiles.d/ductile-workers.conf    (creates worker dirs)   → systemd-tmpfiles --create
-# Worker state dirs MUST be provisioned by tmpfiles.d, not the gateway: a cap-only
+#   - /etc/sysusers.d/ductile-accounts.conf   (creates the accounts)  → systemd-sysusers
+#   - /etc/tmpfiles.d/ductile-accounts.conf    (creates account dirs)   → systemd-tmpfiles --create
+# Account state dirs MUST be provisioned by tmpfiles.d, not the gateway: a cap-only
 # gateway holds no CAP_CHOWN, so it verifies the dirs (fail-closed), never chowns them.
 
 [Unit]
@@ -22,7 +22,7 @@ Type=simple
 User=ductile
 Group=ductile
 
-# The entire privileged surface: drop a child to its worker uid/gid. Nothing more.
+# The entire privileged surface: drop a child to its account uid/gid. Nothing more.
 AmbientCapabilities=CAP_SETUID CAP_SETGID
 CapabilityBoundingSet=CAP_SETUID CAP_SETGID
 

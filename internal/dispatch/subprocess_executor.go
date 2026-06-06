@@ -20,13 +20,13 @@ type subprocessExecutor struct {
 	// extraEnv lists operator-granted environment variable names passed through
 	// to plugin children on top of the built-in allowlist (see buildPluginEnv).
 	extraEnv []string
-	// worker is the resolved privsep identity this plugin spawns under. The zero
+	// account is the resolved privsep identity this plugin spawns under. The zero
 	// value (Confined=false) means unconfined — spawn at the gateway uid, as today.
-	worker ResolvedWorker
+	account ResolvedAccount
 }
 
-func newSubprocessExecutor(events *events.Hub, extraEnv []string, worker ResolvedWorker) *subprocessExecutor {
-	return &subprocessExecutor{events: events, extraEnv: extraEnv, worker: worker}
+func newSubprocessExecutor(events *events.Hub, extraEnv []string, account ResolvedAccount) *subprocessExecutor {
+	return &subprocessExecutor{events: events, extraEnv: extraEnv, account: account}
 }
 
 // publishDropFailed emits the privsep drop-failure signal — its own event, distinct
@@ -37,12 +37,12 @@ func (e *subprocessExecutor) publishDropFailed(req *protocol.Request, pluginName
 		return
 	}
 	e.events.Publish("plugin.drop_failed", map[string]any{
-		"job_id": req.JobID,
-		"plugin": pluginName,
-		"worker": e.worker.Name,
-		"uid":    e.worker.UID,
-		"gid":    e.worker.GID,
-		"error":  cause.Error(),
+		"job_id":  req.JobID,
+		"plugin":  pluginName,
+		"account": e.account.Name,
+		"uid":     e.account.UID,
+		"gid":     e.account.GID,
+		"error":   cause.Error(),
 	})
 }
 
@@ -69,11 +69,11 @@ func (e *subprocessExecutor) execute(
 	cmd.Env = buildPluginEnv(e.extraEnv)
 	configurePluginProcess(cmd)
 	// Compose the privsep uid/gid drop onto the lifecycle-configured command. A
-	// confined worker on a platform that cannot drop fails the spawn closed here —
+	// confined account on a platform that cannot drop fails the spawn closed here —
 	// never a silent run at gateway privilege (PrivSec ADR §3 Layer 1b, §8).
-	if err := applyWorkerCredential(cmd, e.worker); err != nil {
+	if err := applyAccountCredential(cmd, e.account); err != nil {
 		e.publishDropFailed(req, pluginName, err)
-		return nil, protocol.ResponseCompat{}, nil, nil, "", 0, fmt.Errorf("%w: %v", ErrWorkerDropFailed, err)
+		return nil, protocol.ResponseCompat{}, nil, nil, "", 0, fmt.Errorf("%w: %v", ErrAccountDropFailed, err)
 	}
 
 	// Prepare stdin pipe
@@ -97,9 +97,9 @@ func (e *subprocessExecutor) execute(
 	// confined spawn that is NOT a missing binary is a failed drop, not a generic
 	// spawn error. Classify it as such so it fails closed and terminal (no retry).
 	if err := cmd.Start(); err != nil {
-		if e.worker.Confined && !errors.Is(err, fs.ErrNotExist) {
+		if e.account.Confined && !errors.Is(err, fs.ErrNotExist) {
 			e.publishDropFailed(req, pluginName, err)
-			return nil, protocol.ResponseCompat{}, nil, nil, "", 0, fmt.Errorf("%w (worker %q uid %d): %v", ErrWorkerDropFailed, e.worker.Name, e.worker.UID, err)
+			return nil, protocol.ResponseCompat{}, nil, nil, "", 0, fmt.Errorf("%w (account %q uid %d): %v", ErrAccountDropFailed, e.account.Name, e.account.UID, err)
 		}
 		return nil, protocol.ResponseCompat{}, nil, nil, "", 0, fmt.Errorf("start process: %w", err)
 	}

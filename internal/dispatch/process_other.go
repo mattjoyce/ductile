@@ -11,7 +11,7 @@ import (
 func configurePluginProcess(cmd *exec.Cmd) {}
 
 // hasDropCapability is always false on a platform with no Unix uid-drop model, so
-// the boot gate refuses any host that configures workers here (fail-closed).
+// the boot gate refuses any host that configures accounts here (fail-closed).
 func hasDropCapability() bool { return false }
 
 // errWorkerDropUnsupported fails a confined spawn closed on a platform that
@@ -20,9 +20,9 @@ func hasDropCapability() bool { return false }
 // confined plugin never silently runs at gateway privilege here.
 var errWorkerDropUnsupported = errors.New("privsep: uid drop unsupported on this platform")
 
-// applyWorkerCredential mirrors the unix builder: an unconfined resolution is a
+// applyAccountCredential mirrors the unix builder: an unconfined resolution is a
 // no-op; a confined one fails closed because this platform has no uid-drop.
-func applyWorkerCredential(cmd *exec.Cmd, w ResolvedWorker) error {
+func applyAccountCredential(cmd *exec.Cmd, w ResolvedAccount) error {
 	if w.Confined {
 		return errWorkerDropUnsupported
 	}

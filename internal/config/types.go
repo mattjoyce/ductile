@@ -11,25 +11,25 @@ import (
 
 // Config represents the complete ductile configuration.
 type Config struct {
-	Include         []string              `yaml:"include,omitempty"` // Multi-file mode: files to merge
-	EnvironmentVars EnvironmentVarsConfig `yaml:"environment_vars,omitempty"`
-	Service         ServiceConfig         `yaml:"service"`
-	State           StateConfig           `yaml:"state"`
-	Database        StateConfig           `yaml:"database,omitempty"` // Alias for user intuition
-	Secrets         SecretsConfig         `yaml:"secrets,omitempty"`
-	API             APIConfig             `yaml:"api,omitempty"`
-	PluginRoots     []string              `yaml:"plugin_roots,omitempty"`
-	TCCPaths        []string              `yaml:"tcc_paths,omitempty"` // macOS-only: paths stat()-ed on cold start to surface TCC popups synchronously
-	Plugins         map[string]PluginConf `yaml:"plugins"`
-	Workers         map[string]WorkerConf `yaml:"workers,omitempty"` // privsep: worker name -> uid/gid/state_dir (tracer #92; validated/generalized in #84)
-	RelayInstances  []RelayInstanceConfig `yaml:"instances,omitempty"`
-	RemoteIngress   *RemoteIngressConfig  `yaml:"remote_ingress,omitempty"`
-	Routes          []RouteConfig         `yaml:"routes,omitempty"`   // Not in MVP
-	Webhooks        *WebhooksConfig       `yaml:"webhooks,omitempty"` // Not in MVP
-	SourceFiles     map[string]*yaml.Node `yaml:"-"`                  // Physical files tracked for updates
-	ResolvedSecrets map[string]string     `yaml:"-"`                  // name->value, projected from the vault owner at load (epic #48)
-	Pipelines       []PipelineEntry       `yaml:"-"`                  // Directory mode: pipeline entries
-	ConfigDir       string                `yaml:"-"`                  // Directory mode: root config directory
+	Include         []string               `yaml:"include,omitempty"` // Multi-file mode: files to merge
+	EnvironmentVars EnvironmentVarsConfig  `yaml:"environment_vars,omitempty"`
+	Service         ServiceConfig          `yaml:"service"`
+	State           StateConfig            `yaml:"state"`
+	Database        StateConfig            `yaml:"database,omitempty"` // Alias for user intuition
+	Secrets         SecretsConfig          `yaml:"secrets,omitempty"`
+	API             APIConfig              `yaml:"api,omitempty"`
+	PluginRoots     []string               `yaml:"plugin_roots,omitempty"`
+	TCCPaths        []string               `yaml:"tcc_paths,omitempty"` // macOS-only: paths stat()-ed on cold start to surface TCC popups synchronously
+	Plugins         map[string]PluginConf  `yaml:"plugins"`
+	Accounts        map[string]AccountConf `yaml:"accounts,omitempty"` // privsep: account name -> uid/gid/state_dir (tracer #92; validated/generalized in #84)
+	RelayInstances  []RelayInstanceConfig  `yaml:"instances,omitempty"`
+	RemoteIngress   *RemoteIngressConfig   `yaml:"remote_ingress,omitempty"`
+	Routes          []RouteConfig          `yaml:"routes,omitempty"`   // Not in MVP
+	Webhooks        *WebhooksConfig        `yaml:"webhooks,omitempty"` // Not in MVP
+	SourceFiles     map[string]*yaml.Node  `yaml:"-"`                  // Physical files tracked for updates
+	ResolvedSecrets map[string]string      `yaml:"-"`                  // name->value, projected from the vault owner at load (epic #48)
+	Pipelines       []PipelineEntry        `yaml:"-"`                  // Directory mode: pipeline entries
+	ConfigDir       string                 `yaml:"-"`                  // Directory mode: root config directory
 }
 
 // SecretsConfig defines encryption-at-rest settings. AgeKeyFile names the age
@@ -84,9 +84,9 @@ type ServiceConfig struct {
 	HookMaxDepth int `yaml:"hook_max_depth,omitempty"`
 	// Unconfined is the privsep boot-gate escape hatch (PrivSec ADR §5). When true,
 	// the gateway runs plugins at its own uid (no drop) even on a host that holds the
-	// drop capability and configures workers — the one explicit, audited way to opt
+	// drop capability and configures accounts — the one explicit, audited way to opt
 	// out of enforcement. The boot gate logs it loudly. Default false: capability and
-	// workers-configured must agree or the gateway refuses to start.
+	// accounts-configured must agree or the gateway refuses to start.
 	Unconfined bool `yaml:"unconfined,omitempty"`
 }
 
@@ -166,27 +166,27 @@ type APIToken struct {
 	Scopes []string `yaml:"scopes"`
 }
 
-// PluginConf defines configuration for a single plugin.
-// WorkerConf is the unprivileged OS identity a plugin is dropped to at spawn
-// (PrivSec ADR §5). The map key is the worker name a plugin's `worker:` grant
+// AccountConf is the unprivileged OS identity a plugin is dropped to at spawn
+// (PrivSec ADR §5). The map key is the account name a plugin's `run_as:` grant
 // references. Tracer (#92) parses the minimal shape; validation (positive
 // uid/gid, absolute state_dir, no duplicate uid) and the two-tier defaults land
 // in #84. UID/GID are the OS numeric identities; the daemon never creates the
 // account — the deploy layer provisions it (sysusers.d / image, ADR §5 Q4).
-type WorkerConf struct {
+type AccountConf struct {
 	UID      int    `yaml:"uid"`
 	GID      int    `yaml:"gid"`
 	StateDir string `yaml:"state_dir,omitempty"`
 }
 
+// PluginConf defines configuration for a single plugin.
 type PluginConf struct {
 	Enabled bool   `yaml:"enabled"`
 	Uses    string `yaml:"uses,omitempty"`
-	// Worker names the privsep worker tier this plugin is granted (PrivSec ADR §4:
-	// the operator's core config grants privilege; a manifest hint is never trusted).
-	// Empty = no grant. Resolution to a worker identity is #85; the tracer (#92)
+	// RunAs names the privsep account this plugin is granted (PrivSec ADR §4: the
+	// operator's core config grants privilege; a manifest hint is never trusted).
+	// Empty = no grant. Resolution to an account identity is #85; the tracer (#92)
 	// honours it for the single granted plugin.
-	Worker              string                `yaml:"worker,omitempty"`
+	RunAs               string                `yaml:"run_as,omitempty"`
 	Schedule            *ScheduleConfig       `yaml:"schedule,omitempty"` // Deprecated: use schedules.
 	Schedules           []ScheduleConfig      `yaml:"schedules,omitempty"`
 	Config              map[string]any        `yaml:"config,omitempty"`

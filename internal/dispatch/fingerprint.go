@@ -6,20 +6,20 @@ import (
 	"github.com/mattjoyce/ductile/internal/config"
 )
 
-// mostRestrictedWorkerName is, by convention in the shipped two-tier model, the
+// mostRestrictedAccountName is, by convention in the shipped two-tier model, the
 // isolated tier a fingerprint-mismatched plugin is downgraded to (it never shares
 // a uid with secret-holding plugins). If a deployment renames or omits it, the
 // downgrade has no safe target and the spawn fails closed instead.
-const mostRestrictedWorkerName = "untrusted"
+const mostRestrictedAccountName = "untrusted"
 
-// WorkerDowngraded marks a worker identity that was downgraded from its granted
+// AccountDowngraded marks a account identity that was downgraded from its granted
 // tier because the plugin failed fingerprint attestation (#93).
-const WorkerDowngraded WorkerSource = "downgraded"
+const AccountDowngraded AccountSource = "downgraded"
 
-// bindWorkerToFingerprint ties a resolved worker grant to the plugin's recorded
+// bindAccountToFingerprint ties a resolved account grant to the plugin's recorded
 // fingerprint (PrivSec ADR §4; card #93), reusing the keyed-nonce attestation from
 // #12 (the same PluginVerifier the secret path uses). A binary whose bytes changed
-// since its grant must NOT inherit the granted (possibly trusted) worker identity:
+// since its grant must NOT inherit the granted (possibly trusted) account identity:
 // it is downgraded to the most-restricted tier so a supply-chain swap cannot reach
 // a sibling's memory.
 //
@@ -31,33 +31,33 @@ const WorkerDowngraded WorkerSource = "downgraded"
 //
 // Unconfined resolutions and a nil verifier (attestation not wired) pass through
 // unchanged.
-func bindWorkerToFingerprint(resolved ResolvedWorker, cfg *config.Config, plugin string, verifier PluginVerifier) (ResolvedWorker, error) {
+func bindAccountToFingerprint(resolved ResolvedAccount, cfg *config.Config, plugin string, verifier PluginVerifier) (ResolvedAccount, error) {
 	if !resolved.Confined || verifier == nil {
 		return resolved, nil
 	}
 	if err := verifier.VerifyIdentity(plugin); err == nil {
 		return resolved, nil // bytes match the grant: keep it
 	} else {
-		restricted, ok := mostRestrictedWorker(cfg)
+		restricted, ok := mostRestrictedAccount(cfg)
 		if !ok {
-			return ResolvedWorker{}, fmt.Errorf("%w: plugin %q failed fingerprint attestation and no %q tier exists to downgrade to: %v",
-				ErrWorkerDropFailed, plugin, mostRestrictedWorkerName, err)
+			return ResolvedAccount{}, fmt.Errorf("%w: plugin %q failed fingerprint attestation and no %q tier exists to downgrade to: %v",
+				ErrAccountDropFailed, plugin, mostRestrictedAccountName, err)
 		}
 		return restricted, nil
 	}
 }
 
-func mostRestrictedWorker(cfg *config.Config) (ResolvedWorker, bool) {
-	w, ok := cfg.Workers[mostRestrictedWorkerName]
+func mostRestrictedAccount(cfg *config.Config) (ResolvedAccount, bool) {
+	w, ok := cfg.Accounts[mostRestrictedAccountName]
 	if !ok {
-		return ResolvedWorker{}, false
+		return ResolvedAccount{}, false
 	}
-	return ResolvedWorker{
-		Name:     mostRestrictedWorkerName,
+	return ResolvedAccount{
+		Name:     mostRestrictedAccountName,
 		UID:      w.UID,
 		GID:      w.GID,
 		StateDir: w.StateDir,
 		Confined: true,
-		Source:   WorkerDowngraded,
+		Source:   AccountDowngraded,
 	}, true
 }

@@ -187,45 +187,45 @@ journalctl --user -u ductile-local -f
 
 ---
 
-## 5b. Privsep — system service with worker users (opt-in)
+## 5b. Privsep — system service with account users (opt-in)
 
 The `--user` service above runs every plugin as your own uid (hygiene-only, ADR
 Layer 1a). To contain a *popped* plugin — so it cannot read the gateway's secrets
 or another plugin's memory — run the gateway as a **system service holding only
-`CAP_SETUID`+`CAP_SETGID`** and drop each plugin to an unprivileged **worker** user
+`CAP_SETUID`+`CAP_SETGID`** and drop each plugin to an unprivileged **account** user
 (ADR Layer 1b). Templates live in [`deploy/systemd/`](../deploy/systemd/).
 
 **The model:** the binary is never setuid — privilege is *init-conferred*. The
 gateway runs as the unprivileged `ductile` account with exactly the two capabilities,
-just enough to setuid each plugin to its worker at spawn. A cap-only gateway holds
-**no `CAP_CHOWN`**, so the worker accounts and their `0700` state dirs are provisioned
+just enough to setuid each plugin to its account at spawn. A cap-only gateway holds
+**no `CAP_CHOWN`**, so the accounts and their `0700` state dirs are provisioned
 by the init layer (`sysusers.d` + `tmpfiles.d`); the gateway only **verifies** them
 at boot and **refuses to start** if they are wrong (fail-closed).
 
 Install once, as root:
 
 ```bash
-sudo install -m0644 deploy/systemd/ductile-workers.sysusers.conf  /etc/sysusers.d/ductile-workers.conf
-sudo install -m0644 deploy/systemd/ductile-workers.tmpfiles.conf  /etc/tmpfiles.d/ductile-workers.conf
-sudo systemd-sysusers                                              # create ductile + worker accounts
-sudo systemd-tmpfiles --create /etc/tmpfiles.d/ductile-workers.conf  # create 0700 worker dirs
+sudo install -m0644 deploy/systemd/ductile-accounts.sysusers.conf  /etc/sysusers.d/ductile-accounts.conf
+sudo install -m0644 deploy/systemd/ductile-accounts.tmpfiles.conf  /etc/tmpfiles.d/ductile-accounts.conf
+sudo systemd-sysusers                                              # create ductile + account users
+sudo systemd-tmpfiles --create /etc/tmpfiles.d/ductile-accounts.conf  # create 0700 account dirs
 sudo install -m0644 deploy/systemd/ductile.service                /etc/systemd/system/ductile.service
 sudo systemctl daemon-reload && sudo systemctl enable --now ductile
 ```
 
-Match the config `workers:` map to the provisioned uids/dirs:
+Match the config `accounts:` map to the provisioned uids/dirs:
 
 ```yaml
-workers:
-  default:   { uid: 1001, gid: 1001, state_dir: /var/lib/ductile/workers/default }
-  untrusted: { uid: 1002, gid: 1002, state_dir: /var/lib/ductile/workers/untrusted }
+accounts:
+  default:   { uid: 1001, gid: 1001, state_dir: /var/lib/ductile/accounts/default }
+  untrusted: { uid: 1002, gid: 1002, state_dir: /var/lib/ductile/accounts/untrusted }
 plugins:
-  sys_exec:  { worker: untrusted }   # arbitrary-command → isolated tier
+  sys_exec:  { account: untrusted }   # arbitrary-command → isolated tier
   # ungranted first-party plugins fall back to the shared `default` tier
 ```
 
-**The boot gate is fail-closed (ADR §5):** capability and a configured `workers`
-map must agree. A privileged gateway with no workers, or workers configured on a
+**The boot gate is fail-closed (ADR §5):** capability and a configured `accounts`
+map must agree. A privileged gateway with no accounts, or accounts configured on a
 host without the capability, **refuses to start** — never a silent run at gateway
 privilege. The one escape hatch is an explicit `service.unconfined: true`.
 
@@ -238,23 +238,23 @@ is observed stable (card #88); see [MACOS_INSTALLATION.md](MACOS_INSTALLATION.md
 
 ### Docker / Unraid — hygiene-only by default (decision, card #89)
 
-**The Docker/Unraid image stays hygiene-only (ADR Layer 1a) — no worker drop.** The
+**The Docker/Unraid image stays hygiene-only (ADR Layer 1a) — no account drop.** The
 image runs `USER ductile` (unprivileged), and adopting full privsep there would
 *raise* the container's privilege (run as root or with `SETUID`/`SETGID` caps),
 which is the worst trade on the one host where a privileged container is most
 costly. The ADR explicitly allows hygiene-only as a legitimate per-host default,
 and at one author it is the honest choice.
 
-You lose nothing silently: with **no `workers:` map configured**, the boot gate runs
+You lose nothing silently: with **no `accounts:` map configured**, the boot gate runs
 the gateway `unconfined` — exactly today's behaviour — and 1a still bounds the spawn
 (env allowlist + secrets only over stdin). And the gate is **fail-closed against
-misconfiguration**: if you *do* add a `workers:` map to a container that lacks the
+misconfiguration**: if you *do* add an `accounts:` map to a container that lacks the
 drop capability, the gateway **refuses to start** rather than presenting a wall it
 cannot enforce. So "hygiene-only" here is a deliberate, safe state, not a silent gap.
 
 *If you ever want full uid separation in a container* (e.g. running `sys_exec` on
 Unraid): run it `--cap-add=SETUID --cap-add=SETGID` (prefer caps over root), bake
-the worker uids into the image, provision the per-worker `0700` dirs on a persistent
+the account uids into the image, provision the per-account `0700` dirs on a persistent
 volume (the tmpfiles.d equivalent), and bind-mount the `0600` age key from the host
 (no TPM/Keychain in a container). That is opt-in and intentionally undocumented as a
 default — the homelab floor is hygiene-only.

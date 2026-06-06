@@ -30,7 +30,7 @@ jobs:
         run: |
           go test -c -o /tmp/dispatch.test ./internal/dispatch/
           sudo /tmp/dispatch.test -test.v -test.run \
-            'TestPrivsepWorkerCannotReadAgeKey|TestPrivsepNegativeSuite|TestReconcileWorkerFilesystemAsRoot|TestHasDropCapabilityAsRoot|TestBindWorkerToFingerprint|TestEvaluateBootGate|TestResolveWorker|TestApplyWorkerCredential|TestValidateWorkers'
+            'TestPrivsepAccountCannotReadAgeKey|TestPrivsepNegativeSuite|TestReconcileAccountFilesystemAsRoot|TestHasDropCapabilityAsRoot|TestBindAccountToFingerprint|TestEvaluateBootGate|TestResolveAccount|TestApplyAccountCredential|TestValidateAccounts'
 
       - name: Run lint
         uses: golangci/golangci-lint-action@v6

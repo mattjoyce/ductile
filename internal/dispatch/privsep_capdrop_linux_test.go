@@ -12,7 +12,7 @@ import (
 
 // TestPrivsepDropUnderCapabilityOnly proves the headline #88 claim that the full-
 // root container could not: a NON-root gateway holding only CAP_SETUID+CAP_SETGID
-// (the ADR §5 "two caps, nothing more") can still drop a child to a worker uid.
+// (the ADR §5 "two caps, nothing more") can still drop a child to a account uid.
 // It also exercises the CapEff detection path (hasDropCapability must see the caps
 // despite euid != 0).
 //
@@ -49,7 +49,7 @@ func TestPrivsepDropUnderCapabilityOnly(t *testing.T) {
 
 	cmd := exec.Command(scriptPath)
 	configurePluginProcess(cmd)
-	if err := applyWorkerCredential(cmd, ResolvedWorker{Name: "untrusted", UID: workerUID, GID: workerGID, Confined: true}); err != nil {
+	if err := applyAccountCredential(cmd, ResolvedAccount{Name: "untrusted", UID: workerUID, GID: workerGID, Confined: true}); err != nil {
 		t.Fatalf("apply credential: %v", err)
 	}
 	if err := cmd.Run(); err != nil {

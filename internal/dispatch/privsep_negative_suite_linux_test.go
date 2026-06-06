@@ -17,23 +17,23 @@ import (
 	"github.com/mattjoyce/ductile/internal/protocol"
 )
 
-// TestPrivsepNegativeSuite is the #90 aggregate: a single dropped worker probing
-// the whole secrets surface and a sibling worker's dir, proving uid separation
+// TestPrivsepNegativeSuite is the #90 aggregate: a single dropped account probing
+// the whole secrets surface and a sibling account's dir, proving uid separation
 // actually bites end to end (ADR §9). It REQUIRES root (the setup chowns dirs to
-// worker uids) and skips cleanly otherwise — a skip is never a pass, so a
+// account uids) and skips cleanly otherwise — a skip is never a pass, so a
 // non-privileged CI runner cannot mask a breached wall.
 //
 // NOT covered here (stated, not hidden): sibling isolation *within* the shared
 // `default` tier — that is the accepted same-uid residual (see 83-privsep-epic).
-// This is why the cross-worker probe uses two DIFFERENT workers, never default/default.
+// This is why the cross-account probe uses two DIFFERENT accounts, never default/default.
 func TestPrivsepNegativeSuite(t *testing.T) {
 	if os.Geteuid() != 0 {
-		t.Skip("privsep negative suite needs root (chown worker dirs) — skipping (NOT a pass); run on the Linux test host / CI sudo step")
+		t.Skip("privsep negative suite needs root (chown account dirs) — skipping (NOT a pass); run on the Linux test host / CI sudo step")
 	}
 
 	const (
-		uidA, gidA = 65534, 65534 // the plugin's own worker
-		uidB, gidB = 65533, 65533 // a sibling worker it must not reach
+		uidA, gidA = 65534, 65534 // the plugin's own account
+		uidB, gidB = 65533, 65533 // a sibling account it must not reach
 	)
 
 	base, err := os.MkdirTemp("/tmp", "privsep-neg-")
@@ -45,7 +45,7 @@ func TestPrivsepNegativeSuite(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Gateway-owned (root) 0600 secrets the dropped worker must not read.
+	// Gateway-owned (root) 0600 secrets the dropped account must not read.
 	mustWrite := func(name string, mode os.FileMode) string {
 		p := filepath.Join(base, name)
 		if err := os.WriteFile(p, []byte("secret\n"), mode); err != nil {
@@ -65,7 +65,7 @@ func TestPrivsepNegativeSuite(t *testing.T) {
 	if err := os.Chown(dirA, uidA, gidA); err != nil {
 		t.Fatal(err)
 	}
-	// Sibling worker B's dir with a secret inside — A must not reach it.
+	// Sibling account B's dir with a secret inside — A must not reach it.
 	dirB := filepath.Join(base, "workerB")
 	if err := os.Mkdir(dirB, 0o700); err != nil {
 		t.Fatal(err)
@@ -82,7 +82,7 @@ func TestPrivsepNegativeSuite(t *testing.T) {
 
 	resultPath := filepath.Join(dirA, "verdicts")
 	scriptPath := filepath.Join(base, "probe.sh")
-	// The probe records "<label>=READABLE|DENIED" for each target into worker A's
+	// The probe records "<label>=READABLE|DENIED" for each target into account A's
 	// own dir (which it owns), then idles until the timeout terminates it.
 	script := fmt.Sprintf(`#!/bin/sh
 probe() { if cat "$2" >/dev/null 2>&1; then echo "$1=READABLE"; else echo "$1=DENIED"; fi; }
@@ -100,11 +100,11 @@ while :; do sleep 1; done
 	}
 
 	cfg := &config.Config{
-		Workers: map[string]config.WorkerConf{
+		Accounts: map[string]config.AccountConf{
 			"wa": {UID: uidA, GID: gidA, StateDir: dirA},
 			"wb": {UID: uidB, GID: gidB, StateDir: dirB},
 		},
-		Plugins: map[string]config.PluginConf{"probe": {Worker: "wa"}},
+		Plugins: map[string]config.PluginConf{"probe": {RunAs: "wa"}},
 	}
 
 	d := &Dispatcher{events: events.NewHub(16), cfg: cfg, enforcePrivsep: true}
@@ -121,11 +121,11 @@ while :; do sleep 1; done
 		time.Sleep(25 * time.Millisecond)
 	}
 	if verdicts == "" {
-		t.Fatal("no probe verdicts — the plugin may not have spawned as worker A")
+		t.Fatal("no probe verdicts — the plugin may not have spawned as account A")
 	}
 	t.Logf("verdicts:\n%s", verdicts)
 
-	// Every secret + the sibling dir must be DENIED; the worker's own dir writable.
+	// Every secret + the sibling dir must be DENIED; the account's own dir writable.
 	for _, want := range []string{"key=DENIED", "config=DENIED", "statedb=DENIED", "sibling=DENIED", "own=WRITABLE"} {
 		if !strings.Contains(verdicts, want) {
 			t.Errorf("missing expected verdict %q in:\n%s", want, verdicts)

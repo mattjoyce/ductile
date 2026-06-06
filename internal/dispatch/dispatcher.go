@@ -51,7 +51,7 @@ type Dispatcher struct {
 	logger   *slog.Logger
 
 	// enforcePrivsep reflects the boot gate (#86): when true, spawnPlugin resolves
-	// each plugin to its worker and drops privilege; when false (dev / unconfined
+	// each plugin to its account and drops privilege; when false (dev / unconfined
 	// override) the drop is skipped and plugins run at the gateway uid.
 	enforcePrivsep bool
 
@@ -115,10 +115,10 @@ func WithPluginVerifier(v PluginVerifier) Option {
 }
 
 // WithPrivsepEnforce sets whether the dispatcher drops each granted plugin to its
-// resolved worker. It reflects the boot gate's decision (BootEnforce): true only
-// when the gateway holds the drop capability AND workers are configured. When
+// resolved account. It reflects the boot gate's decision (BootEnforce): true only
+// when the gateway holds the drop capability AND accounts are configured. When
 // false (the dev path, or an explicit service.unconfined override) plugins spawn
-// at the gateway uid and worker resolution is skipped entirely.
+// at the gateway uid and account resolution is skipped entirely.
 func WithPrivsepEnforce(enforce bool) Option {
 	return func(d *Dispatcher) {
 		d.enforcePrivsep = enforce
@@ -560,7 +560,7 @@ func (d *Dispatcher) executeJob(ctx context.Context, job *queue.Job) {
 		// terminal and NEVER retry — re-running the same doomed setuid is pointless
 		// churn that masks the misconfig (PrivSec ADR §8; #86). Distinct from a
 		// missing binary, which still flows through the generic spawn-error path.
-		if errors.Is(err, ErrWorkerDropFailed) {
+		if errors.Is(err, ErrAccountDropFailed) {
 			errMsg := fmt.Sprintf("plugin spawn failed (privsep drop refused): %v", err)
 			jobLogger.Error(errMsg)
 			decision := retryDecision{Retryable: false, Reason: retryReasonDropFailed}
@@ -694,32 +694,32 @@ func (d *Dispatcher) spawnPlugin(
 	timeout time.Duration,
 	logger *slog.Logger,
 ) (*protocol.Response, protocol.ResponseCompat, json.RawMessage, []byte, string, int, error) {
-	// Resolve the plugin's privsep worker from the operator's core config, but only
+	// Resolve the plugin's privsep account from the operator's core config, but only
 	// when the boot gate decided to enforce. When not enforcing (dev host, or an
 	// explicit service.unconfined override) the drop is skipped entirely and the
 	// plugin runs at the gateway uid — today's behaviour. A grant to an undefined
-	// worker fails the spawn closed rather than silently running unconfined
+	// account fails the spawn closed rather than silently running unconfined
 	// (PrivSec ADR §4; the fail-closed stance from the 2026-06-06 grill).
-	var resolved ResolvedWorker
+	var resolved ResolvedAccount
 	if d.enforcePrivsep {
 		var err error
-		resolved, err = resolveWorker(d.cfg, pluginName)
+		resolved, err = resolveAccount(d.cfg, pluginName)
 		if err != nil {
-			return nil, protocol.ResponseCompat{}, nil, nil, "", 0, fmt.Errorf("resolve worker: %w", err)
+			return nil, protocol.ResponseCompat{}, nil, nil, "", 0, fmt.Errorf("resolve account: %w", err)
 		}
 		// Bind the grant to the plugin's fingerprint (#93): a binary swapped since
 		// its grant is downgraded to the most-restricted tier so it cannot inherit a
-		// trusted worker's siblings (fail-closed if there is nothing to downgrade to).
+		// trusted account's siblings (fail-closed if there is nothing to downgrade to).
 		granted := resolved
-		resolved, err = bindWorkerToFingerprint(resolved, d.cfg, pluginName, d.pluginVerifier)
+		resolved, err = bindAccountToFingerprint(resolved, d.cfg, pluginName, d.pluginVerifier)
 		if err != nil {
-			return nil, protocol.ResponseCompat{}, nil, nil, "", 0, fmt.Errorf("bind worker to fingerprint: %w", err)
+			return nil, protocol.ResponseCompat{}, nil, nil, "", 0, fmt.Errorf("bind account to fingerprint: %w", err)
 		}
-		if resolved.Source == WorkerDowngraded {
-			logger.Warn("privsep: fingerprint mismatch — worker grant downgraded",
+		if resolved.Source == AccountDowngraded {
+			logger.Warn("privsep: fingerprint mismatch — account grant downgraded",
 				"plugin", pluginName, "from", granted.Name, "to", resolved.Name)
 			if d.events != nil {
-				d.events.Publish("plugin.worker_downgraded", map[string]any{
+				d.events.Publish("plugin.account_downgraded", map[string]any{
 					"plugin": pluginName, "from": granted.Name, "to": resolved.Name,
 				})
 			}

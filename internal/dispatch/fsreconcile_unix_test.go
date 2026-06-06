@@ -10,7 +10,7 @@ import (
 
 // TestReconcileSecretPath covers the secrets-surface tightening on files the
 // current user owns — runnable on a non-root dev host. The foreign-owned refuse
-// path and worker-dir chown need root and are covered on the Linux test host.
+// path and account-dir chown need root and are covered on the Linux test host.
 func TestReconcileSecretPath(t *testing.T) {
 	euid := os.Geteuid()
 

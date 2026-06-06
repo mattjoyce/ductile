@@ -49,7 +49,7 @@ func configurePluginProcess(cmd *exec.Cmd) {
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 }
 
-// applyWorkerCredential composes the privsep uid/gid drop onto an already-
+// applyAccountCredential composes the privsep uid/gid drop onto an already-
 // configured command (PrivSec ADR §3 Layer 1b; tracer #92). It is deliberately
 // separate from configurePluginProcess: that sets process-group lifecycle (*how*
 // the child is terminated); this sets privilege identity (*who* it runs as). The
@@ -58,19 +58,19 @@ func configurePluginProcess(cmd *exec.Cmd) {
 // failure surfaces from cmd.Start() and must fail the spawn closed.
 //
 // Unconfined resolutions are a no-op (run at the gateway uid, as today).
-// Supplementary groups are reset to the worker's own gid so an inherited gateway
+// Supplementary groups are reset to the account's own gid so an inherited gateway
 // group cannot silently re-grant access (the ADR §8 botched-drop guard).
-func applyWorkerCredential(cmd *exec.Cmd, w ResolvedWorker) error {
+func applyAccountCredential(cmd *exec.Cmd, w ResolvedAccount) error {
 	if !w.Confined {
 		return nil
 	}
 	if cmd.SysProcAttr == nil {
 		cmd.SysProcAttr = &syscall.SysProcAttr{}
 	}
-	// uid/gid are validated positive and within range at config load (validateWorkers,
+	// uid/gid are validated positive and within range at config load (validateAccounts,
 	// #84), so these conversions cannot overflow or go negative.
-	uid := uint32(w.UID) // #nosec G115 -- worker uid validated positive + bounded at config load
-	gid := uint32(w.GID) // #nosec G115 -- worker gid validated positive + bounded at config load
+	uid := uint32(w.UID) // #nosec G115 -- account uid validated positive + bounded at config load
+	gid := uint32(w.GID) // #nosec G115 -- account gid validated positive + bounded at config load
 	cmd.SysProcAttr.Credential = &syscall.Credential{
 		Uid:    uid,
 		Gid:    gid,

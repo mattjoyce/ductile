@@ -51,11 +51,11 @@
         "$ref": "#/$defs/PluginConf"
       }
     },
-    "workers": {
+    "accounts": {
       "type": "object",
-      "description": "Privsep worker tiers keyed by name (PrivSec ADR §5). Each maps to an unprivileged OS identity a plugin is dropped to at spawn. Open map; ship/document `default` + `untrusted`. An absent/empty map engages the boot gate (no capability → unconfined; CAP_SETUID → refuse), not a synthesised default.",
+      "description": "Privsep account tiers keyed by name (PrivSec ADR §5). Each maps to an unprivileged OS identity a plugin is dropped to at spawn. Open map; ship/document `default` + `untrusted`. An absent/empty map engages the boot gate (no capability → unconfined; CAP_SETUID → refuse), not a synthesised default.",
       "additionalProperties": {
-        "$ref": "#/$defs/WorkerConf"
+        "$ref": "#/$defs/AccountConf"
       }
     },
     "instances": {
@@ -94,13 +94,13 @@
         { "required": ["service", "state", "plugin_roots"] }
       ]
     },
-    "WorkerConf": {
+    "AccountConf": {
       "type": "object",
-      "description": "An unprivileged worker identity (PrivSec ADR §5). uid/gid are positive (never 0/root); state_dir is an absolute path the worker owns. No two workers may share a uid (duplicate uids are false isolation).",
+      "description": "An unprivileged account identity (PrivSec ADR §5). uid/gid are positive (never 0/root); state_dir is an absolute path the account owns. No two accounts may share a uid (duplicate uids are false isolation).",
       "properties": {
         "uid": { "type": "integer", "minimum": 1, "description": "Unprivileged user id (>0; never root). Provisioned by the deploy layer (sysusers.d / image), referenced here by number." },
         "gid": { "type": "integer", "minimum": 1, "description": "Unprivileged group id (>0)." },
-        "state_dir": { "type": "string", "minLength": 1, "description": "Absolute path to the worker's owned, persistent 0700 state directory (created/reconciled at boot — see card #87)." }
+        "state_dir": { "type": "string", "minLength": 1, "description": "Absolute path to the account's owned, persistent 0700 state directory (created/reconciled at boot — see card #87)." }
       },
       "required": ["uid", "gid", "state_dir"],
       "additionalProperties": false
@@ -334,6 +334,10 @@
         "uses": {
           "type": "string",
           "description": "Alias: use another plugin's implementation by name."
+        },
+        "run_as": {
+          "type": "string",
+          "description": "Privsep account this plugin is granted (PrivSec ADR §4; names an entry in the top-level accounts map). The operator's core config grants privilege — a manifest hint is never trusted. Empty/absent = no grant (falls back to the shared default account, or unconfined if none)."
         },
         "schedule": {
           "$ref": "#/$defs/ScheduleConfig",
