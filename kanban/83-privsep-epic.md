@@ -31,10 +31,10 @@ tags: [privsep, epic]
 >   `accounts:` map** → boot gate → `unconfined` (no CAP_SETUID on macOS launchd) → privsep is **NOT
 >   enforcing on the live host**, so the #93 *downgrade* path isn't reached there. Enforce mode is
 >   macOS-pending ([[95-privsep-launchd-and-live-rollout]]) — must be stated in the PR body.
-> - **Next action:** **documentation review** (docs vs the now-folded code) — last in the review order.
->   Tier D doc items (T5c ADR principal-asymmetry, T11 deploy SSOT, T12 macOS-pending, T13, T14, T17)
->   land there. Then open the PR.
-> - **Open:** [[97-privsep-review-followups]] (todo), [[95-privsep-launchd-and-live-rollout]] (backlog).
+> - **Next action:** [[98-privsep-docs-naur-diataxis]] — **documentation pass** (Naur theory + Diátaxis,
+>   *take action, not a review*) folding Tier D doc items (T5c, T11, T12, T13, T14, T17). Last gate, then PR.
+> - **Open:** [[98-privsep-docs-naur-diataxis]] (todo), [[97-privsep-review-followups]] (todo),
+>   [[95-privsep-launchd-and-live-rollout]] (backlog).
 > - **Done:** #92, #84, #85, #86, #87, #88, #89, #90, #93, #96 — **Branch:** `feat/privsep-uid-separation` (pushed, rebased on main).
 > - **PR:** not opened yet — ready after the doc review (state macOS-pending enforce per T7/T12).
 > - **Update rule:** when a card's `status:` changes, update this block + the table below.
