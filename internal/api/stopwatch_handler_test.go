@@ -18,7 +18,7 @@ import (
 // mockStopwatchReader satisfies StopwatchReader for handler tests so
 // percentile aggregation is exercised without a real SQLite table.
 type mockStopwatchReader struct {
-	rowsFunc func(ctx context.Context, plugin string, since time.Time) ([]state.StopwatchAggregationRow, error)
+	rowsFunc  func(ctx context.Context, plugin string, since time.Time) ([]state.StopwatchAggregationRow, error)
 	gotPlugin string
 	gotSince  time.Time
 }

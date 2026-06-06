@@ -92,7 +92,6 @@ func loadVaultOwner(configDir string, cfg *Config, kr *secrets.Keyring) (*vault.
 	return v, nil
 }
 
-
 // activeVaultSecrets projects the store's active, gateway-visible secrets into a
 // name->value map for the load-time projection, plus any blast-radius warnings.
 // Two exclusions:

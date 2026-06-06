@@ -40,9 +40,9 @@ type TopologyEdge struct {
 // TopologySignal is one edge label in the graph, inverted into the
 // (producers, consumers) view the console needs for hover highlighting.
 type TopologySignal struct {
-	Name      string              `json:"name"`
-	Producers []TopologyEndpoint  `json:"producers"`
-	Consumers []TopologyEndpoint  `json:"consumers"`
+	Name      string             `json:"name"`
+	Producers []TopologyEndpoint `json:"producers"`
+	Consumers []TopologyEndpoint `json:"consumers"`
 }
 
 // TopologyEndpoint names one end of a signal edge — a (plugin, command) tuple.

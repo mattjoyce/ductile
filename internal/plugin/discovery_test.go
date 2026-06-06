@@ -1012,4 +1012,3 @@ func TestValidateManifest_StopwatchMaxSubsRange(t *testing.T) {
 		}
 	}
 }
-

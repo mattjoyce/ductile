@@ -184,4 +184,3 @@ func TestPhase2P2_07_PluginRwInvokesEverything(t *testing.T) {
 		t.Fatalf("plugin:rw catalog: expected 200, got %d: %s", rr.Code, rr.Body.String())
 	}
 }
-

@@ -209,4 +209,3 @@ func countEventContexts(t *testing.T, db interface {
 	}
 	return n
 }
-

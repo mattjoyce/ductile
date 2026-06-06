@@ -239,4 +239,3 @@ func TestPhase2D1_JobsLogsPlusResultRoSeesEverything(t *testing.T) {
 		t.Fatalf("jobs:logs:ro + jobs:result:ro must see result marker; body=%s", rr.Body.String())
 	}
 }
-

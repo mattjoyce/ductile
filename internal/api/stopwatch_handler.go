@@ -143,9 +143,9 @@ func aggregateStopwatch(
 	includeSubs bool,
 ) StopwatchResponse {
 	type stepBucket struct {
-		durs     []int64
-		times    []time.Time
-		subDurs  map[string][]int64
+		durs    []int64
+		times   []time.Time
+		subDurs map[string][]int64
 	}
 	steps := map[string]*stepBucket{}
 

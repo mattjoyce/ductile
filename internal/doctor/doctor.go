@@ -59,10 +59,10 @@ type HookPipeline struct {
 
 // Doctor validates configuration against discovered plugins.
 type Doctor struct {
-	cfg                *config.Config
-	registry           *plugin.Registry
-	hookPipelines      []HookPipeline
-	stopwatchSnapshot  *StopwatchSnapshot
+	cfg               *config.Config
+	registry          *plugin.Registry
+	hookPipelines     []HookPipeline
+	stopwatchSnapshot *StopwatchSnapshot
 }
 
 // New creates a Doctor from a loaded config and plugin registry.

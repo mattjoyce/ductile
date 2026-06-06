@@ -46,4 +46,3 @@ func TestRunVaultInitRequiresFlags(t *testing.T) {
 		t.Fatal("vault init without flags succeeded; --vault and --key are required")
 	}
 }
-

@@ -69,6 +69,7 @@ func (s *Store) PruneStopwatchRows(ctx context.Context, filter StopwatchPruneFil
 	// Two-step pattern (subquery selects ids, outer DELETE bounds the
 	// row count) is portable across SQLite versions whose UPDATE/DELETE
 	// LIMIT support varies by build flag.
+	// #nosec G201 -- where is built by whereClause() using only hardcoded column names and ? placeholders; no user input reaches the SQL fragment.
 	q := fmt.Sprintf(`
 		DELETE FROM job_stopwatch
 		WHERE id IN (
@@ -127,6 +128,7 @@ func (s *Store) CountStopwatchSubsMatching(ctx context.Context, filter Stopwatch
 		subPredicate = "EXISTS (SELECT 1 FROM json_each(subs_json) WHERE json_extract(value, '$.name') = ?)"
 		args = append(args, spanName)
 	}
+	// #nosec G201 -- where/subPredicate are hardcoded SQL fragments with ? placeholders; no user input is interpolated into the SQL string.
 	q := fmt.Sprintf("SELECT COUNT(*) FROM job_stopwatch WHERE %s AND %s", where, subPredicate)
 	var n int
 	if err := s.db.QueryRowContext(ctx, q, args...).Scan(&n); err != nil {
