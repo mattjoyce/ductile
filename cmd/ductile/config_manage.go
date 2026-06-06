@@ -19,10 +19,9 @@ import (
 	"github.com/mattjoyce/ductile/internal/doctor"
 	"github.com/mattjoyce/ductile/internal/plugin"
 	"github.com/mattjoyce/ductile/internal/router/dsl"
+	"github.com/mattjoyce/ductile/internal/vault"
 	"gopkg.in/yaml.v3"
 )
-
-
 
 func redactWebhookEndpoint(entry config.WebhookEndpoint) config.WebhookEndpoint {
 	return entry
@@ -35,7 +34,6 @@ func redactWebhookEndpoints(entries []config.WebhookEndpoint) []config.WebhookEn
 	}
 	return out
 }
-
 
 func resolveConfigTarget(configPath, configDir string) (string, string, error) {
 	if configPath != "" && configDir != "" {
@@ -225,7 +223,7 @@ func resolveConfiguredPluginFingerprints(cfg *config.Config, configPath string) 
 // mismatches otherwise. Warnings from VerifyPluginFingerprints are intentionally
 // silent here; the caller may upgrade to logger-aware reporting in a future
 // revision.
-func verifyPluginFingerprintsForConfig(configPath string) error {
+func verifyPluginFingerprintsForConfig(configPath string, owner *vault.Vault) error {
 	configDir := resolveConfigDir(configPath)
 	manifest, err := config.LoadChecksums(configDir)
 	if err != nil {
@@ -274,8 +272,10 @@ func verifyPluginFingerprintsForConfig(configPath string) error {
 	}
 	// Recorded fingerprints are keyed (ADR §3.2, vault-held-or-fail): verification
 	// needs the vault nonce. fingerprintNonceForConfig fails closed if no vault is
-	// loaded — a present fingerprint set can never be verified unkeyed.
-	nonce, err := fingerprintNonceForConfig(configDir, cfg)
+	// loaded — a present fingerprint set can never be verified unkeyed. owner, when
+	// non-nil, is the already-decrypted boot/reload owner: reuse its nonce so verify
+	// and delivery share one snapshot (#43 single-decrypt, closes the TOCTOU).
+	nonce, err := fingerprintNonceForConfig(configDir, cfg, owner)
 	if err != nil {
 		return fmt.Errorf("plugin verify: %w", err)
 	}
@@ -286,16 +286,30 @@ func verifyPluginFingerprintsForConfig(configPath string) error {
 	return nil
 }
 
-// fingerprintNonceForConfig loads the vault for configDir and returns the
-// 32-byte plugin-attestation nonce. Fail-closed (Armstrong): if there is no
-// vault to source the nonce from, that is a hard error — attestation is
-// keyed-or-nothing, never a silent downgrade to an unkeyed digest. Call this
-// only when there are plugins to attest/verify; a zero-fingerprint deployment
-// must not reach here (it opts out of attestation and runs vault-less).
-func fingerprintNonceForConfig(configDir string, cfg *config.Config) ([]byte, error) {
-	v, err := config.LoadVault(configDir, cfg)
-	if err != nil {
-		return nil, err
+// fingerprintNonceForConfig returns the 32-byte plugin-attestation nonce.
+//
+// When owner is non-nil it is the vault already decrypted by the one boot/reload
+// load (config.LoadWithVault); the nonce is taken from that same in-memory
+// snapshot. This is the #43 single-decrypt path: boot and reload no longer
+// re-decrypt the age blob just for the nonce, and the nonce that verifies plugin
+// fingerprints comes from the identical snapshot that later delivers secrets —
+// closing the verify-then-deliver TOCTOU window.
+//
+// When owner is nil (the CLI 'plugin lock' path, which holds no pre-decrypted
+// owner) it falls back to loading the vault for configDir. Either way it is
+// fail-closed (Armstrong): no vault to source the nonce from is a hard error —
+// attestation is keyed-or-nothing, never a silent downgrade to an unkeyed
+// digest. Call this only when there are plugins to attest/verify; a
+// zero-fingerprint deployment must not reach here (it opts out of attestation
+// and runs vault-less).
+func fingerprintNonceForConfig(configDir string, cfg *config.Config, owner *vault.Vault) ([]byte, error) {
+	v := owner
+	if v == nil {
+		var err error
+		v, err = config.LoadVault(configDir, cfg)
+		if err != nil {
+			return nil, err
+		}
 	}
 	if v == nil {
 		return nil, fmt.Errorf("plugin attestation requires the vault, but none is loaded for %q (run 'ductile vault init'); attestation is keyed-or-nothing", configDir)

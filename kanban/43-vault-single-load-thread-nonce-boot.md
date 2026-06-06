@@ -1,10 +1,23 @@
 ---
 id: 43
-status: todo
+status: done
 priority: Normal
 blocked_by: []
 tags: [vault, boot, toctou, attestation, efficiency, branch-review]
 ---
+
+### DONE (2026-06-06) — intrinsic half landed
+The last-open intrinsic half is fixed. Threaded an optional `owner *vault.Vault` through
+`verifyReloadIntegrity` → `verifyPluginFingerprintsForConfig` → `fingerprintNonceForConfig`.
+Boot (`buildRuntime`) passes `opts.vaultOwner`; reload (`Reload`) passes `newOwner`; both come
+from the one `config.LoadWithVault` decrypt. Non-nil owner → nonce taken from that in-memory
+snapshot (no second decrypt); nil owner → fall back to `config.LoadVault` (CLI `plugin lock` +
+reload-restore paths preserved, still fail-closed). Boot/reload fingerprint-verify and secret
+delivery now share one snapshot → TOCTOU window closed; redundant decrypt removed. New test
+`TestFingerprintNonceForConfigReusesOwnerWithoutDiskLoad` proves the owner path bypasses disk.
+Also closes item 1 of [[73-tokens-yaml-retirement-branch-review-punchlist]]. The separate
+`config.Load(configPath)` re-read inside the verify path (config bytes, not vault) is out of
+this card's scope.
 
 ### Update (2026-06-06) — partially overtaken by events
 - **Back-compat half: DONE (evaporated).** The graft's extra decrypt is gone — #48 slice 3a

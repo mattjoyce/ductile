@@ -158,7 +158,7 @@ func (rm *reloadManager) Reload(ctx context.Context) (api.ReloadResponse, error)
 	// P2-10: source the fail_on_drift policy from the RUNNING config (oldCfg),
 	// not the proposed newCfg — otherwise an attacker could relax admission by
 	// disabling it in the very reload they are trying to push.
-	if err := verifyReloadIntegrity(rm.configPath, oldCfg.Service.AdmissionPolicy().FailOnDrift); err != nil {
+	if err := verifyReloadIntegrity(rm.configPath, oldCfg.Service.AdmissionPolicy().FailOnDrift, newOwner); err != nil {
 		return api.ReloadResponse{Status: "error", Message: err.Error()}, err
 	}
 	if err := validateReloadableFields(oldCfg, newCfg); err != nil {
@@ -247,7 +247,13 @@ func resolveConfigDir(configPath string) string {
 // only high-security file mismatches and plugin fingerprint mismatches reject. The
 // failOnDrift flag should come from the RUNNING config's admission policy so that an
 // attacker cannot relax policy via the very reload they are trying to push.
-func verifyReloadIntegrity(configPath string, failOnDrift bool) error {
+//
+// owner, when non-nil, is the vault already decrypted for this boot/reload
+// (config.LoadWithVault); it is threaded to the plugin-fingerprint verify so the
+// attestation nonce is taken from that one snapshot instead of a second decrypt
+// (#43 single-decrypt). A nil owner — the reload-restore path — falls back to a
+// fresh vault load, preserving prior behaviour.
+func verifyReloadIntegrity(configPath string, failOnDrift bool, owner *vault.Vault) error {
 	configDir := resolveConfigDir(configPath)
 	files, err := config.DiscoverConfigFiles(configDir)
 	if err != nil {
@@ -263,7 +269,7 @@ func verifyReloadIntegrity(configPath string, failOnDrift bool) error {
 	if failOnDrift && len(result.Warnings) > 0 {
 		return fmt.Errorf("config reload rejected (admission.fail_on_drift): operational drift: %s", strings.Join(result.Warnings, "; "))
 	}
-	if err := verifyPluginFingerprintsForConfig(configPath); err != nil {
+	if err := verifyPluginFingerprintsForConfig(configPath, owner); err != nil {
 		return fmt.Errorf("config reload rejected: %v", err)
 	}
 	return nil
@@ -438,7 +444,7 @@ func buildRuntime(cfg *config.Config, configPath string, configSource string, re
 
 	if admission.VerifyIntegrityOnBoot {
 		logger.Info("admission: verifying config integrity at boot", "fail_on_drift", admission.FailOnDrift)
-		if err := verifyReloadIntegrity(configPath, admission.FailOnDrift); err != nil {
+		if err := verifyReloadIntegrity(configPath, admission.FailOnDrift, opts.vaultOwner); err != nil {
 			logger.Error("integrity check failed (admission.verify_integrity_on_boot)", "error", err)
 			return nil, fmt.Errorf("integrity check failed: %w", err)
 		}

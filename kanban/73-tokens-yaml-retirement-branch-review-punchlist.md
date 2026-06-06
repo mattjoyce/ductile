@@ -22,9 +22,9 @@ Grouped to keep the board readable — split into its own card when picked up (f
 
 ## Items
 
-- [~] **(MED) Reload + boot-verify paths re-pay the #43 decrypt — single-decrypt is start-only.**
+- [x] **(MED) Reload + boot-verify paths re-pay the #43 decrypt — single-decrypt is start-only.**
   The one substantive carry-forward; raised independently by Ousterhout (6c, verified) and Hickey (§1.1, "partial").
-  **Reload half FIXED 2026-06-06; boot-verify half still open.**
+  **Both halves FIXED 2026-06-06.**
   - [x] *Reload (Ousterhout 6c) — FIXED.* `reloadManager.Reload` (`runtime.go:154`) called the owner-less
     `config.Load`, which decrypted the blob via `projectVaultSecrets` then discarded the owner; `buildRuntime`
     then found `opts.vaultOwner == nil` (`runtime.go:599`) and called `config.LoadVault` → a **second decrypt**.
@@ -32,14 +32,15 @@ Grouped to keep the board readable — split into its own card when picked up (f
     `runtimeBuildOptions.vaultOwner`, collapsing the two reload-path decrypts into one — same fix the start path
     already uses (#43). Behaviorally identical: `LoadWithVault`'s owner is the same `loadVaultOwner`/`vault.Load`
     object `LoadVault` produces. `go build` + `go test ./cmd/ductile ./internal/config` + `golangci-lint` clean.
-  - [ ] *Boot integrity-verify (Hickey §1.1) — STILL OPEN.* With `verify_integrity_on_boot` on,
-    `verifyReloadIntegrity` → `verifyPluginFingerprintsForConfig` re-`config.Load`s (`config_manage.go:234`) and
-    `fingerprintNonceForConfig` does its own `config.LoadVault` for the nonce (`config_manage.go:296`) → 2 extra
-    decrypts at boot *and* on every reload, and the nonce-vs-owner reads stay separate (the TOCTOU Hickey flagged
-    persists). Threading the owner here is a broader change: those funcs take only `configPath` and are shared
-    with the `plugin lock` CLI (`plugin_lock.go:94,142`) and ~12 test callers — needs an owner-accepting internal
-    variant behind the existing public signatures. Deferred as its own change. Remaining part of
-    [[43-vault-single-load-thread-nonce-boot]]; efficiency + minor TOCTOU cleanup, **not** a security hole.
+  - [x] *Boot integrity-verify (Hickey §1.1) — FIXED 2026-06-06.* Threaded an optional `owner *vault.Vault`
+    through `verifyReloadIntegrity` → `verifyPluginFingerprintsForConfig` → `fingerprintNonceForConfig`. Boot
+    passes `opts.vaultOwner`, reload passes `newOwner` (both the one `LoadWithVault` decrypt); the `plugin lock`
+    CLI (`plugin_lock.go:94,142`) and ~12 test callers pass `nil` → fall back to `config.LoadVault` (unchanged,
+    still fail-closed). The vault re-decrypt for the nonce is gone on boot and reload, and the nonce now comes
+    from the same snapshot that delivers secrets → TOCTOU window closed. Done as part of
+    [[43-vault-single-load-thread-nonce-boot]]; new test `TestFingerprintNonceForConfigReusesOwnerWithoutDiskLoad`.
+    (The `config.Load(configPath)` re-read at `config_manage.go:234` is config bytes, not vault — separate concern,
+    left as-is.) `go build ./...` + `go vet ./cmd/ductile` + `go test ./cmd/ductile` clean.
 
 - [x] **(MED) Dangling `vault import` verb + stale CLI help print "Unknown action".** FIXED `c5fcab5`:
   deleted the `import` help line from `printVaultNounHelp` (verb dispatch+impl were already gone; the

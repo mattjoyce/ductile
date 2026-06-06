@@ -91,7 +91,8 @@ func runPluginLockOne(dir, configPath string, cfg *config.Config, name string, d
 		return 1
 	}
 
-	nonce, err := fingerprintNonceForConfig(dir, cfg)
+	// CLI path: no pre-decrypted owner in hand, so load the vault fresh (nil owner).
+	nonce, err := fingerprintNonceForConfig(dir, cfg, nil)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "plugin lock: %v\n", err)
 		return 1
@@ -139,7 +140,7 @@ func runPluginLockAll(dir, configPath string, cfg *config.Config, rest []string,
 
 	var nonce []byte
 	if len(resolved) > 0 {
-		nonce, err = fingerprintNonceForConfig(dir, cfg)
+		nonce, err = fingerprintNonceForConfig(dir, cfg, nil)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "plugin lock --all: %v\n", err)
 			return 1

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -57,6 +58,45 @@ func seedVaultSecrets(t *testing.T, configDir string, kv map[string]string) {
 		if err := v.Save(); err != nil {
 			t.Fatalf("vault save: %v", err)
 		}
+	}
+}
+
+// TestFingerprintNonceForConfigReusesOwnerWithoutDiskLoad proves the #43
+// single-decrypt path: when a non-nil owner is supplied (the vault already
+// decrypted by config.LoadWithVault at boot/reload), fingerprintNonceForConfig
+// sources the nonce from that in-memory snapshot and never touches disk. The
+// configDir passed here holds NO vault, so a fallback to config.LoadVault would
+// fail closed — success therefore proves the owner snapshot was reused.
+func TestFingerprintNonceForConfigReusesOwnerWithoutDiskLoad(t *testing.T) {
+	keyDir := t.TempDir()
+	keyPath := filepath.Join(keyDir, "age.key")
+	id, err := secrets.GenerateIdentity()
+	if err != nil {
+		t.Fatalf("generate age identity: %v", err)
+	}
+	if err := os.WriteFile(keyPath, []byte(id.String()+"\n"), 0o600); err != nil {
+		t.Fatalf("write age key: %v", err)
+	}
+	kr, err := secrets.LoadKeyringFromFile(keyPath)
+	if err != nil {
+		t.Fatalf("load keyring: %v", err)
+	}
+	owner, _, err := vault.Init(filepath.Join(keyDir, "vault.age"), kr, time.Now())
+	if err != nil {
+		t.Fatalf("vault init: %v", err)
+	}
+	want, err := owner.FingerprintNonce()
+	if err != nil {
+		t.Fatalf("owner nonce: %v", err)
+	}
+
+	emptyDir := t.TempDir() // deliberately has no vault on disk
+	got, err := fingerprintNonceForConfig(emptyDir, &config.Config{}, owner)
+	if err != nil {
+		t.Fatalf("owner path must not fail or fall back to disk: %v", err)
+	}
+	if !bytes.Equal(got, want) {
+		t.Fatal("owner path did not reuse the in-memory owner snapshot nonce")
 	}
 }
 
@@ -348,7 +388,7 @@ func TestVerifyPluginFingerprintsForConfigHappyPath(t *testing.T) {
 	// Lock first, including plugins.
 	lockConfigAndPlugins(t, tmp, "gmail")
 
-	if err := verifyPluginFingerprintsForConfig(filepath.Join(tmp, "config.yaml")); err != nil {
+	if err := verifyPluginFingerprintsForConfig(filepath.Join(tmp, "config.yaml"), nil); err != nil {
 		t.Fatalf("verify should pass on unchanged bytes: %v", err)
 	}
 }
@@ -409,7 +449,7 @@ func TestVerifyPluginFingerprintsForConfigEntrypointTamperFails(t *testing.T) {
 		t.Fatalf("tamper: %v", err)
 	}
 
-	err := verifyPluginFingerprintsForConfig(filepath.Join(tmp, "config.yaml"))
+	err := verifyPluginFingerprintsForConfig(filepath.Join(tmp, "config.yaml"), nil)
 	if err == nil {
 		t.Fatal("expected error after entrypoint tampered")
 	}
@@ -424,7 +464,7 @@ func TestVerifyPluginFingerprintsForConfigEntrypointTamperFails(t *testing.T) {
 func TestVerifyPluginFingerprintsForConfigNoChecksumsIsNoOp(t *testing.T) {
 	tmp := buildFingerprintFixture(t, true)
 	// No lock at all.
-	if err := verifyPluginFingerprintsForConfig(filepath.Join(tmp, "config.yaml")); err != nil {
+	if err := verifyPluginFingerprintsForConfig(filepath.Join(tmp, "config.yaml"), nil); err != nil {
 		t.Fatalf("verify should no-op when .checksums absent: %v", err)
 	}
 }
@@ -438,7 +478,7 @@ func TestVerifyPluginFingerprintsForConfigNoPluginSectionWithConfiguredPluginsFa
 	if err := config.GenerateChecksumsFromDiscovery(files, false); err != nil {
 		t.Fatalf("legacy lock failed: %v", err)
 	}
-	err = verifyPluginFingerprintsForConfig(filepath.Join(tmp, "config.yaml"))
+	err = verifyPluginFingerprintsForConfig(filepath.Join(tmp, "config.yaml"), nil)
 	if err == nil {
 		t.Fatal("expected missing plugin_fingerprints to fail when plugins are configured")
 	}
@@ -469,7 +509,7 @@ plugins: {}
 	if err := config.GenerateChecksumsFromDiscovery(files, false); err != nil {
 		t.Fatalf("legacy lock failed: %v", err)
 	}
-	if err := verifyPluginFingerprintsForConfig(filepath.Join(tmp, "config.yaml")); err != nil {
+	if err := verifyPluginFingerprintsForConfig(filepath.Join(tmp, "config.yaml"), nil); err != nil {
 		t.Fatalf("no configured plugins should allow missing plugin_fingerprints: %v", err)
 	}
 }
@@ -495,7 +535,7 @@ commands:
 		t.Fatalf("tamper manifest: %v", err)
 	}
 
-	err := verifyPluginFingerprintsForConfig(filepath.Join(tmp, "config.yaml"))
+	err := verifyPluginFingerprintsForConfig(filepath.Join(tmp, "config.yaml"), nil)
 	if err == nil {
 		t.Fatal("expected error after manifest tamper")
 	}
@@ -532,7 +572,7 @@ func TestPluginLockEmbedsAlias(t *testing.T) {
 	}
 
 	// Now verify: no tampering, should pass cleanly.
-	if err := verifyPluginFingerprintsForConfig(filepath.Join(tmp, "config.yaml")); err != nil {
+	if err := verifyPluginFingerprintsForConfig(filepath.Join(tmp, "config.yaml"), nil); err != nil {
 		t.Fatalf("verify should pass for locked alias pair: %v", err)
 	}
 }
@@ -548,7 +588,7 @@ func TestVerifyPluginFingerprintsForConfigDisabledTamperIsNotFatal(t *testing.T)
 		t.Fatalf("tamper: %v", err)
 	}
 
-	if err := verifyPluginFingerprintsForConfig(filepath.Join(tmp, "config.yaml")); err != nil {
+	if err := verifyPluginFingerprintsForConfig(filepath.Join(tmp, "config.yaml"), nil); err != nil {
 		t.Fatalf("disabled plugin tamper must not fail verify (warn-only): %v", err)
 	}
 }
@@ -572,7 +612,7 @@ plugins:
 		t.Fatalf("tamper: %v", err)
 	}
 
-	err := verifyPluginFingerprintsForConfig(filepath.Join(tmp, "config.yaml"))
+	err := verifyPluginFingerprintsForConfig(filepath.Join(tmp, "config.yaml"), nil)
 	if err == nil {
 		t.Fatal("expected current enabled plugin tamper to fail verify")
 	}
@@ -588,7 +628,7 @@ func TestVerifyPluginFingerprintsForConfigConfiguredMissingPluginFails(t *testin
 		t.Fatalf("remove plugin: %v", err)
 	}
 
-	err := verifyPluginFingerprintsForConfig(filepath.Join(tmp, "config.yaml"))
+	err := verifyPluginFingerprintsForConfig(filepath.Join(tmp, "config.yaml"), nil)
 	if err == nil {
 		t.Fatal("expected configured missing plugin to fail verify")
 	}
@@ -644,7 +684,7 @@ plugins: {}
 	if err := os.WriteFile(filepath.Join(tmp, "config.yaml"), []byte(cleaned), 0644); err != nil {
 		t.Fatalf("rewrite config.yaml: %v", err)
 	}
-	if err := verifyPluginFingerprintsForConfig(filepath.Join(tmp, "config.yaml")); err != nil {
+	if err := verifyPluginFingerprintsForConfig(filepath.Join(tmp, "config.yaml"), nil); err != nil {
 		t.Fatalf("stale fingerprint record must be warn-only, got error: %v", err)
 	}
 }

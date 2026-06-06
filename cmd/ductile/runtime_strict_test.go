@@ -49,7 +49,7 @@ func TestVerifyReloadIntegrityStrictRejectsOperationalMismatch(t *testing.T) {
 	writeStrictTestFile(t, filepath.Join(dir, "routes.yaml"),
 		"routes:\n  - name: tampered\n")
 
-	if err := verifyReloadIntegrity(configPath, true); err == nil {
+	if err := verifyReloadIntegrity(configPath, true, nil); err == nil {
 		t.Fatal("expected fail_on_drift reload to reject operational mismatch, got nil")
 	} else if !strings.Contains(err.Error(), "drift") {
 		t.Errorf("error should mention drift, got: %v", err)
@@ -66,7 +66,7 @@ func TestVerifyReloadIntegrityPermissivePassesOperationalMismatch(t *testing.T) 
 	writeStrictTestFile(t, filepath.Join(dir, "routes.yaml"),
 		"routes:\n  - name: tampered\n")
 
-	if err := verifyReloadIntegrity(configPath, false); err != nil {
+	if err := verifyReloadIntegrity(configPath, false, nil); err != nil {
 		t.Fatalf("expected permissive-mode reload to pass operational mismatch, got: %v", err)
 	}
 }
@@ -76,7 +76,7 @@ func TestVerifyReloadIntegrityStrictAcceptsCleanReload(t *testing.T) {
 	dir := setupStrictReloadFixture(t)
 	configPath := filepath.Join(dir, "config.yaml")
 
-	if err := verifyReloadIntegrity(configPath, true); err != nil {
+	if err := verifyReloadIntegrity(configPath, true, nil); err != nil {
 		t.Fatalf("expected clean strict reload to pass, got: %v", err)
 	}
 }
@@ -90,10 +90,10 @@ func TestVerifyReloadIntegrityHighSecMismatchAlwaysRejects(t *testing.T) {
 	writeStrictTestFile(t, filepath.Join(dir, "webhooks.yaml"),
 		"webhooks:\n  listen: \"127.0.0.1:9999\"\n")
 
-	if err := verifyReloadIntegrity(configPath, false); err == nil {
+	if err := verifyReloadIntegrity(configPath, false, nil); err == nil {
 		t.Fatal("expected high-security mismatch to reject reload even in permissive mode")
 	}
-	if err := verifyReloadIntegrity(configPath, true); err == nil {
+	if err := verifyReloadIntegrity(configPath, true, nil); err == nil {
 		t.Fatal("expected high-security mismatch to reject reload in strict mode")
 	}
 }

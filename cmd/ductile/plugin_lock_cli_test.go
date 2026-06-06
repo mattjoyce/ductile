@@ -103,7 +103,7 @@ func TestConfigLockDoesNotReblessTamperedBytes(t *testing.T) {
 	if after.PluginFingerprints[0].EntrypointHash != lockedHash {
 		t.Fatal("config lock re-blessed swapped bytes — Threat A not closed")
 	}
-	if err := verifyPluginFingerprintsForConfig(filepath.Join(tmp, "config.yaml")); err == nil {
+	if err := verifyPluginFingerprintsForConfig(filepath.Join(tmp, "config.yaml"), nil); err == nil {
 		t.Fatal("verify must still reject the swapped plugin after a routine config lock")
 	}
 }
