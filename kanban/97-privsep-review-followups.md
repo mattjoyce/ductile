@@ -17,11 +17,12 @@ each for a stated reason, not an oversight.
 ## Deferred items
 
 - **T3 — `ResolvedAccount` encodes one fact in two fields (`Confined` + `Source`).** (Hickey A1, O×L F3.)
-  **Why deferred:** the *cheap* fix O×L literally suggested — `func (r ResolvedAccount) Confined() bool
-  { return r.Source != AccountUnconfined }` — makes the **zero value confined** (`Source == "" !=
+  **→ PROMOTED to [[100-privsep-resolvedaccount-sumtype-t3]] (v1.0) in the 2026-06-07 triage** — the one
+  deferred item with a *correctness* (not polish) smell, so it sits on the v1.0 line. Detail there.
+  **Why it was deferred:** the *cheap* fix O×L literally suggested — `func (r ResolvedAccount) Confined()
+  bool { return r.Source != AccountUnconfined }` — makes the **zero value confined** (`Source == "" !=
   "unconfined"`), a fail-OPEN footgun on the enforce seam. The *safe* fix is the sum-type refactor
-  (uid/gid only exist in the confined arm) that **Hickey himself said "defer unless it earns its
-  churn."** Do it as a deliberate refactor with the zero-value invariant tested, or leave it.
+  (uid/gid only exist in the confined arm) that **Hickey himself said "defer unless it earns its churn."**
 
 - **T5 — attestation verified twice per spawn for vault-principal plugins.** (Hickey B1+B2, O×L §4.1.)
   Sub-parts: (a) compute the attestation once per spawn and share it between `composePluginSecrets`

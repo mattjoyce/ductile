@@ -39,7 +39,14 @@ tags: [privsep, epic]
 >   strict-validate would have rejected the documented escape hatch). No code change; suites green.
 > - **Next action:** **open the PR.** Body must state enforce is **Linux-proven, macOS-pending #95**, the
 >   live host currently **unconfined** (T7). Optionally `/code-review ultra` first.
-> - **Open:** [[97-privsep-review-followups]] (todo), [[95-privsep-launchd-and-live-rollout]] (backlog).
+> - **v1.0 line (2026-06-07 Kay×Victor triage → [[102-v1.0-readiness-privsep-ship-line]]):** v1.0 = the
+>   security property is true/correct/documented, not self-describing. **NOW:** this PR + T3
+>   [[100-privsep-resolvedaccount-sumtype-t3]] + anti-footgun [[101-privsep-valid-not-enforcing-antifootgun]]
+>   + the macOS-prod-host decision (#95 in-scope or ship-with-caveat). **LATER (v1.x):** the `explain`
+>   verb family [[99-privsep-explain-observable-posture]] + rest of #97.
+> - **Open:** [[102-v1.0-readiness-privsep-ship-line]] (todo), [[100-privsep-resolvedaccount-sumtype-t3]]
+>   (todo), [[101-privsep-valid-not-enforcing-antifootgun]] (todo), [[97-privsep-review-followups]] (todo),
+>   [[99-privsep-explain-observable-posture]] (backlog), [[95-privsep-launchd-and-live-rollout]] (backlog).
 > - **Done:** #92, #84, #85, #86, #87, #88, #89, #90, #93, #96, #98 — **Branch:** `feat/privsep-uid-separation` (pushed, rebased on main).
 > - **PR:** not opened yet — docs now match the code; ready to open (state macOS-pending enforce per T7/T12).
 > - **Update rule:** when a card's `status:` changes, update this block + the table below.
