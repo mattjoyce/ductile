@@ -187,6 +187,12 @@ type PluginConf struct {
 	// Empty = no grant. Resolution to an account identity is #85; the tracer (#92)
 	// honours it for the single granted plugin.
 	RunAs               string                `yaml:"run_as,omitempty"`
+	// RequiresVault makes vault secret delivery mandatory for this plugin. When
+	// true, an unknown/unregistered vault principal (the plugin name) fails the
+	// spawn CLOSED rather than opting out — closing the fail-open seam where a
+	// misnamed/unregistered principal would silently run the plugin with no
+	// secrets. Default false preserves the coexistence opt-out for keyless plugins.
+	RequiresVault       bool                  `yaml:"requires_vault,omitempty"`
 	Schedule            *ScheduleConfig       `yaml:"schedule,omitempty"` // Deprecated: use schedules.
 	Schedules           []ScheduleConfig      `yaml:"schedules,omitempty"`
 	Config              map[string]any        `yaml:"config,omitempty"`

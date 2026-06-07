@@ -34,7 +34,7 @@ func discardLogger() *slog.Logger {
 //   - registered + active  -> the composed secrets; denials are logged, not fatal
 
 func TestComposePluginSecretsNilComposerDeliversNothing(t *testing.T) {
-	got, err := composePluginSecrets(nil, nil, "any", discardLogger())
+	got, err := composePluginSecrets(nil, nil, "any", false, discardLogger())
 	if err != nil {
 		t.Fatalf("nil composer: unexpected error: %v", err)
 	}
@@ -45,7 +45,7 @@ func TestComposePluginSecretsNilComposerDeliversNothing(t *testing.T) {
 
 func TestComposePluginSecretsUnknownPrincipalDeliversNothing(t *testing.T) {
 	fc := &fakeComposer{err: vault.ErrUnknownPrincipal}
-	got, err := composePluginSecrets(fc, nil, "not-in-vault", discardLogger())
+	got, err := composePluginSecrets(fc, nil, "not-in-vault", false, discardLogger())
 	if err != nil {
 		t.Fatalf("unknown principal must not error (vault is opt-in): %v", err)
 	}
@@ -56,7 +56,7 @@ func TestComposePluginSecretsUnknownPrincipalDeliversNothing(t *testing.T) {
 
 func TestComposePluginSecretsRevokedPrincipalFailsClosed(t *testing.T) {
 	fc := &fakeComposer{err: vault.ErrPrincipalInactive}
-	got, err := composePluginSecrets(fc, nil, "revoked", discardLogger())
+	got, err := composePluginSecrets(fc, nil, "revoked", false, discardLogger())
 	if err == nil {
 		t.Fatalf("revoked principal must fail closed, got nil error")
 	}
@@ -72,7 +72,7 @@ func TestComposePluginSecretsActivePrincipalDeliversComposed(t *testing.T) {
 	fc := &fakeComposer{comp: vault.Composition{
 		Secrets: map[string]string{"API_KEY": "v1", "DB_URL": "v2"},
 	}}
-	got, err := composePluginSecrets(fc, nil, "mailer", discardLogger())
+	got, err := composePluginSecrets(fc, nil, "mailer", false, discardLogger())
 	if err != nil {
 		t.Fatalf("active principal: unexpected error: %v", err)
 	}
@@ -89,7 +89,7 @@ func TestComposePluginSecretsDeliversDespiteDenials(t *testing.T) {
 		Secrets: map[string]string{"API_KEY": "v1"},
 		Denials: []vault.Denial{{Secret: "OLD_KEY", Reason: vault.DenialSecretRevoked}},
 	}}
-	got, err := composePluginSecrets(fc, nil, "mailer", discardLogger())
+	got, err := composePluginSecrets(fc, nil, "mailer", false, discardLogger())
 	if err != nil {
 		t.Fatalf("denials must not be fatal: %v", err)
 	}
@@ -102,7 +102,7 @@ func TestComposePluginSecretsDeliversDespiteDenials(t *testing.T) {
 // silently delivering nothing — only unknown-principal is a benign opt-out.
 func TestComposePluginSecretsUnexpectedErrorFailsClosed(t *testing.T) {
 	fc := &fakeComposer{err: errors.New("store corrupt")}
-	got, err := composePluginSecrets(fc, nil, "mailer", discardLogger())
+	got, err := composePluginSecrets(fc, nil, "mailer", false, discardLogger())
 	if err == nil {
 		t.Fatalf("unexpected Compose error must fail closed, got nil")
 	}
@@ -130,7 +130,7 @@ func TestComposePluginSecretsFingerprintMismatchFailsClosed(t *testing.T) {
 	fc := &fakeComposer{comp: vault.Composition{Secrets: map[string]string{"API_KEY": "v1"}}}
 	fv := &fakeVerifier{err: errors.New("entrypoint hash mismatch at /p/x")}
 
-	got, err := composePluginSecrets(fc, fv, "mailer", discardLogger())
+	got, err := composePluginSecrets(fc, fv, "mailer", false, discardLogger())
 	if err == nil {
 		t.Fatal("fingerprint mismatch must fail closed")
 	}
@@ -154,7 +154,7 @@ func TestComposePluginSecretsVerifierPassDelivers(t *testing.T) {
 	fc := &fakeComposer{comp: vault.Composition{Secrets: map[string]string{"API_KEY": "v1"}}}
 	fv := &fakeVerifier{err: nil}
 
-	got, err := composePluginSecrets(fc, fv, "mailer", discardLogger())
+	got, err := composePluginSecrets(fc, fv, "mailer", false, discardLogger())
 	if err != nil {
 		t.Fatalf("passing verifier must not block delivery: %v", err)
 	}
@@ -169,11 +169,40 @@ func TestComposePluginSecretsUnknownPrincipalSkipsVerifier(t *testing.T) {
 	fc := &fakeComposer{err: vault.ErrUnknownPrincipal}
 	fv := &fakeVerifier{err: errors.New("would fail if called")}
 
-	got, err := composePluginSecrets(fc, fv, "not-in-vault", discardLogger())
+	got, err := composePluginSecrets(fc, fv, "not-in-vault", false, discardLogger())
 	if err != nil || got != nil {
 		t.Fatalf("opt-out plugin must deliver nothing without error: got=%v err=%v", got, err)
 	}
 	if fv.called != "" {
 		t.Fatalf("verifier must NOT run for a non-principal, but was called for %q", fv.called)
+	}
+}
+
+// #108: a plugin declared requires_vault:true with an UNKNOWN principal must fail
+// CLOSED — the opt-out is only for keyless plugins; a declared secret-needer with
+// a missing/misnamed principal is a misconfiguration, not a silent secret-less run.
+func TestComposePluginSecretsRequiresVaultUnknownPrincipalFailsClosed(t *testing.T) {
+	fc := &fakeComposer{err: vault.ErrUnknownPrincipal}
+	got, err := composePluginSecrets(fc, nil, "mailer", true, discardLogger())
+	if err == nil {
+		t.Fatal("requires_vault + unknown principal must fail closed, got nil error")
+	}
+	if !errors.Is(err, ErrVaultPrincipalRequired) {
+		t.Fatalf("expected ErrVaultPrincipalRequired, got %v", err)
+	}
+	if got != nil {
+		t.Fatalf("must deliver no secrets when failing closed, got %v", got)
+	}
+}
+
+// #108: requires_vault:true with NO composer wired is also fail-closed — a plugin
+// that must receive vault secrets cannot run on a host where the vault is absent.
+func TestComposePluginSecretsRequiresVaultNoComposerFailsClosed(t *testing.T) {
+	got, err := composePluginSecrets(nil, nil, "mailer", true, discardLogger())
+	if err == nil || !errors.Is(err, ErrVaultPrincipalRequired) {
+		t.Fatalf("requires_vault with no composer must fail closed with ErrVaultPrincipalRequired, got %v", err)
+	}
+	if got != nil {
+		t.Fatalf("must deliver no secrets, got %v", got)
 	}
 }

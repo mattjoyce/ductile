@@ -344,6 +344,11 @@
           "type": "string",
           "description": "Privsep account this plugin is granted (PrivSec ADR §4; names an entry in the top-level accounts map). The operator's core config grants privilege — a manifest hint is never trusted. Empty/absent = no grant (falls back to the shared default account, or unconfined if none)."
         },
+        "requires_vault": {
+          "type": "boolean",
+          "description": "When true, vault secret delivery is MANDATORY for this plugin: an unknown/unregistered vault principal (the plugin name) fails the spawn CLOSED instead of opting out (#108). Closes the fail-open seam where a misnamed/unregistered principal silently runs the plugin with no secrets. Default false preserves the coexistence opt-out for keyless plugins.",
+          "default": false
+        },
         "schedule": {
           "$ref": "#/$defs/ScheduleConfig",
           "description": "Deprecated: use 'schedules' (array) instead.",
