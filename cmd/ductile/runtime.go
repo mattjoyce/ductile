@@ -665,6 +665,11 @@ func buildRuntime(cfg *config.Config, configPath string, configSource string, re
 		// say so loudly so it can never pass unnoticed.
 		logger.Warn("privsep UNCONFINED: plugins run at the gateway uid despite configuration",
 			"accounts", len(cfg.Accounts), "unconfined_override", cfg.Service.Unconfined)
+	default:
+		// Plain dev/hygiene-only host (no accounts, no capability, no override).
+		// Log the posture explicitly so it is never a silent surprise (#101) —
+		// "valid config" must never be mistaken for "enforcing".
+		logger.Info("privsep posture: UNCONFINED — no accounts configured; plugins run at the gateway uid (hygiene-only)")
 	}
 
 	disp := dispatch.New(q, st, contextStore, routerEngine, registry, hub, cfg,
