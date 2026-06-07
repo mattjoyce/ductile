@@ -18,6 +18,19 @@ tags: [privsep, epic]
 >   /home/matt; admin plugins docker/apt are unconfinable). Phase 1 = exemplar plugins only; **real
 >   automation is OFFLINE pending Phase 2** ([[103-privsep-thinkpad-phase2-restore-plugins]]). Runbook:
 >   `docs/runbooks/privsep-thinkpad-enforce.md`. Old `--user` gateway disabled but revertible from backup.
+> - **🟢 PHASE 2 (achievable scope) DONE + HARDENED (2026-06-07):** the enforced gateway is the LIVE prod
+>   data plane on :8081. Vault carried (age key → /etc/ductile/secret 0600; vault.age → /var/lib via
+>   `secrets.vault_file`); **5 keyless integrations enforced + attested on default(1001)** — jina-reader,
+>   check_youtube, youtube_transcript, youtube_playlist, check_db_garmin (verified: garmin poll, playlist
+>   emit, live `1001 ductile-default …run.py`). `config lock` + `plugin lock --all` done; **admission
+>   gates back ON** → boots clean. All wall-bites pass (age key, vault.age, cross-account state, /opt code
+>   → Permission denied to accounts). Live proof of the **#93 downgrade**: relocated-but-unattested code
+>   failed SAFE to untrusted until `plugin lock`. **Remaining (carded; need dev / separate sessions, NOT
+>   config):** [[107-plugins-vault-native-conformance]] (secret-holders — empirically HEAVY: `_ref` is NOT
+>   plugin config-substitution; delivery is stdin-secrets-map only + kebab principal + code change),
+>   [[106-ductile-admin-glue-unconfined-instance]] (docker/apt/fabric/file_handler), [[108-vault-compose-fail-open-unknown-principal]],
+>   [[105-v1.0-fhs-install-artifact]] (lesson: `config lock`→`plugin lock` BEFORE plugins land on intended
+>   account). Old `--user` decommission DEFERRED until #106+#107 land.
 > - **State:** ADR accepted; **all build/decision cards DONE — #92, #84, #85, #86, #87, #88(Linux),
 >   #93, #90, #89.** The privsep mechanism is complete, proven on macOS (units) + privileged Linux
 >   (Dell: wall, cap-only drop under exactly the two caps, fs reconciliation, negative suite). CI gates
