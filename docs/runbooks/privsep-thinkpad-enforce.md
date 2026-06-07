@@ -180,6 +180,7 @@ cross-account EACCES). What we learned:
 - **`migrate everything` ≠ everything enforced.** The estate splits three ways: keyless-confinable
   (enforced now), secret-holding-confinable (enforced after #107), and unconfinable admin/docker
   (a second *unconfined* instance, card #106). The enforced gateway is the data plane, not the whole world.
+- **Vault-native plugin recipe (#107, PROVEN 2026-06-07):** see card #107 — read the stdin `secrets` map, manifest config_keys.required:[], register a kebab principal, set `vault_principal` + `requires_vault`, relocate+lock. First proof: discord_notify posts from the encrypted vault over stdin, uid 1001, fail-closed.
 
 ### Redeploy / binary refresh (validated live 2026-06-07)
 

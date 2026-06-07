@@ -67,3 +67,24 @@ receiving its secret from the vault over stdin — no env, no config-literal. (B
   under the principal; attestation stays on the plugin name). +schema +test. REMAINING (external, on the
   Thinkpad's ~/Projects/ductile-plugins): each secret-holding plugin must READ its secret from the stdin
   secrets map, + register the kebab principal + import/authorize the secret. (by @assistant)
+
+## PROVEN RECIPE (2026-06-07) — first vault-native plugin live
+
+discord_notify proved end-to-end: webhook delivered from the ENCRYPTED VAULT over stdin (no secret
+in config/env), running as uid 1001, attested, `requires_vault: true` (fail-closed). The concrete,
+reusable recipe per secret-holding plugin:
+
+1. **Plugin code:** read the stdin `secrets` map (the gateway delivers composed secrets under a
+   separate `secrets` field, NOT merged into config). e.g. `resolve_webhook_url(config, secrets)` →
+   `secrets["discord_webhook_url"] or config.get("webhook_url")` (vault first, config fallback).
+2. **Manifest:** move the secret-bearing config key from `required` → optional (`config_keys.required: []`)
+   — else the validator demands it in config (defeating vault delivery).
+3. **Vault:** register a **kebab** principal == the plugin instance name; grant/import the secret to it.
+4. **Config:** `vault_principal: <kebab-principal>` (the #107 field — maps a snake plugin name to the
+   kebab principal without renaming) + `requires_vault: true` (fail-closed) + NO secret literal in config.
+5. **Deploy:** relocate plugin code → /opt, `config lock` + `plugin lock --all` (re-attest), restart.
+
+Result: secret over stdin ✓, real downstream call ✓, dropped to uid 1001 ✓, fail-closed on misconfig ✓.
+Replicating to: ap_canary (salt), github_repo_sync (config.github_token), + the notify clones (share
+the now-vault-native discord_notify base). NOTE: discord_notify run.py + manifest changed in the
+EXTERNAL ductile-plugins repo — needs its own commit there (ductile-admin checkpointing).
