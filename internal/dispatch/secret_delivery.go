@@ -62,23 +62,27 @@ var ErrVaultPrincipalRequired = errors.New("vault: plugin requires vault secrets
 //
 // Any Compose error other than a benign unknown-principal also fails closed — a
 // composer that cannot answer is never treated as "no secrets."
-func composePluginSecrets(composer SecretComposer, verifier PluginVerifier, plugin string, requiresVault bool, logger *slog.Logger) (map[string]string, error) {
+// principal is the vault principal the plugin composes its secrets under — the
+// plugin name by default, or plugins.<name>.vault_principal when set (#107: lets a
+// snake_case plugin map to a kebab principal the vault will accept). Attestation
+// (verifier) still uses the plugin name, since it gates the plugin's own bytes.
+func composePluginSecrets(composer SecretComposer, verifier PluginVerifier, plugin, principal string, requiresVault bool, logger *slog.Logger) (map[string]string, error) {
 	if composer == nil {
 		if requiresVault {
-			return nil, fmt.Errorf("%w: %q (no vault wired)", ErrVaultPrincipalRequired, plugin)
+			return nil, fmt.Errorf("%w: %q (principal %q, no vault wired)", ErrVaultPrincipalRequired, plugin, principal)
 		}
 		return nil, nil
 	}
 
-	comp, err := composer.Compose(plugin)
+	comp, err := composer.Compose(principal)
 	if err != nil {
 		if errors.Is(err, vault.ErrUnknownPrincipal) {
 			if requiresVault {
 				// #108: declared requires_vault → an unknown principal fails CLOSED
 				// and loud, instead of silently opting out and running secret-less.
-				return nil, fmt.Errorf("%w: %q", ErrVaultPrincipalRequired, plugin)
+				return nil, fmt.Errorf("%w: plugin %q → principal %q", ErrVaultPrincipalRequired, plugin, principal)
 			}
-			logger.Debug("plugin is not a vault principal; running keyless (opt-out)", "plugin", plugin)
+			logger.Debug("plugin is not a vault principal; running keyless (opt-out)", "plugin", plugin, "principal", principal)
 			return nil, nil // opt-out: plugin is not a vault principal
 		}
 		return nil, err // revoked principal or any other error: fail closed

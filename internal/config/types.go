@@ -188,11 +188,17 @@ type PluginConf struct {
 	// honours it for the single granted plugin.
 	RunAs string `yaml:"run_as,omitempty"`
 	// RequiresVault makes vault secret delivery mandatory for this plugin. When
-	// true, an unknown/unregistered vault principal (the plugin name) fails the
-	// spawn CLOSED rather than opting out — closing the fail-open seam where a
-	// misnamed/unregistered principal would silently run the plugin with no
-	// secrets. Default false preserves the coexistence opt-out for keyless plugins.
-	RequiresVault       bool                  `yaml:"requires_vault,omitempty"`
+	// true, an unknown/unregistered vault principal fails the spawn CLOSED rather
+	// than opting out — closing the fail-open seam where a misnamed/unregistered
+	// principal would silently run the plugin with no secrets. Default false
+	// preserves the coexistence opt-out for keyless plugins.
+	RequiresVault bool `yaml:"requires_vault,omitempty"`
+	// VaultPrincipal names the vault principal this plugin composes its secrets
+	// under. Default (empty) = the plugin name itself. The vault rejects non-kebab
+	// principal names, so this lets a snake_case plugin (e.g. discord_notify) map
+	// to a kebab principal (discord-notify) WITHOUT renaming the plugin and breaking
+	// its config/pipeline references (#107). Attestation still uses the plugin name.
+	VaultPrincipal      string                `yaml:"vault_principal,omitempty"`
 	Schedule            *ScheduleConfig       `yaml:"schedule,omitempty"` // Deprecated: use schedules.
 	Schedules           []ScheduleConfig      `yaml:"schedules,omitempty"`
 	Config              map[string]any        `yaml:"config,omitempty"`

@@ -397,7 +397,11 @@ func (d *Dispatcher) executeJob(ctx context.Context, job *queue.Job) {
 	// Compose the plugin's authorized vault secrets for stdin delivery. A revoked
 	// principal (or any non-opt-out composer error) fails the job closed — the
 	// plugin must not run when an explicit authorization signal is in error.
-	secrets, err := composePluginSecrets(d.secretComposer, d.pluginVerifier, job.Plugin, d.cfg.Plugins[job.Plugin].RequiresVault, jobLogger)
+	principal := job.Plugin
+	if vp := d.cfg.Plugins[job.Plugin].VaultPrincipal; vp != "" {
+		principal = vp // #107: map snake plugin name → kebab vault principal without renaming
+	}
+	secrets, err := composePluginSecrets(d.secretComposer, d.pluginVerifier, job.Plugin, principal, d.cfg.Plugins[job.Plugin].RequiresVault, jobLogger)
 	if err != nil {
 		errMsg := fmt.Sprintf("secret composition failed: %v", err)
 		// Classify the fail-closed failure. A fingerprint mismatch is a possible

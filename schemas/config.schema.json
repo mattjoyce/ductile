@@ -112,6 +112,10 @@
         "age_key_file": {
           "type": "string",
           "description": "Path to the age identity (private key) file used to decrypt encrypted includes. Relative paths resolve against the config dir. Overridden by the DUCTILE_AGE_KEY_FILE environment variable. The file must have mode 0600 or load fails. When unset and no default key file exists, encryption at rest is off."
+        },
+        "vault_file": {
+          "type": "string",
+          "description": "Path to the age-encrypted vault blob (the owned secret store). Relative paths resolve against the config dir; unset uses the default <configDir>/vault.age. The vault.age is mutable STATE (daemon sole-writer) — under the FHS layout (docs/adr/filesystem-layout.md) it lives in /var/lib/ductile, so this key points there explicitly."
         }
       },
       "additionalProperties": false
@@ -343,6 +347,10 @@
         "run_as": {
           "type": "string",
           "description": "Privsep account this plugin is granted (PrivSec ADR §4; names an entry in the top-level accounts map). The operator's core config grants privilege — a manifest hint is never trusted. Empty/absent = no grant (falls back to the shared default account, or unconfined if none)."
+        },
+        "vault_principal": {
+          "type": "string",
+          "description": "The vault principal this plugin composes its secrets under (default: the plugin name). The vault rejects non-kebab principal names, so this maps a snake_case plugin (discord_notify) to a kebab principal (discord-notify) WITHOUT renaming the plugin and breaking its config/pipeline refs (#107). Attestation still uses the plugin name."
         },
         "requires_vault": {
           "type": "boolean",
