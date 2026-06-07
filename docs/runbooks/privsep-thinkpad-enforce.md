@@ -180,3 +180,27 @@ cross-account EACCES). What we learned:
 - **`migrate everything` ≠ everything enforced.** The estate splits three ways: keyless-confinable
   (enforced now), secret-holding-confinable (enforced after #107), and unconfinable admin/docker
   (a second *unconfined* instance, card #106). The enforced gateway is the data plane, not the whole world.
+
+### Redeploy / binary refresh (validated live 2026-06-07)
+
+The repeatable way to push a new binary (validated on the live Thinkpad):
+
+```bash
+cd /path/to/ductile && git pull --ff-only && go build -o ~/staging/ductile-new ./cmd/ductile
+sudo BIN_SRC=~/staging/ductile-new bash deploy/install.sh   # idempotent FHS layer (ADR)
+sudo systemctl restart ductile
+sudo -u ductile ductile config check --config /etc/ductile/config.yaml   # VALID
+journalctl -u ductile -n 30 --no-pager                                   # "privsep enforcing"
+# verify a job still drops to its account (live `ps` shows uid 1001/1002), wall-bite holds
+```
+
+- **`deploy/install.sh` is safe to re-run:** idempotent; lays/asserts only the FHS *structure* + binary +
+  unit; it does NOT touch config/vault/plugin code and does NOT chown `/var/lib/ductile` (no account-dir
+  clobber). Confirmed live: created `/run/ductile`, account dirs intact, new binary `root:root 0755`.
+- **A binary swap needs NO re-lock** — plugin fingerprints are of the plugin code keyed by the vault
+  nonce, not the gateway binary; `config lock`/`plugin lock` only matter when config/plugin *bytes* change.
+- **#101 verified live:** `config check` on a config with `accounts:` removed but secrets kept fires
+  `config is VALID but privsep is UNCONFINED … a popped plugin can read the decrypted secrets`. And a
+  `run_as` with no `accounts:` is a hard config-load error (fail-closed, not per-job).
+- **#108 verified by unit tests:** `plugins.<name>.requires_vault: true` makes an unknown principal fail
+  the spawn closed (live demo skipped — it would break a plugin).
