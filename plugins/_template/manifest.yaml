@@ -1,0 +1,37 @@
+manifest_spec: ductile.plugin
+manifest_version: 1
+name: _template
+version: 0.1.0
+protocol: 2
+entrypoint: run.py
+concurrency_safe: false
+description: "Golden-path stdlib plugin template (Tier 1). Copy this directory to start a new plugin and fill in handle(). Honours the confined-plugin runtime contract: writes only under its account state_dir, reads secrets over stdin, fetches no dependencies at spawn."
+commands:
+  - name: handle
+    type: write
+    description: "Record the triggering event payload under the account state_dir and emit template.handled."
+    idempotent: false
+    retry_safe: true
+    input_schema:
+      payload: object
+    values:
+      consume:
+        - payload
+      emit:
+        - event: template.handled
+          values:
+            - payload.had_token
+  - name: init
+    type: write
+    description: "One-time provisioning under the account state_dir (creates the records file)."
+    idempotent: true
+    retry_safe: true
+  - name: health
+    type: read
+    description: "Returns plugin health status."
+    idempotent: true
+    retry_safe: true
+config_keys:
+  required: []
+  optional:
+    - max_records   # cap on records.jsonl line count (default 1000)
