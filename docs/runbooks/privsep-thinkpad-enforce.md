@@ -138,3 +138,25 @@ systemctl --user enable --now ductile-local              # or launchctl bootstra
 - The age key now lives inside the `0700` ductile-owned config dir, so accounts can't read it. If you
   prefer it outside the bundle (ADR §8 floor), keep it root-owned `0600` at a path `ductile` can read
   and point `secrets.age_key_file` there — just confirm the wall-bite check still denies accounts.
+
+## Learnings from the first live run (2026-06-07) — VALIDATED
+
+This runbook was executed live on the Thinkpad; the wall is proven (enforce + uid drop to 1002 +
+cross-account EACCES). What we learned:
+
+- **Deploy-as-NEW, don't migrate.** The live config was too home-entangled to re-home (plugin code
+  under `~/Projects/*`, ~12 secret `.env` under `~/.config/secrets/*`, config under `~/.config`). A
+  fresh `/etc/ductile` + `/opt` code + minimal confinable config booted enforce green in minutes; the
+  migration would have been multi-hour with whole-gateway breakage.
+- **Footgun (costs a fail-closed boot refusal):** `chown -R ductile:ductile /var/lib/ductile` clobbers
+  the account-owned state dirs and trips the boot gate. chown **only** `/etc/ductile`; `tmpfiles.d`
+  owns the account dirs — leave them.
+- **EMPTY DB for a newer binary.** Carrying the old prod DB risks a schema-validation boot refusal vs a
+  newer binary; a fresh DB sidesteps it entirely (history stays in the backup).
+- **Wall-proof that worked:** `sys_exec(command=id)` via API → stdout `uid=1002(ductile-untrusted)`
+  with groups reset to 1002 only; `sudo -u ductile-default ls .../untrusted` → `Permission denied`.
+- **DX:** config dir `0700` ductile-owned → `ductile job inspect` as a human user hits EACCES; read job
+  results via the API or as the `ductile` user.
+- **Confinable vs unconfinable split:** `docker compose` / apt scripts / `fabric`(`~/.config/fabric`) /
+  `file_handler`(reads `/home/matt`) cannot run as an account uid — keep admin automation on an
+  unconfined gateway. Restoring the confinable plugins enforced is Phase 2 (card #103).
