@@ -31,6 +31,18 @@ tags: [privsep, epic]
 >   [[106-ductile-admin-glue-unconfined-instance]] (docker/apt/fabric/file_handler), [[108-vault-compose-fail-open-unknown-principal]],
 >   [[105-v1.0-fhs-install-artifact]] (lesson: `config lock`→`plugin lock` BEFORE plugins land on intended
 >   account). Old `--user` decommission DEFERRED until #106+#107 land.
+> - **🟢 PHASE 3 — vault-native plugins + pipeline model PROVEN (2026-06-07):** #107 first secret-holders
+>   live + fail-closed: `discord_notify` + `ap_canary` read secrets from the encrypted vault over stdin
+>   (B form: snake instance + `vault_principal: <kebab>` + `requires_vault`), drop to uid 1001, attested.
+>   **Fail-closed proven live** (bogus principal → spawn refused). Plugin code @ ductile-plugins `a1934e5`.
+>   **Full notify model proven end-to-end under enforce** — on-EVENT (ap_canary→agent_handshake.registered
+>   →pipeline→ap_canary_notify→real Discord post) AND on-HOOK (job.failed→pipeline→job_failure_notify→post).
+>   In-binary hardening also landed + redeployed: #100 (ResolvedAccount.Validate, no root-drop),
+>   #101 (valid≠enforcing warn), #104 (backup-secret-zero test), #108 (requires_vault). Repo @ `055aa88`.
+>   **New cards from the push:** [[109-uv-shebang-plugins-under-privsep]] (git/uv plugins exit-127 under
+>   enforce), [[110-pipeline-webhook-migration-enforced]] (per-chain notify migration + the 2 findings:
+>   notify_on_complete gating; per-route vault_principal'd instance). **Remaining:** #107 (more
+>   secret-holders + fabric-last), #106 (admin instance), #109, #110, decommission old `--user`.
 > - **State:** ADR accepted; **all build/decision cards DONE — #92, #84, #85, #86, #87, #88(Linux),
 >   #93, #90, #89.** The privsep mechanism is complete, proven on macOS (units) + privileged Linux
 >   (Dell: wall, cap-only drop under exactly the two caps, fs reconciliation, negative suite). CI gates
