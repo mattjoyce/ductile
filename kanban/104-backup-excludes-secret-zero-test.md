@@ -1,6 +1,6 @@
 ---
 id: 104
-status: todo
+status: done
 priority: High
 blocked_by: []
 tags: [backup, security, secrets, test, adr, invariant]
@@ -36,3 +36,6 @@ inside every backup tarball. PrivSec §11 principle: a control's integrity must 
 - 2026-06-07: Filed from the filesystem-layout ADR. The age-key location (sshd-style co-located vs.
   outside the bundle) was debated; co-location was accepted *only* with this test as the guard, so the
   card is the other half of that decision. (by @assistant)
+- 2026-06-07: DONE — TestBackupNeverContainsSecretZeroADRLayout locks the invariant under the ADR
+  secret/ layout (config + all scopes); complements the pre-existing TestBackupIncludesVaultBlobNotKey.
+  Config scope is an explicit allow-list (no age.key), so exclusion is structural + now enforced. (by @assistant)

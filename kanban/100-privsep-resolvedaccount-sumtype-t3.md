@@ -1,6 +1,6 @@
 ---
 id: 100
-status: todo
+status: done
 priority: High
 blocked_by: []
 tags: [privsep, correctness, v1.0, review-followup]
@@ -42,3 +42,7 @@ confined arm, so an unconfined/error value structurally cannot carry a droppable
 - 2026-06-07: Promoted from #97 to its own card during the v1.0 triage. It is the only deferred review
   item with a *correctness* (not polish) smell, so it sits on the v1.0 line; T5/T9/T15/vocab-lint stay
   in #97 as v1.x polish. (by @assistant)
+- 2026-06-07: DONE — added `ResolvedAccount.Validate()` (seam guard) called by applyAccountCredential:
+  a confined verdict must be uid>0/gid>0 (never root), unconfined carries no id → else fail closed
+  (ErrAccountDropFailed). Chose the invariant-check over the full sum-type refactor (lower risk, same
+  guarantee). Matrix + seam tests. (by @assistant)
