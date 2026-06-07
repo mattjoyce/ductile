@@ -36,12 +36,28 @@ while the unconfinable admin automation finds a separate home.
 4. **DX:** `ductile job inspect` as `matt` now hits EACCES on `/etc/ductile` (0700) — document reading
    results via the API or as the `ductile` user.
 
-## Decision needed — home for the UNCONFINABLE admin automation
-`docker compose` (astro_rebuild_staging), `check-apt-security.sh`, `stopwatch-daily-perf.py`,
-`file_handler`(reads `/home/matt`), `fabric` (bound to `~/.config/fabric`) **cannot** run as an
-unprivileged account uid. Pick: (a) keep them on the old `--user` gateway (run both gateways), or
-(b) a dedicated 2nd unconfined gateway for admin glue, or (c) drop them. Recommend (a)/(b) — privsep
-is for the data plane, admin glue stays unconfined by design.
+## Operator direction (2026-06-07) — FULL conversion, migrate everything
+This is no longer "restore a subset" — the new enforced/FHS ductile **becomes the system** and
+**everything migrates onto it** (operator: "we are converting to the new ductile... establish it and
+migrate everything; you have the shape"). Decisions locked:
+- **Scope:** restore ALL currently-enabled confinable integrations.
+- **Isolation:** shared `default` uid, accept the §2 sibling-residual (no per-plugin tier yet).
+- **fabric:** confine it into the new setup, but **LAST** (home-bound external tool, most work).
+- **Unconfinable admin automation → a SECOND, UNCONFINED ductile instance** (admin-role gateway,
+  hygiene-only ADR Layer 1a, runs as a privileged user with docker-group/apt access): `docker compose`
+  (astro_rebuild), `check-apt-security.sh`, `stopwatch-daily-perf.py`, `file_handler`(/home reader),
+  and their `*_notify` siblings. Tracked in [[106-ductile-admin-glue-unconfined-instance]]. The enforced
+  gateway is the data plane; this is the ADR data-plane/admin split made concrete (not a fallback).
+- **Establish it *properly*, not hand-run** — couple with [[105-v1.0-fhs-install-artifact]] so the
+  enforced gateway is laid down from the packaged FHS layout, not the runbook by hand.
+
+## Migration sequence (high level — execute with ductile-admin over radio)
+1. Enforced data-plane gateway established via the FHS install (#105) — vault carried, admission on, locked.
+2. Migrate all confinable integrations onto it (discord/web/youtube/identity/healthdata/github-confinable),
+   repoint paths into account state_dirs, secrets over stdin from vault.
+3. Stand up the unconfined admin-glue instance (#106); move docker/apt/perf/file_handler + their notifies there.
+4. fabric last — confine onto the enforced side (replicate config into state_dir / move secret to vault).
+5. Decommission the old `--user` ductile-local once both new roles are green.
 
 ## Acceptance
 Confinable real plugins run enforced (dropped to accounts) and do real work; admin automation has an
