@@ -99,3 +99,21 @@ func withAccountRuntimeEnv(env []string, stateDir string) []string {
 	}
 	return out
 }
+
+// withCredentialedHome rebases a credentialed (trusted) plugin's HOME onto the
+// account's real home so on-disk creds (~/.ssh, ~/.config/gh, the git credential
+// helper) resolve. It drops any inherited HOME so the gateway's own home never
+// leaks. Unlike withAccountRuntimeEnv (which WALLS a confined plugin to its
+// state_dir by also pinning XDG_CACHE_HOME), this sets ONLY HOME and leaves the
+// rest of the env — including operator-granted plugin_env_passthrough values —
+// untouched, so cache defaults to $HOME/.cache under the real, account-owned home.
+func withCredentialedHome(env []string, home string) []string {
+	out := make([]string, 0, len(env)+1)
+	for _, kv := range env {
+		if name, _, ok := strings.Cut(kv, "="); ok && name == "HOME" {
+			continue // inherited HOME dropped; replaced below
+		}
+		out = append(out, kv)
+	}
+	return append(out, "HOME="+home)
+}

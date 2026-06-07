@@ -45,12 +45,32 @@ func TestValidateAccounts(t *testing.T) {
 		}
 	})
 
+	t.Run("credentialed account (non-default, with home) is valid", func(t *testing.T) {
+		w := valid()
+		w["trusted"] = AccountConf{UID: 1000, GID: 1000, Home: "/home/matt"}
+		if err := validateAccounts(&Config{Accounts: w}); err != nil {
+			t.Fatalf("credentialed account rejected: %v", err)
+		}
+	})
+
+	t.Run("home on the default fallback tier is rejected (silent-escalation guard)", func(t *testing.T) {
+		w := valid()
+		d := w["default"]
+		d.Home = "/home/matt"
+		w["default"] = d
+		err := validateAccounts(&Config{Accounts: w})
+		if err == nil || !strings.Contains(err.Error(), "fallback tier must not be credentialed") {
+			t.Fatalf("expected default-credentialed rejection, got %v", err)
+		}
+	})
+
 	cases := []struct {
 		name    string
 		account AccountConf
 		want    string
 	}{
 		{"uid zero (root) rejected", AccountConf{UID: 0, GID: 1001, StateDir: "/s"}, "uid must be a positive"},
+		{"relative credentialed home rejected", AccountConf{UID: 1000, GID: 1000, Home: "rel/home"}, "home must be an absolute path"},
 		{"negative uid rejected", AccountConf{UID: -5, GID: 1001, StateDir: "/s"}, "uid must be a positive"},
 		{"gid zero rejected", AccountConf{UID: 1001, GID: 0, StateDir: "/s"}, "gid must be a positive"},
 		{"absurd uid rejected (overflow guard)", AccountConf{UID: 1 << 33, GID: 1001, StateDir: "/s"}, "uid must be a positive"},

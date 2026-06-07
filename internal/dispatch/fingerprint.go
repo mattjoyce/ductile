@@ -41,7 +41,7 @@ const AccountDowngraded AccountSource = "downgraded"
 // Unconfined resolutions and a nil verifier (attestation not wired) pass through
 // unchanged.
 func bindAccountToFingerprint(resolved ResolvedAccount, cfg *config.Config, plugin string, verifier PluginVerifier) (ResolvedAccount, error) {
-	if !resolved.Confined || verifier == nil {
+	if !resolved.Drops() || verifier == nil {
 		return resolved, nil
 	}
 	if err := verifier.VerifyIdentity(plugin); err == nil {
@@ -61,12 +61,17 @@ func mostRestrictedAccount(cfg *config.Config) (ResolvedAccount, bool) {
 	if !ok {
 		return ResolvedAccount{}, false
 	}
+	// A fingerprint-mismatched plugin is downgraded to the most-restricted tier and
+	// is ALWAYS WALLED — never credentialed — so any `home:` on the untrusted account
+	// is deliberately ignored here (Mode forced to ModeConfined, Home dropped). The
+	// grill (Liskov) flagged this as a second construction site that silently dropped
+	// Home; the wall-on-downgrade is now explicit, not an accidental omission.
 	return ResolvedAccount{
 		Name:     mostRestrictedAccountName,
 		UID:      w.UID,
 		GID:      w.GID,
 		StateDir: w.StateDir,
-		Confined: true,
+		Mode:     ModeConfined,
 		Source:   AccountDowngraded,
 	}, true
 }

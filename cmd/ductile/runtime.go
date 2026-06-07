@@ -648,6 +648,16 @@ func buildRuntime(cfg *config.Config, configPath string, configSource string, re
 		if _, ok := cfg.Accounts["untrusted"]; !ok {
 			logger.Warn("privsep: no `untrusted` account tier configured — a fingerprint-mismatched plugin has no downgrade target, so its spawn fails closed")
 		}
+		// Name every credentialed (trusted) account loudly at boot — a plugin granted
+		// one runs as that REAL user with their on-disk creds and NO wall, so its
+		// compromise == that user's. This must be auditable, never inferred from a
+		// `home:` field's presence (grill: Ousterhout/Armstrong informed-consent).
+		for name, w := range cfg.Accounts {
+			if w.Home != "" {
+				logger.Warn("privsep: account is CREDENTIALED (trusted) — runs as a real user with their creds, NOT walled; its compromise equals that user's",
+					"account", name, "uid", w.UID, "home", w.Home)
+			}
+		}
 		// Reconcile the filesystem floor (#87) before any plugin can spawn: lock the
 		// secrets surface (gateway-owned, 0600/0700) and give each account its private
 		// 0700 dir. All-or-refuse — a failure here aborts the boot (never run

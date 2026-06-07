@@ -68,7 +68,7 @@ func applyAccountCredential(cmd *exec.Cmd, w ResolvedAccount) error {
 	if err := w.Validate(); err != nil {
 		return fmt.Errorf("%w: %v", ErrAccountDropFailed, err)
 	}
-	if !w.Confined {
+	if !w.Drops() {
 		return nil
 	}
 	if cmd.SysProcAttr == nil {

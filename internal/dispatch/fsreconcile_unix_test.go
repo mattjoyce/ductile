@@ -6,7 +6,51 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/mattjoyce/ductile/internal/config"
 )
+
+// TestVerifyCredentialedHome covers the verify-don't-mutate boot check for the
+// trusted tier (grill: Armstrong) — runnable non-root by owning the dir as the test
+// user and asserting against the current uid.
+func TestVerifyCredentialedHome(t *testing.T) {
+	uid := os.Getuid()
+	home := t.TempDir() // owned by the test user, a real dir
+
+	t.Run("valid home (exists, dir, owned by uid) passes", func(t *testing.T) {
+		if err := verifyCredentialedHome("trusted", config.AccountConf{UID: uid, GID: os.Getgid(), Home: home}); err != nil {
+			t.Fatalf("valid home rejected: %v", err)
+		}
+	})
+	t.Run("missing home fails closed", func(t *testing.T) {
+		if err := verifyCredentialedHome("trusted", config.AccountConf{UID: uid, Home: filepath.Join(home, "nope")}); err == nil {
+			t.Fatal("missing home must fail closed")
+		}
+	})
+	t.Run("symlink home fails closed (swappable target)", func(t *testing.T) {
+		link := filepath.Join(t.TempDir(), "link")
+		if err := os.Symlink(home, link); err != nil {
+			t.Skipf("symlink unsupported: %v", err)
+		}
+		if err := verifyCredentialedHome("trusted", config.AccountConf{UID: uid, Home: link}); err == nil {
+			t.Fatal("symlink home must fail closed")
+		}
+	})
+	t.Run("file (not dir) fails closed", func(t *testing.T) {
+		f := filepath.Join(home, "afile")
+		if err := os.WriteFile(f, []byte("x"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := verifyCredentialedHome("trusted", config.AccountConf{UID: uid, Home: f}); err == nil {
+			t.Fatal("non-dir home must fail closed")
+		}
+	})
+	t.Run("home owned by a different uid fails closed", func(t *testing.T) {
+		if err := verifyCredentialedHome("trusted", config.AccountConf{UID: uid + 1, Home: home}); err == nil {
+			t.Fatal("wrong-owner home must fail closed")
+		}
+	})
+}
 
 // TestReconcileSecretPath covers the secrets-surface tightening on files the
 // current user owns — runnable on a non-root dev host. The foreign-owned refuse

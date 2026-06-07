@@ -24,10 +24,10 @@ func TestResolveAccount(t *testing.T) {
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
-		if !got.Confined {
+		if !got.Drops() {
 			t.Fatal("expected Confined=true for a granted plugin")
 		}
-		want := ResolvedAccount{Name: "untrusted", UID: 1002, GID: 1002, StateDir: "/app/data/accounts/untrusted", Confined: true, Source: AccountGranted}
+		want := ResolvedAccount{Name: "untrusted", UID: 1002, GID: 1002, StateDir: "/app/data/accounts/untrusted", Mode: ModeConfined, Source: AccountGranted}
 		if got != want {
 			t.Fatalf("resolved account mismatch:\n got %+v\nwant %+v", got, want)
 		}
@@ -40,7 +40,7 @@ func TestResolveAccount(t *testing.T) {
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
-		if got.Confined || got.Source != AccountUnconfined {
+		if got.Drops() || got.Source != AccountUnconfined {
 			t.Fatalf("expected unconfined for an ungranted plugin with no default tier, got %+v", got)
 		}
 	})
@@ -50,7 +50,7 @@ func TestResolveAccount(t *testing.T) {
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
-		if got.Confined || got.Source != AccountUnconfined {
+		if got.Drops() || got.Source != AccountUnconfined {
 			t.Fatalf("expected unconfined for an unknown plugin, got %+v", got)
 		}
 	})
@@ -64,7 +64,7 @@ func TestResolveAccount(t *testing.T) {
 
 	t.Run("nil config is unconfined", func(t *testing.T) {
 		got, err := resolveAccount(nil, "sys_exec")
-		if err != nil || got.Confined {
+		if err != nil || got.Drops() {
 			t.Fatalf("nil config must be unconfined with no error, got %+v err=%v", got, err)
 		}
 	})
@@ -90,7 +90,7 @@ func TestResolveAccountDefault(t *testing.T) {
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
-		want := ResolvedAccount{Name: "default", UID: 1001, GID: 1001, StateDir: "/app/data/accounts/default", Confined: true, Source: AccountDefault}
+		want := ResolvedAccount{Name: "default", UID: 1001, GID: 1001, StateDir: "/app/data/accounts/default", Mode: ModeConfined, Source: AccountDefault}
 		if got != want {
 			t.Fatalf("ungranted plugin should resolve to the default tier:\n got %+v\nwant %+v", got, want)
 		}
@@ -122,15 +122,20 @@ func TestResolvedAccountValidate(t *testing.T) {
 		r    ResolvedAccount
 		ok   bool
 	}{
-		{"valid confined granted", ResolvedAccount{Name: "default", UID: 1001, GID: 1001, StateDir: "/w", Confined: true, Source: AccountGranted}, true},
-		{"valid downgraded", ResolvedAccount{Name: "untrusted", UID: 1002, GID: 1002, Confined: true, Source: AccountDowngraded}, true},
+		{"valid confined granted", ResolvedAccount{Name: "default", UID: 1001, GID: 1001, StateDir: "/w", Mode: ModeConfined, Source: AccountGranted}, true},
+		{"valid downgraded", ResolvedAccount{Name: "untrusted", UID: 1002, GID: 1002, Mode: ModeConfined, Source: AccountDowngraded}, true},
 		{"valid unconfined", ResolvedAccount{Source: AccountUnconfined}, true},
 		{"zero value = consistent unconfined", ResolvedAccount{}, true},
-		{"confined uid 0 (root) rejected", ResolvedAccount{Name: "x", UID: 0, GID: 1001, Confined: true, Source: AccountGranted}, false},
-		{"confined gid 0 rejected", ResolvedAccount{Name: "x", UID: 1001, GID: 0, Confined: true, Source: AccountGranted}, false},
-		{"confined negative uid rejected", ResolvedAccount{Name: "x", UID: -1, GID: 1, Confined: true, Source: AccountGranted}, false},
-		{"confined valid w/o name/source (ids govern, not metadata)", ResolvedAccount{UID: 1001, GID: 1001, Confined: true}, true},
+		{"confined uid 0 (root) rejected", ResolvedAccount{Name: "x", UID: 0, GID: 1001, Mode: ModeConfined, Source: AccountGranted}, false},
+		{"confined gid 0 rejected", ResolvedAccount{Name: "x", UID: 1001, GID: 0, Mode: ModeConfined, Source: AccountGranted}, false},
+		{"confined negative uid rejected", ResolvedAccount{Name: "x", UID: -1, GID: 1, Mode: ModeConfined, Source: AccountGranted}, false},
+		{"confined valid w/o name/source (ids govern, not metadata)", ResolvedAccount{UID: 1001, GID: 1001, Mode: ModeConfined}, true},
 		{"unconfined carrying identity rejected", ResolvedAccount{UID: 1001, Source: AccountUnconfined}, false},
+		{"valid credentialed (confined + home)", ResolvedAccount{Name: "trusted", UID: 1000, GID: 1000, Mode: ModeCredentialed, Home: "/home/matt", Source: AccountGranted}, true},
+		{"credentialed to root (uid 0) rejected — drop gate is identical", ResolvedAccount{Name: "trusted", UID: 0, GID: 0, Mode: ModeCredentialed, Home: "/root", Source: AccountGranted}, false},
+		{"unconfined carrying a home rejected", ResolvedAccount{Home: "/home/matt", Source: AccountUnconfined}, false},
+		{"credentialed with relative home rejected (seam, not just config)", ResolvedAccount{Name: "trusted", UID: 1000, GID: 1000, Mode: ModeCredentialed, Home: "rel/home"}, false},
+		{"credentialed with root home rejected", ResolvedAccount{Name: "trusted", UID: 1000, GID: 1000, Mode: ModeCredentialed, Home: "/"}, false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -142,5 +147,22 @@ func TestResolvedAccountValidate(t *testing.T) {
 				t.Fatalf("want error, got nil")
 			}
 		})
+	}
+}
+
+// TestResolvedAccountCredentialed pins the tier predicate: credentialed == drops
+// (Confined) AND carries a real home. Confined-without-home stays walled;
+// unconfined is never credentialed.
+func TestResolvedAccountCredentialed(t *testing.T) {
+	cred := ResolvedAccount{UID: 1000, GID: 1000, Mode: ModeCredentialed, Home: "/home/matt"}
+	if !cred.Credentialed() {
+		t.Error("confined account with a home should be credentialed")
+	}
+	conf := ResolvedAccount{UID: 1001, GID: 1001, StateDir: "/w", Mode: ModeConfined}
+	if conf.Credentialed() {
+		t.Error("confined account without a home must not be credentialed")
+	}
+	if (ResolvedAccount{Source: AccountUnconfined}).Credentialed() {
+		t.Error("unconfined account must not be credentialed")
 	}
 }

@@ -176,6 +176,12 @@ type AccountConf struct {
 	UID      int    `yaml:"uid"`
 	GID      int    `yaml:"gid"`
 	StateDir string `yaml:"state_dir,omitempty"`
+	// Home, when set, marks this a CREDENTIALED (trusted) account: the plugin still
+	// drops to this uid/gid, but its runtime is rooted at this REAL home (e.g.
+	// /home/matt) so it can reach the operator's on-disk creds (~/.ssh, ~/.config/gh)
+	// — NOT the walled state_dir rebase of a confined account. Presence of `home:` is
+	// the opt-in to the trusted tier (docs/adr/credentialed-runtime-contract.md).
+	Home string `yaml:"home,omitempty"`
 }
 
 // PluginConf defines configuration for a single plugin.

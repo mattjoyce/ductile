@@ -24,7 +24,7 @@ func TestBindAccountToFingerprint(t *testing.T) {
 			"untrusted": {UID: 1002, GID: 1002, StateDir: "/w/untrusted"},
 		},
 	}
-	grantedDefault := ResolvedAccount{Name: "default", UID: 1001, GID: 1001, StateDir: "/w/default", Confined: true, Source: AccountGranted}
+	grantedDefault := ResolvedAccount{Name: "default", UID: 1001, GID: 1001, StateDir: "/w/default", Mode: ModeConfined, Source: AccountGranted}
 
 	t.Run("matching fingerprint keeps the grant", func(t *testing.T) {
 		got, err := bindAccountToFingerprint(grantedDefault, cfg, "ok-plugin", fakeFingerprintVerifier{})

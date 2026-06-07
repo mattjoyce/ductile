@@ -67,15 +67,27 @@ func (e *subprocessExecutor) execute(
 	// Replace full-environment inheritance with a minimal allowlist so the child
 	// never receives a copy of the gateway's environment (1a spawn hygiene).
 	cmd.Env = buildPluginEnv(e.extraEnv)
-	// #109 runtime contract: a confined plugin gets a usable runtime rooted at the
-	// account's own state_dir — a writable HOME + cache (env) and working directory
-	// (cmd.Dir). Privsep gave a dropped account no writable home, and (before the
-	// 0711 traversal floor) no way to even reach its state_dir, so any plugin that
-	// wrote state, or a runtime needing a cache, failed closed. cmd.Dir alone can't
-	// fix it (Go drops the uid before chdir), so HOME/XDG_CACHE_HOME travel as env;
-	// with the 0711 floor the dropped uid can now also chdir into the dir it owns.
-	// Unconfined plugins are untouched — gateway uid, gateway HOME/cwd, as before.
-	if e.account.Confined && e.account.StateDir != "" {
+	// Runtime contract by tier (the drop itself is identical; only the runtime
+	// rooting differs). Unconfined plugins are untouched — gateway uid/HOME/cwd.
+	switch {
+	case e.account.Credentialed():
+		// Trusted/credentialed runtime — the INVERSE of the #109 confined contract.
+		// The plugin drops to its uid but runs with the operator's REAL home so it
+		// can reach on-disk creds (~/.ssh, ~/.config/gh). HOME is rebased to the
+		// account home (never the gateway's, which is dropped); cwd is that home;
+		// operator-granted passthrough env (plugin_env_passthrough, e.g.
+		// SSH_AUTH_SOCK) is preserved. NOT walled to a state_dir.
+		cmd.Env = withCredentialedHome(cmd.Env, e.account.Home)
+		cmd.Dir = e.account.Home
+	case e.account.Walled() && e.account.StateDir != "":
+		// #109 runtime contract: a confined plugin gets a usable runtime rooted at
+		// the account's own state_dir — a writable HOME + cache (env) and working
+		// directory (cmd.Dir). Privsep gave a dropped account no writable home, and
+		// (before the 0711 traversal floor) no way to even reach its state_dir, so
+		// any plugin that wrote state, or a runtime needing a cache, failed closed.
+		// cmd.Dir alone can't fix it (Go drops the uid before chdir), so
+		// HOME/XDG_CACHE_HOME travel as env; with the 0711 floor the dropped uid can
+		// now also chdir into the dir it owns.
 		cmd.Env = withAccountRuntimeEnv(cmd.Env, e.account.StateDir)
 		cmd.Dir = e.account.StateDir
 	}
@@ -104,12 +116,12 @@ func (e *subprocessExecutor) execute(
 
 	logger.Info("plugin executing", "entrypoint", entrypoint, "timeout", timeout)
 
-	// Start the process. When the plugin is confined, the kernel performs the
-	// uid/gid drop in the fork-child before execve — so a Start failure on a
-	// confined spawn that is NOT a missing binary is a failed drop, not a generic
+	// Start the process. When the plugin drops (confined OR credentialed), the kernel
+	// performs the uid/gid drop in the fork-child before execve — so a Start failure
+	// on a dropping spawn that is NOT a missing binary is a failed drop, not a generic
 	// spawn error. Classify it as such so it fails closed and terminal (no retry).
 	if err := cmd.Start(); err != nil {
-		if e.account.Confined && !errors.Is(err, fs.ErrNotExist) {
+		if e.account.Drops() && !errors.Is(err, fs.ErrNotExist) {
 			e.publishDropFailed(req, pluginName, err)
 			return nil, protocol.ResponseCompat{}, nil, nil, "", 0, fmt.Errorf("%w (account %q uid %d): %v", ErrAccountDropFailed, e.account.Name, e.account.UID, err)
 		}

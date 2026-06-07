@@ -21,9 +21,10 @@ func hasDropCapability() bool { return false }
 var errWorkerDropUnsupported = errors.New("privsep: uid drop unsupported on this platform")
 
 // applyAccountCredential mirrors the unix builder: an unconfined resolution is a
-// no-op; a confined one fails closed because this platform has no uid-drop.
+// no-op; any dropping tier (confined or credentialed) fails closed because this
+// platform has no uid-drop.
 func applyAccountCredential(cmd *exec.Cmd, w ResolvedAccount) error {
-	if w.Confined {
+	if w.Drops() {
 		return errWorkerDropUnsupported
 	}
 	return nil

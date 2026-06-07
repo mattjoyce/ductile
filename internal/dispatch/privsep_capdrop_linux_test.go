@@ -49,7 +49,7 @@ func TestPrivsepDropUnderCapabilityOnly(t *testing.T) {
 
 	cmd := exec.Command(scriptPath)
 	configurePluginProcess(cmd)
-	if err := applyAccountCredential(cmd, ResolvedAccount{Name: "untrusted", UID: workerUID, GID: workerGID, Confined: true}); err != nil {
+	if err := applyAccountCredential(cmd, ResolvedAccount{Name: "untrusted", UID: workerUID, GID: workerGID, Mode: ModeConfined}); err != nil {
 		t.Fatalf("apply credential: %v", err)
 	}
 	if err := cmd.Run(); err != nil {

@@ -35,7 +35,7 @@ func TestApplyAccountCredential(t *testing.T) {
 	t.Run("confined sets uid/gid and resets supplementary groups", func(t *testing.T) {
 		cmd := exec.Command("true")
 		configurePluginProcess(cmd)
-		w := ResolvedAccount{Name: "untrusted", UID: 1002, GID: 1002, Confined: true}
+		w := ResolvedAccount{Name: "untrusted", UID: 1002, GID: 1002, Mode: ModeConfined}
 		if err := applyAccountCredential(cmd, w); err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -56,7 +56,7 @@ func TestApplyAccountCredential(t *testing.T) {
 	t.Run("privilege does not clobber the Setpgid lifecycle (A1 separation)", func(t *testing.T) {
 		cmd := exec.Command("true")
 		configurePluginProcess(cmd)
-		if err := applyAccountCredential(cmd, ResolvedAccount{UID: 1, GID: 1, Confined: true}); err != nil {
+		if err := applyAccountCredential(cmd, ResolvedAccount{UID: 1, GID: 1, Mode: ModeConfined}); err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
 		if !cmd.SysProcAttr.Setpgid {
@@ -111,7 +111,7 @@ func TestPrivsepConfinedSpawnFailsClosedWithoutPrivilege(t *testing.T) {
 // — fail closed with ErrAccountDropFailed, no credential set.
 func TestApplyAccountCredentialRejectsMalformedDrop(t *testing.T) {
 	cmd := exec.Command("true")
-	err := applyAccountCredential(cmd, ResolvedAccount{Name: "x", UID: 0, GID: 1001, Confined: true, Source: AccountGranted})
+	err := applyAccountCredential(cmd, ResolvedAccount{Name: "x", UID: 0, GID: 1001, Mode: ModeConfined, Source: AccountGranted})
 	if err == nil || !errors.Is(err, ErrAccountDropFailed) {
 		t.Fatalf("confined uid-0 must fail closed with ErrAccountDropFailed, got %v", err)
 	}

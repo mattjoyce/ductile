@@ -880,7 +880,26 @@ func validateAccounts(cfg *Config) error {
 		if w.GID <= 0 || w.GID > math.MaxInt32 {
 			return fmt.Errorf("accounts.%s: gid must be a positive gid within range (got %d)", name, w.GID)
 		}
-		if !filepath.IsAbs(w.StateDir) {
+		// A credentialed (trusted) account is rooted at a real `home` instead of a
+		// walled `state_dir`; require the path that roots its runtime to be absolute
+		// (home when credentialed, else state_dir). A credentialed account may also
+		// carry a state_dir, but home is what its runtime uses.
+		if w.Home != "" {
+			// The shared `default` tier is the fallback for EVERY ungranted plugin. A
+			// `home:` there would silently make the credentialed (trusted) tier the
+			// default — every ungranted plugin would drop to a real user with their
+			// on-disk creds, by silence. The trusted tier must be opt-in by an explicit
+			// `run_as` grant only, never inherited via the fallback (grill: Armstrong).
+			if name == "default" {
+				return fmt.Errorf("accounts.default: the shared fallback tier must not be credentialed (remove `home:`) — an ungranted plugin would silently run as that real user; grant the trusted tier explicitly via a plugin's run_as instead")
+			}
+			if !filepath.IsAbs(w.Home) {
+				return fmt.Errorf("accounts.%s: home must be an absolute path (got %q)", name, w.Home)
+			}
+			if w.StateDir != "" && !filepath.IsAbs(w.StateDir) {
+				return fmt.Errorf("accounts.%s: state_dir must be an absolute path (got %q)", name, w.StateDir)
+			}
+		} else if !filepath.IsAbs(w.StateDir) {
 			return fmt.Errorf("accounts.%s: state_dir must be an absolute path (got %q)", name, w.StateDir)
 		}
 		if owner, dup := uidOwner[w.UID]; dup {

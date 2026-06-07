@@ -31,9 +31,47 @@ func reconcileAccountFilesystem(cfg *config.Config, secretPaths []string, euid i
 		}
 	}
 	for name, w := range cfg.Accounts {
+		// A credentialed (trusted) account is rooted at the operator's REAL home, not a
+		// ductile-provisioned 0700 wall — the gateway must never chmod/chown it. But
+		// "don't mutate" is NOT "don't look" (grill: Armstrong): verify-don't-mutate,
+		// fail closed, so a botched home is caught at boot rather than as a confusing
+		// half-run at first spawn. The Lstat also doubles as the gateway-reachability
+		// check (if the `ductile`-group ACL is missing the gateway can't traverse to
+		// the home and this fails loudly — grill: Ousterhout).
+		if w.Home != "" {
+			if err := verifyCredentialedHome(name, w); err != nil {
+				return err
+			}
+			continue
+		}
 		if err := reconcileAccountDir(name, w); err != nil {
 			return err
 		}
+	}
+	return nil
+}
+
+// verifyCredentialedHome asserts a credentialed account's home is a usable trust
+// anchor WITHOUT mutating it: it must exist, be a real directory (not a symlink —
+// a swappable target is not a trust anchor), and be owned by the account uid (a
+// home owned by another user is not the operator's). Pure assertion, fail-closed.
+func verifyCredentialedHome(name string, w config.AccountConf) error {
+	info, err := os.Lstat(w.Home)
+	if err != nil {
+		return fmt.Errorf("privsep: credentialed account %q home %q is not reachable: %w (provision it, and grant the gateway's group traverse/read via the `ductile`-group ACL)", name, w.Home, err)
+	}
+	if info.Mode()&fs.ModeSymlink != 0 {
+		return fmt.Errorf("privsep: credentialed account %q home %q is a symlink — refusing (a swappable home target is not a trust anchor)", name, w.Home)
+	}
+	if !info.IsDir() {
+		return fmt.Errorf("privsep: credentialed account %q home %q is not a directory", name, w.Home)
+	}
+	st, ok := info.Sys().(*syscall.Stat_t)
+	if !ok {
+		return fmt.Errorf("privsep: cannot determine owner of credentialed account %q home %q", name, w.Home)
+	}
+	if int(st.Uid) != w.UID {
+		return fmt.Errorf("privsep: credentialed account %q home %q is owned by uid %d, not the account uid %d — that is not the operator's home", name, w.Home, st.Uid, w.UID)
 	}
 	return nil
 }
