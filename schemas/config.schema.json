@@ -216,6 +216,11 @@
           "description": "Maximum on-hook lifecycle chain depth. A root job that fires a hook produces a depth-1 hook job; if that hook job's plugin also has notify_on_complete: true, its hook is depth 2, and so on. The dispatcher refuses any hook enqueue beyond this cap. 0 means use the built-in default (4). Negative values are rejected. P2-11.",
           "minimum": 0,
           "default": 4
+        },
+        "unconfined": {
+          "type": "boolean",
+          "description": "Privsep boot-gate escape hatch (PrivSec ADR §5). When true, the gateway runs plugins at its own uid (no privilege drop) even on a host that holds the drop capability and configures accounts — the one explicit, audited way to opt out of enforcement. Logged loudly at boot. Default false: capability and a configured accounts map must agree, or the gateway refuses to start.",
+          "default": false
         }
       },
       "additionalProperties": false

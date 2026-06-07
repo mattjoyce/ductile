@@ -31,12 +31,17 @@ tags: [privsep, epic]
 >   `accounts:` map** → boot gate → `unconfined` (no CAP_SETUID on macOS launchd) → privsep is **NOT
 >   enforcing on the live host**, so the #93 *downgrade* path isn't reached there. Enforce mode is
 >   macOS-pending ([[95-privsep-launchd-and-live-rollout]]) — must be stated in the PR body.
-> - **Next action:** [[98-privsep-docs-naur-diataxis]] — **documentation pass** (Naur theory + Diátaxis,
->   *take action, not a review*) folding Tier D doc items (T5c, T11, T12, T13, T14, T17). Last gate, then PR.
-> - **Open:** [[98-privsep-docs-naur-diataxis]] (todo), [[97-privsep-review-followups]] (todo),
->   [[95-privsep-launchd-and-live-rollout]] (backlog).
-> - **Done:** #92, #84, #85, #86, #87, #88, #89, #90, #93, #96 — **Branch:** `feat/privsep-uid-separation` (pushed, rebased on main).
-> - **PR:** not opened yet — ready after the doc review (state macOS-pending enforce per T7/T12).
+> - **Docs pass DONE (2026-06-07):** [[98-privsep-docs-naur-diataxis]] folded all Tier D doc items.
+>   ADR T5c (downgrade-vs-secret-denial asymmetry, §4) + T17 (point-in-time-at-boot tradeoff, §8);
+>   DEPLOYMENT.md §5b T11 (uid-coupling SSOT) / T12 (Linux-proven, macOS-pending → #95) / T13 (root-refusal
+>   dev note) + `account:`→`run_as:` drift fix; new §5c reference (keys, reserved keywords T14, boot-gate
+>   table, failure modes); schema drift fixed (`service.unconfined` was missing from `ServiceConfig`,
+>   strict-validate would have rejected the documented escape hatch). No code change; suites green.
+> - **Next action:** **open the PR.** Body must state enforce is **Linux-proven, macOS-pending #95**, the
+>   live host currently **unconfined** (T7). Optionally `/code-review ultra` first.
+> - **Open:** [[97-privsep-review-followups]] (todo), [[95-privsep-launchd-and-live-rollout]] (backlog).
+> - **Done:** #92, #84, #85, #86, #87, #88, #89, #90, #93, #96, #98 — **Branch:** `feat/privsep-uid-separation` (pushed, rebased on main).
+> - **PR:** not opened yet — docs now match the code; ready to open (state macOS-pending enforce per T7/T12).
 > - **Update rule:** when a card's `status:` changes, update this block + the table below.
 
 Make the secret-scoping wall **real**. Today plugins run as the gateway's own OS user
