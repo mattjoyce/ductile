@@ -31,6 +31,20 @@ Plugins are **not vault-native**, so the Phase-2 "vault carry + secret_ref confi
 This is why the 2026-06-06 vault migration only moved ductile's own tokens + webhook/relay secrets
 (which DO support `secret_ref`) and left plugin API keys on env.
 
+## Verdict — HEAVY, empirically settled (2026-06-07)
+
+We tested the optimistic "light" path live on discord_notify: imported `discord_webhook_url` to the
+vault, set config `webhook_url_ref: discord_webhook_url`, locked+attested, ran the `health` command.
+BOTH signals say `_ref` is NOT a config-substitution mechanism for plugins:
+1. `config check` ERROR — `plugin "discord_notify" requires config key "webhook_url"` (the validator
+   treats `webhook_url_ref` as a *different* key; it does not satisfy the required `webhook_url`).
+2. runtime — discord_notify `health` → "No webhook_url configured" → job failed. The `_ref` value was
+   never substituted into the key the plugin reads.
+
+So vault→plugin delivery is **only** the stdin `secrets` map. This card is HEAVY as written: per
+secret-needing plugin = kebab-rename (principal) + a code change to read `secrets[...]` + register/
+authorize/import. Not a config tweak. (`_ref` remains valid for relay/webhook endpoints, just not plugins.)
+
 ## Work (per secret-needing first-party plugin: discord notifies, github git-sync, ap_canary, fabric…)
 1. **Kebab-rename** the plugin so its name is a valid principal (e.g. `discord_notify` → `discord-notify`),
    updating config keys + any `uses:`/pipeline refs.
