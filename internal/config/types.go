@@ -186,7 +186,7 @@ type PluginConf struct {
 	// operator's core config grants privilege; a manifest hint is never trusted).
 	// Empty = no grant. Resolution to an account identity is #85; the tracer (#92)
 	// honours it for the single granted plugin.
-	RunAs               string                `yaml:"run_as,omitempty"`
+	RunAs string `yaml:"run_as,omitempty"`
 	// RequiresVault makes vault secret delivery mandatory for this plugin. When
 	// true, an unknown/unregistered vault principal (the plugin name) fails the
 	// spawn CLOSED rather than opting out — closing the fail-open seam where a
