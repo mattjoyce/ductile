@@ -50,3 +50,7 @@ Members (move off the enforced gateway):
 - 2026-06-07: Filed from the Phase-2 clarification. Operator chose full conversion ("migrate
   everything, you have the shape"); the unconfinable admin set gets its own unconfined ductile role
   rather than staying on the legacy gateway or being dropped — the ADR split made concrete. (by @assistant)
+- 2026-06-07: REPO-SIDE landed (still todo overall) — deploy/systemd/ductile-admin.service (template,
+  unconfined, runs as a docker-group user) + docs/runbooks/ductile-admin-instance.md (the two-instance
+  split + stand-up). REMAINING (operational, on the host): create the privileged user, write its config
+  (the unconfinable plugins, no accounts map, its own port), start it, decommission the old --user gw. (by @assistant)

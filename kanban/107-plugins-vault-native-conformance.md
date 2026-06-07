@@ -62,3 +62,8 @@ receiving its secret from the vault over stdin — no env, no config-literal. (B
   scheme couldn't work — plugins read config/env, not the vault stdin secrets map, and snake_case names
   can't be principals. This is the real (dev) cost of confining secret-holders; the keyless three
   (web/youtube/healthdata) restore without it. (by @assistant)
+- 2026-06-07: REPO-SIDE ENABLER landed (still todo overall) — added `plugins.<name>.vault_principal`
+  so a snake_case plugin maps to a kebab vault principal WITHOUT a rename (composePluginSecrets composes
+  under the principal; attestation stays on the plugin name). +schema +test. REMAINING (external, on the
+  Thinkpad's ~/Projects/ductile-plugins): each secret-holding plugin must READ its secret from the stdin
+  secrets map, + register the kebab principal + import/authorize the secret. (by @assistant)
