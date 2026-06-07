@@ -8,6 +8,16 @@ tags: [privsep, epic]
 # Privsep — uid separation (worker users) (EPIC)
 
 > [!status] WHERE WE'RE UP TO  *(a resuming agent reads this first; keep it current)*
+> - **🎯 ENFORCE PROVEN LIVE on the Thinkpad (2026-06-07):** first live enforced deployment. Stood up a
+>   fresh system service (`/etc/ductile` + `/opt/ductile` code + accounts map) running as `ductile`(984)
+>   with `CAP_SETUID/SETGID`; boot logged "privsep enforcing". Triggered `sys_exec`(command=`id`) →
+>   stdout `uid=1002(ductile-untrusted) groups=1002` (the drop is real, supplementary groups reset clean);
+>   `sudo -u ductile-default ls .../untrusted` → Permission denied (cross-account FS isolation). So Layer 1b
+>   is proven on a LIVE Linux host, not just the Dell test suite. **Done via deploy-as-new** (not migration):
+>   the live config was too home-entangled to re-home (plugin code + 12 secret .env + config all under
+>   /home/matt; admin plugins docker/apt are unconfinable). Phase 1 = exemplar plugins only; **real
+>   automation is OFFLINE pending Phase 2** ([[103-privsep-thinkpad-phase2-restore-plugins]]). Runbook:
+>   `docs/runbooks/privsep-thinkpad-enforce.md`. Old `--user` gateway disabled but revertible from backup.
 > - **State:** ADR accepted; **all build/decision cards DONE — #92, #84, #85, #86, #87, #88(Linux),
 >   #93, #90, #89.** The privsep mechanism is complete, proven on macOS (units) + privileged Linux
 >   (Dell: wall, cap-only drop under exactly the two caps, fs reconciliation, negative suite). CI gates
