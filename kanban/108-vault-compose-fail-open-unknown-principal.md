@@ -1,6 +1,6 @@
 ---
 id: 108
-status: todo
+status: done
 priority: High
 blocked_by: []
 tags: [vault, security, fail-closed, privsep, bug]
@@ -44,3 +44,6 @@ refusal), never a silent empty-secrets spawn. A keyless plugin is unaffected.
   no-secret-on-unknown-principal is a fail-open footgun out of step with privsep's fail-closed spine.
   Worth fixing before the plugin-vault-native workstream ([[107-plugins-vault-native-conformance]])
   multiplies the number of principal names in play. (by @assistant)
+- 2026-06-07: DONE — added `plugins.<name>.requires_vault: true`; an unknown/unregistered principal
+  (or no vault wired) for such a plugin now fails the spawn CLOSED + loud (`ErrVaultPrincipalRequired`).
+  Default false preserves the keyless opt-out. Code+schema+2 tests, suite green. (by @assistant)

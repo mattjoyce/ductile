@@ -1,6 +1,6 @@
 ---
 id: 101
-status: todo
+status: done
 priority: High
 blocked_by: []
 tags: [privsep, dx, safety, v1.0]
@@ -39,3 +39,6 @@ Explicitly **out of scope:** the per-plugin table, what-if, `--json` report obje
 - 2026-06-07: Carved out of #99 during the v1.0 triage as the minimal safety surface. The full explain
   verb family is comprehension/DX (later); this single anti-footgun is a correctness-of-operation
   concern (now), because the failure mode is shipping a wall that isn't there. (by @assistant)
+- 2026-06-07: DONE — `config check`/doctor now WARNs (valid, not error) when secrets/vault are
+  configured but no accounts map (T7 trap), and when `service.unconfined` sits on a configured
+  accounts map; boot logs an explicit UNCONFINED posture line for the plain dev case. +2 tests. (by @assistant)
