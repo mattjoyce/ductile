@@ -160,3 +160,23 @@ cross-account EACCES). What we learned:
 - **Confinable vs unconfinable split:** `docker compose` / apt scripts / `fabric`(`~/.config/fabric`) /
   `file_handler`(reads `/home/matt`) cannot run as an account uid — keep admin automation on an
   unconfined gateway. Restoring the confinable plugins enforced is Phase 2 (card #103).
+
+### Phase 2 learnings (2026-06-07, live)
+
+- **`plugin lock` is a REQUIRED migration step, not an end-cap.** Relocating plugin code to `/opt`
+  changes its bytes' provenance → no recorded fingerprint → privsep's #93 binding refuses to honor the
+  `default` grant and **fails SAFE, downgrading the plugin to the least-priv tier (`untrusted` 1002)**.
+  The plugins still run, dropped + confined, just least-priv. Run `ductile plugin lock --all` against
+  the `/opt` tree to record fingerprints, then they land on their intended `default` (1001). Witnessed
+  live: youtube_playlist + check_db_garmin both downgraded→untrusted until locked. (This is a clean
+  in-the-wild proof of the #93 swap-defence.)
+- **Plugin secrets are NOT a config reconcile.** `PluginConf` has no nested `secret_ref`; plugin secret
+  delivery is either a `<field>_ref:` key-suffix (loader substitution — unverified for plugins) or the
+  spawn-time stdin `secrets` map (principal == plugin name, **kebab-case only**, and the plugin must
+  read that map). Snake-case plugin names are rejected as principals (tested: 400). So secret-holding
+  plugins need a dedicated vault-native workstream (card #107) — only **keyless** plugins restore via
+  config alone. Worse, the vault compose path is fail-OPEN on an unknown principal (card #108) — the one
+  non-fail-closed seam in an otherwise fail-closed design.
+- **`migrate everything` ≠ everything enforced.** The estate splits three ways: keyless-confinable
+  (enforced now), secret-holding-confinable (enforced after #107), and unconfinable admin/docker
+  (a second *unconfined* instance, card #106). The enforced gateway is the data plane, not the whole world.
