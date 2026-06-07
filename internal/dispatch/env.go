@@ -64,3 +64,38 @@ func buildPluginEnv(extra []string) []string {
 	}
 	return env
 }
+
+// accountRuntimeOverrides are the env names whose values a confined plugin must
+// take from its OWN account state_dir rather than inherit from the gateway. HOME
+// because a dropped account has no writable home of its own (the gateway's HOME,
+// /var/lib/ductile, is 0700 gateway-owned); XDG_CACHE_HOME so cache-using runtimes
+// (uv → $XDG_CACHE_HOME/uv) land in the account's private dir, never a shared
+// location (the cross-account cache-poisoning vector that sank #109 option A).
+var accountRuntimeOverrides = []string{"HOME", "XDG_CACHE_HOME"}
+
+// withAccountRuntimeEnv rebases a confined plugin's runtime onto its account
+// state_dir: it drops any inherited HOME/XDG_CACHE_HOME (so the gateway's own home
+// never leaks to the child) and re-adds them pointing at stateDir. This is half of
+// the #109 runtime-contract fix — privsep gives a dropped account no writable HOME,
+// so a plugin that writes anything, or a runtime that needs a cache, failed closed
+// until its home was keyed to the 0700 dir it owns. The cwd half (cmd.Dir) is set
+// at the spawn site, where the *exec.Cmd lives. Order is deterministic for tests.
+func withAccountRuntimeEnv(env []string, stateDir string) []string {
+	override := make(map[string]bool, len(accountRuntimeOverrides))
+	for _, name := range accountRuntimeOverrides {
+		override[name] = true
+	}
+
+	out := make([]string, 0, len(env)+len(accountRuntimeOverrides))
+	for _, kv := range env {
+		name, _, ok := strings.Cut(kv, "=")
+		if ok && override[name] {
+			continue // inherited value dropped; replaced below
+		}
+		out = append(out, kv)
+	}
+	for _, name := range accountRuntimeOverrides {
+		out = append(out, name+"="+stateDir)
+	}
+	return out
+}

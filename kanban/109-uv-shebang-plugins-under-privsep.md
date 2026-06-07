@@ -1,6 +1,6 @@
 ---
 id: 109
-status: todo
+status: doing
 priority: High
 blocked_by: []
 tags: [privsep, plugins, packaging, uv, enforce]
@@ -98,3 +98,25 @@ On-box verification owned by ThinkPad-ductile-admin: (a) 0711 does NOT trip the 
   uv) stay parked behind C.
 - **Design norm:** plugins prefer stdlib/system runtimes + assume ONLY the runtime contract above —
   never $HOME dotfiles, /home paths, or ambient creds.
+
+## C IMPLEMENTED (MacM1, 2026-06-07) — gateway-side, on `feat/privsep-uid-separation`
+Both parts landed + green locally (build, gofmt, `go test ./internal/dispatch -p 1`; the one failure
+is the known parallel-race flake `TestSpawnPluginTimeoutKillsProcessGroup`, passes 3/3 in isolation,
+unrelated — unconfined `config.Defaults()` + absolute pid path).
+1. **tmpfiles** `deploy/systemd/ductile-accounts.tmpfiles.conf`: `/var/lib/ductile` + `.../accounts`
+   `0700`/`0755` → **`0711`**; per-account dirs stay `0700`. Verified gate-safe by reading
+   `secret_surface.go` + live config: `State.Path` is the db **file** (`/var/lib/ductile/ductile.db`),
+   so `reconcileSecretPath` tightens the file to `0600` and NEVER touches the dir mode → `0711` survives boot.
+2. **gateway spawn** `internal/dispatch/`: new `withAccountRuntimeEnv` (`env.go`) drops inherited
+   `HOME`/`XDG_CACHE_HOME` and re-points both at the account `state_dir`; `subprocess_executor.go` calls
+   it + sets `cmd.Dir = state_dir` for confined accounts only (unconfined untouched). Tests added in
+   `env_test.go` (rebases home+cache; no gateway-home leak).
+
+Contract written up: `docs/adr/confined-plugin-runtime-contract.md` (the spec the exemplar rewrite follows).
+
+### STILL OPEN
+- **On-box 4-point verify** (ThinkPad-ductile-admin owns): (a) `0711` doesn't trip the boot fs-reconcile
+  gate; (b) `vault.age`/`ductile.db` stay unreadable to accounts; (c) confined plugin writes its state_dir;
+  (d) cross-account isolation still bites. Needs the new binary deployed.
+- **Exemplar rewrite** (cross-repo `ductile-plugins`, war-room): stdlib-default / uv-advanced re-tier +
+  responsibility-leak sweep, per the ADR. The git_*/repo_* downstream plugins unpark once (c) is verified.

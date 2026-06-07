@@ -64,3 +64,36 @@ func TestBuildPluginEnvHonoursOperatorPassthrough(t *testing.T) {
 		t.Error("ungranted var leaked into plugin env")
 	}
 }
+
+func TestWithAccountRuntimeEnvRebasesHomeAndCache(t *testing.T) {
+	const stateDir = "/var/lib/ductile/accounts/default"
+	// Base env carries the GATEWAY's home — exactly what must not reach the child.
+	base := []string{"PATH=/usr/bin", "HOME=/var/lib/ductile", "TZ=Australia/Sydney"}
+
+	env := envMap(withAccountRuntimeEnv(base, stateDir))
+
+	if env["HOME"] != stateDir {
+		t.Errorf("HOME = %q, want account state_dir %q", env["HOME"], stateDir)
+	}
+	if env["XDG_CACHE_HOME"] != stateDir {
+		t.Errorf("XDG_CACHE_HOME = %q, want account state_dir %q", env["XDG_CACHE_HOME"], stateDir)
+	}
+	// Unrelated allowlisted vars are preserved untouched.
+	if env["PATH"] != "/usr/bin" || env["TZ"] != "Australia/Sydney" {
+		t.Errorf("non-override vars not preserved: PATH=%q TZ=%q", env["PATH"], env["TZ"])
+	}
+}
+
+func TestWithAccountRuntimeEnvDoesNotLeakGatewayHome(t *testing.T) {
+	const stateDir = "/var/lib/ductile/accounts/untrusted"
+	base := []string{"HOME=/var/lib/ductile", "HOME=/some/other", "XDG_CACHE_HOME=/var/lib/ductile/.cache"}
+
+	// Every inherited HOME/XDG_CACHE_HOME entry must be dropped — a single leftover
+	// gateway HOME would point a confined child at a dir it cannot write (or read).
+	for _, kv := range withAccountRuntimeEnv(base, stateDir) {
+		name, val, _ := strings.Cut(kv, "=")
+		if (name == "HOME" || name == "XDG_CACHE_HOME") && val != stateDir {
+			t.Errorf("inherited %s=%q survived; want only %q", name, val, stateDir)
+		}
+	}
+}

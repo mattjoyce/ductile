@@ -67,6 +67,18 @@ func (e *subprocessExecutor) execute(
 	// Replace full-environment inheritance with a minimal allowlist so the child
 	// never receives a copy of the gateway's environment (1a spawn hygiene).
 	cmd.Env = buildPluginEnv(e.extraEnv)
+	// #109 runtime contract: a confined plugin gets a usable runtime rooted at the
+	// account's own state_dir — a writable HOME + cache (env) and working directory
+	// (cmd.Dir). Privsep gave a dropped account no writable home, and (before the
+	// 0711 traversal floor) no way to even reach its state_dir, so any plugin that
+	// wrote state, or a runtime needing a cache, failed closed. cmd.Dir alone can't
+	// fix it (Go drops the uid before chdir), so HOME/XDG_CACHE_HOME travel as env;
+	// with the 0711 floor the dropped uid can now also chdir into the dir it owns.
+	// Unconfined plugins are untouched — gateway uid, gateway HOME/cwd, as before.
+	if e.account.Confined && e.account.StateDir != "" {
+		cmd.Env = withAccountRuntimeEnv(cmd.Env, e.account.StateDir)
+		cmd.Dir = e.account.StateDir
+	}
 	configurePluginProcess(cmd)
 	// Compose the privsep uid/gid drop onto the lifecycle-configured command. A
 	// confined account on a platform that cannot drop fails the spawn closed here —
