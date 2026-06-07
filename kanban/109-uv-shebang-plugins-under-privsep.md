@@ -49,3 +49,52 @@ no reach into `/home` or the gateway's `0700` cwd.
   exit-127'd under enforce because its `uv run --script` shebang needs uv on PATH + a writable HOME/cache
   and trips on uv's up-tree config walk into the `0700` cwd. A privsep×packaging gotcha distinct from
   secrets: plain-python3 plugins enforce fine, uv-shebang ones don't. (by @assistant)
+
+## REFINED DIAGNOSIS + FIX (2026-06-07, on-box repro) — root is broader than uv
+
+**exit-127 is already fixed** (a system `uv` now at /usr/local/bin — dropped account finds it on PATH).
+The live failure is **exit 2, and it's a privsep PLATFORM gap, not a plugin bug:**
+
+A confined plugin is spawned with **HOME and cwd = the gateway's `/var/lib/ductile` (0700 ductile)** —
+so it has **no writable HOME** (uv's `$HOME/.cache` → permission denied) and an unreadable cwd. Worse:
+the account's OWN state_dir (`/var/lib/ductile/accounts/<a>`, 0700/account-owned) is **UNREACHABLE** —
+the `0700` on the parent `/var/lib/ductile` blocks the account uid from traversing to it. Repro:
+`sudo -u ductile-default cd /var/lib/ductile/accounts/default` → Permission denied. And `cmd.Dir`
+can't save it (Go does the setuid drop BEFORE chdir, so the chdir runs as the account + hits the same
+wall). **The only writable abs path a dropped account has today is host `/tmp`.**
+
+**This affects EVERY plugin, not just uv** — proof: `github_repo_sync/run.py:116`
+`clone_root.mkdir(/var/lib/ductile/accounts/default/github)` is a state_dir write that face-plants on
+the same wall. So the per-account `state_dir` feature is effectively half-dead (earlier "writes"
+were event emits, which never touched it).
+
+### The real frame: privsep silently changed the plugin RUNTIME CONTRACT
+Pre-enforce a plugin had a writable HOME, a usable cwd, and /tmp. Under enforce it has none. Every
+runtime (uv, pip, node, go-build, playwright, even `__pycache__`) assumes a writable HOME+TMPDIR, so
+they break one-by-one. The fix is not per-tool — **define + guarantee a confined-plugin runtime
+contract:** every dropped plugin gets (1) a writable private HOME, (2) a writable TMPDIR, (3) its own
+writable cwd (its state_dir), (4) secrets over stdin, and NOTHING ambient from the host. (Worth an ADR
++ a "plugin runtime contract" doc.)
+
+### FIX = C, two parts (gateway-side, MacM1)
+1. **tmpfiles:** `/var/lib/ductile` + `/var/lib/ductile/accounts` → **0711** (traverse-only, not
+   listable; per-account dirs STAY `0700`/account-owned — the /home pattern). Declarative, survives
+   reboot. Makes state_dirs reachable. (vault.age/ductile.db stay `0600` → contents safe; only a minor
+   stat-of-size leak, acceptable for the popped-plugin threat.)
+2. **gateway confined spawn:** set `HOME` + `XDG_CACHE_HOME` (+ cwd) = the account's `state_dir`.
+   Env-vars sidestep the setuid-before-chdir ordering (the plugin uses $HOME at runtime as its uid).
+
+On-box verification owned by ThinkPad-ductile-admin: (a) 0711 does NOT trip the boot fs-reconcile gate;
+(b) vault.age + ductile.db stay unreadable to accounts; (c) a confined plugin can write its state_dir;
+(d) cross-account isolation still bites (default can't read untrusted's dir).
+
+### Decisions
+- **A (shared uv cache via systemd env): REJECTED** — a cache writable by multiple account uids is a
+  cross-account poisoning vector (popped `untrusted` poisons → `default` executes).
+- **B (stdlib rewrite): the fallback + a norm.** Revised for github_repo_sync = urllib swap (zero deps)
+  **+ DROP the spurious `clone_root.mkdir`** (it pre-creates a dir for downstream git_repo_sync — a
+  downstream responsibility leaking upward; this discovery plugin only emits events). → works TODAY,
+  no dependency on C. ThinkPad doing it on-box. The git_* / repo_* downstream plugins (write/clone +
+  uv) stay parked behind C.
+- **Design norm:** plugins prefer stdlib/system runtimes + assume ONLY the runtime contract above —
+  never $HOME dotfiles, /home paths, or ambient creds.
