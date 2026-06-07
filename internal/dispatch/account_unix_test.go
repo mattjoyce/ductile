@@ -106,3 +106,16 @@ func TestPrivsepConfinedSpawnFailsClosedWithoutPrivilege(t *testing.T) {
 		t.Fatalf("expected ErrAccountDropFailed, got %v", err)
 	}
 }
+
+// #100: the drop seam refuses a malformed confined ResolvedAccount (uid 0 = root)
+// — fail closed with ErrAccountDropFailed, no credential set.
+func TestApplyAccountCredentialRejectsMalformedDrop(t *testing.T) {
+	cmd := exec.Command("true")
+	err := applyAccountCredential(cmd, ResolvedAccount{Name: "x", UID: 0, GID: 1001, Confined: true, Source: AccountGranted})
+	if err == nil || !errors.Is(err, ErrAccountDropFailed) {
+		t.Fatalf("confined uid-0 must fail closed with ErrAccountDropFailed, got %v", err)
+	}
+	if cmd.SysProcAttr != nil && cmd.SysProcAttr.Credential != nil {
+		t.Fatal("no credential may be set on a rejected drop")
+	}
+}

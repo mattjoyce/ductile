@@ -4,6 +4,7 @@ package dispatch
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"strconv"
@@ -61,6 +62,12 @@ func configurePluginProcess(cmd *exec.Cmd) {
 // Supplementary groups are reset to the account's own gid so an inherited gateway
 // group cannot silently re-grant access (the ADR §8 botched-drop guard).
 func applyAccountCredential(cmd *exec.Cmd, w ResolvedAccount) error {
+	// #100: refuse any inconsistent verdict at the seam — a malformed ResolvedAccount
+	// (e.g. confined-but-uid-0, or a confined value with an unconfined/zero source)
+	// must NEVER become a privilege drop. Fail closed, terminal.
+	if err := w.Validate(); err != nil {
+		return fmt.Errorf("%w: %v", ErrAccountDropFailed, err)
+	}
 	if !w.Confined {
 		return nil
 	}

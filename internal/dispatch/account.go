@@ -101,3 +101,31 @@ func confinedAccount(name string, w config.AccountConf, src AccountSource) Resol
 		Source:   src,
 	}
 }
+
+// Validate is the resolve→enforce seam guard (#100): a ResolvedAccount must be
+// internally consistent before it can drive a privilege drop. `Confined` and the
+// identity (UID/GID/Name/Source) encode one fact in several fields, so a zero
+// value or a malformed value could otherwise be MISREAD — either as a silent
+// "unconfined" or, far worse, as "confined, drop to uid 0" (root). This makes any
+// inconsistency fail CLOSED at the seam, regardless of how the value was built:
+//
+//   - unconfined  -> must carry NO droppable identity (uid/gid == 0)
+//   - confined    -> must be a real, NON-root identity (uid>0 AND gid>0)
+//
+// These are the security-critical invariants: a confined verdict can never become
+// a drop to uid 0 (root) or a negative/zero id, and an "unconfined" verdict can
+// never smuggle a uid in. (Name/Source are audit metadata, not gating — the drop
+// is governed by the ids.) The drop path (applyAccountCredential) calls this
+// before applying any credential, so a botched ResolvedAccount fails CLOSED.
+func (r ResolvedAccount) Validate() error {
+	if !r.Confined {
+		if r.UID != 0 || r.GID != 0 {
+			return fmt.Errorf("privsep: inconsistent ResolvedAccount: unconfined but carries uid:gid %d:%d", r.UID, r.GID)
+		}
+		return nil
+	}
+	if r.UID <= 0 || r.GID <= 0 {
+		return fmt.Errorf("privsep: refusing privilege drop to uid:gid %d:%d — must be >0 (never root)", r.UID, r.GID)
+	}
+	return nil
+}

@@ -113,3 +113,34 @@ func TestResolveAccountDefault(t *testing.T) {
 		}
 	})
 }
+
+// #100: ResolvedAccount.Validate is the resolve→enforce seam guard. A malformed
+// value (especially confined-but-uid-0) must fail CLOSED, never become a root drop.
+func TestResolvedAccountValidate(t *testing.T) {
+	cases := []struct {
+		name string
+		r    ResolvedAccount
+		ok   bool
+	}{
+		{"valid confined granted", ResolvedAccount{Name: "default", UID: 1001, GID: 1001, StateDir: "/w", Confined: true, Source: AccountGranted}, true},
+		{"valid downgraded", ResolvedAccount{Name: "untrusted", UID: 1002, GID: 1002, Confined: true, Source: AccountDowngraded}, true},
+		{"valid unconfined", ResolvedAccount{Source: AccountUnconfined}, true},
+		{"zero value = consistent unconfined", ResolvedAccount{}, true},
+		{"confined uid 0 (root) rejected", ResolvedAccount{Name: "x", UID: 0, GID: 1001, Confined: true, Source: AccountGranted}, false},
+		{"confined gid 0 rejected", ResolvedAccount{Name: "x", UID: 1001, GID: 0, Confined: true, Source: AccountGranted}, false},
+		{"confined negative uid rejected", ResolvedAccount{Name: "x", UID: -1, GID: 1, Confined: true, Source: AccountGranted}, false},
+		{"confined valid w/o name/source (ids govern, not metadata)", ResolvedAccount{UID: 1001, GID: 1001, Confined: true}, true},
+		{"unconfined carrying identity rejected", ResolvedAccount{UID: 1001, Source: AccountUnconfined}, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := tc.r.Validate()
+			if tc.ok && err != nil {
+				t.Fatalf("want valid, got error: %v", err)
+			}
+			if !tc.ok && err == nil {
+				t.Fatalf("want error, got nil")
+			}
+		})
+	}
+}
