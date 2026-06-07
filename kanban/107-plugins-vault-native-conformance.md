@@ -75,8 +75,11 @@ in config/env), running as uid 1001, attested, `requires_vault: true` (fail-clos
 reusable recipe per secret-holding plugin:
 
 1. **Plugin code:** read the stdin `secrets` map (the gateway delivers composed secrets under a
-   separate `secrets` field, NOT merged into config). e.g. `resolve_webhook_url(config, secrets)` →
-   `secrets["discord_webhook_url"] or config.get("webhook_url")` (vault first, config fallback).
+   separate `secrets` field, NOT merged into config). Vault first, config fallback.
+   **Reusable-base generalization:** name the vault secret via a CONFIG KEY so a shared base stays
+   generic across instances — agent_handshake reads `secrets[config["salt_secret"]]`, github_repo_sync
+   reads `secrets[config["token_secret"]]`. (discord_notify hardcodes `secrets["discord_webhook_url"]`
+   since its base is discord-specific.) Each instance's config names its own vault secret; base unchanged.
 2. **Manifest:** move the secret-bearing config key from `required` → optional (`config_keys.required: []`)
    — else the validator demands it in config (defeating vault delivery).
 3. **Vault:** register a **kebab** principal == the plugin instance name; grant/import the secret to it.
@@ -85,6 +88,12 @@ reusable recipe per secret-holding plugin:
 5. **Deploy:** relocate plugin code → /opt, `config lock` + `plugin lock --all` (re-attest), restart.
 
 Result: secret over stdin ✓, real downstream call ✓, dropped to uid 1001 ✓, fail-closed on misconfig ✓.
-Replicating to: ap_canary (salt), github_repo_sync (config.github_token), + the notify clones (share
-the now-vault-native discord_notify base). NOTE: discord_notify run.py + manifest changed in the
-EXTERNAL ductile-plugins repo — needs its own commit there (ductile-admin checkpointing).
+
+**Status (2026-06-07):** 2 keyed plugins vault-native + LIVE on the enforced gateway —
+`discord_notify` (→ principal `discord-notify`, posts with webhook from vault) and `ap_canary`
+(→ `ap-canary`, salt from vault via the `salt_secret` generalization). Standardized on the B form
+(SNAKE instance name + `vault_principal: <kebab>` + `requires_vault: true` — preserves pipeline refs).
+**Fail-closed PROVEN LIVE:** flipping a `vault_principal` to a bogus name → "requires vault secrets but
+principal unknown" → spawn REFUSED (not a silent secret-less run) → reverted → healthy. #108 gate is
+real on the e2ccd96/3774150 binary. Plugin code committed to ductile-plugins @ a1934e5.
+`github_repo_sync` + the git/uv plugins are recipe-correct but RUNTIME-blocked under enforce → [[109-uv-shebang-plugins-under-privsep]].
