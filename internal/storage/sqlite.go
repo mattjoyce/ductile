@@ -200,33 +200,15 @@ LIMIT 1;
 }
 
 func sqliteColumnExists(ctx context.Context, db *sql.DB, table, column string) (bool, error) {
-	cols, err := db.QueryContext(ctx, fmt.Sprintf("PRAGMA table_info(%s);", table))
+	var name string
+	err := db.QueryRowContext(ctx, "SELECT name FROM pragma_table_info(?) WHERE name = ? LIMIT 1;", table, column).Scan(&name)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
 	if err != nil {
 		return false, err
 	}
-	defer func() { _ = cols.Close() }()
-
-	for cols.Next() {
-		// cid, name, type, notnull, dflt_value, pk
-		var (
-			cid       int
-			name      string
-			typ       string
-			notnull   int
-			dfltValue any
-			pk        int
-		)
-		if err := cols.Scan(&cid, &name, &typ, &notnull, &dfltValue, &pk); err != nil {
-			return false, err
-		}
-		if name == column {
-			return true, nil
-		}
-	}
-	if err := cols.Err(); err != nil {
-		return false, err
-	}
-	return false, nil
+	return true, nil
 }
 
 func sqliteObjectExists(ctx context.Context, db *sql.DB, objectType, name string) (bool, error) {
