@@ -1,0 +1,4 @@
+## 2025-02-23 - Prevent SQL Injection via `PRAGMA` interpolation
+**Vulnerability:** A SQL injection vulnerability existed in `internal/storage/sqlite.go` where `fmt.Sprintf("PRAGMA table_info(%s);", table)` was used to dynamically query table schema information. An attacker could potentially manipulate the `table` string to execute arbitrary SQLite code.
+**Learning:** `PRAGMA` statements are difficult to parameterize correctly using traditional `?` placeholders, which is why string interpolation was initially used.
+**Prevention:** Instead of string interpolation in `PRAGMA` statements, use the parameterized table-valued function `pragma_table_info(?)` with a `SELECT` statement: `SELECT ... FROM pragma_table_info(?);` to safely query schema metadata and prevent SQL injection. Note that "notnull" is a reserved keyword and must be enclosed in double quotes when selected.

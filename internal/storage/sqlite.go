@@ -200,7 +200,7 @@ LIMIT 1;
 }
 
 func sqliteColumnExists(ctx context.Context, db *sql.DB, table, column string) (bool, error) {
-	cols, err := db.QueryContext(ctx, fmt.Sprintf("PRAGMA table_info(%s);", table))
+	cols, err := db.QueryContext(ctx, `SELECT cid, name, type, "notnull", dflt_value, pk FROM pragma_table_info(?);`, table)
 	if err != nil {
 		return false, err
 	}
