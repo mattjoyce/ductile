@@ -1,6 +1,6 @@
 ---
 id: 111
-status: todo
+status: done
 priority: Medium
 blocked_by: []
 tags: [privsep, deployment, ergonomics, secret-zero, boot-gate]
@@ -193,3 +193,15 @@ C state_dir rebase. See `docs/adr/credentialed-runtime-contract.md`.
   (8) scan permission-errors were swallowed as clean → now inconclusive. Seam unexported. 21 unit tests
   green; build/vet/cross-compile clean. **Still uncommitted** — sole remaining gate is the Dell e2e run.
   (Accepted follow-up: collapse the 5-method `osLookup` to one deep `ProbeSideDoors` — design, not a hole.) (by @assistant)
+- 2026-06-08: **DELL e2e PROVEN — PUSHED (commit `6f21c19`, branch `feat/privsep-uid-separation`).** Ran
+  the REAL `osLookup` against real `/etc/group` + real `sudo` on the Dell (x86, Ubuntu 24.04). Built the
+  `delle2e` test binary in `golang:1.25` (host net), ran it on the host as `admin` (NOPASSWD). Three real
+  accounts: `sd_docker` (uid 1005, ∈ `docker` group, no sudo), `sd_clean` (uid 1004, no groups, no sudo).
+  Results — **(1) confined `sd_docker` + strict → FAIL CLOSED** (real docker-group detected →
+  `root_groups=docker`, ERROR log, boot-refusal error); **(2) confined `sd_clean` + strict → boots**
+  (real `sudo -l` "not allowed" parsed as conclusive-clean, so NOT inconclusive); **(3) credentialed
+  `sd_docker` + strict → WARN + proceeds** (informed consent). All PASS. Proves docker-group detection,
+  the real-sudo clean-negative parse, and the tier-aware fail-closed/warn-proceed reactor on hardware.
+  Cleanup: test accounts + throwaway clone removed, `docker` group + matt untouched, Dell powered off.
+  **Card DONE.** Residual TODOs above are obsolete (root-tier rejected) or covered (postures → #112 doc).
+  Merge-to-main rides with the privsep epic PR #118. (by @assistant)
