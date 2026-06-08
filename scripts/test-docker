@@ -11,6 +11,9 @@ if [[ -x "$ROOT_DIR/scripts/test-docker-runner" ]]; then
   exec "$ROOT_DIR/scripts/test-docker-runner" "$FIXTURE"
 fi
 
-echo "==> test-docker: fixture-driven Docker harness not implemented yet"
-echo "==> requested fixture: $FIXTURE"
-echo "==> see docs/TESTING.md for the agreed target design"
+# Fallback: the runner should always be present and executable. If it is not,
+# the harness is misconfigured (e.g. lost +x on checkout) rather than unbuilt.
+echo "==> test-docker: ERROR — scripts/test-docker-runner missing or not executable" >&2
+echo "==> requested fixture: $FIXTURE" >&2
+echo "==> see docs/TESTING.md for the harness design" >&2
+exit 1

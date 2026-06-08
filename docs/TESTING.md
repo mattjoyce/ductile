@@ -1,6 +1,14 @@
 # Testing Guide
 
-This document defines the target-state testing strategy for Ductile. The goal is to preserve developer velocity during normal branch work while adding stronger runtime/system confidence gates before merge and after changes land on `main`.
+This document defines the testing strategy for Ductile. The goal is to preserve developer velocity during normal branch work while adding stronger runtime/system confidence gates before merge and after changes land on `main`.
+
+**Status (2026-06): the strategy below is implemented.** The fast suite, the canonical
+`scripts/test-*`, the fixture-driven Docker harness (`scripts/test-docker-runner`), and the
+CI stages all exist. The live Docker fixtures are tiered — a PR gate plus a nightly full
+sweep — and the authoritative, always-current fixture list lives in
+[`test/fixtures/docker/README.md`](../test/fixtures/docker/README.md). Sections below that
+read as "should/recommended" describe the design intent the implementation follows; where a
+section once described a smaller "first wave", §9 now reflects the tiered reality.
 
 ---
 
@@ -231,13 +239,22 @@ The Docker-backed harness should follow these principles:
 - **black-box/high-value scenarios**
 - **automatic artifact capture on failure**
 
-### First-wave Docker scenarios
-The first high-value Docker scenarios are:
-- `webhook-ingress`
-- `scheduler-recovery`
-- `api-e2e`
+### Fixture tiers
 
-These are intentionally narrow and complement the fast test suite rather than replacing it.
+The runner auto-discovers every directory under `test/fixtures/docker/`, so the live set is
+whatever is on disk — see [`test/fixtures/docker/README.md`](../test/fixtures/docker/README.md)
+for the authoritative, per-fixture index (do not hand-maintain a duplicate list here). The
+fixtures are gated deliberately:
+
+- **PR gate** (`docker-validation`, every PR/push) — the load-bearing minimum:
+  `webhook-ingress`, `scheduler-recovery`, `api-e2e`, `vault-secret-delivery` (security
+  acceptance), and `sync-terminal-route` (canonical route compilation).
+- **Nightly / on-demand** (`docker-validation-full`, nightly cron + `workflow_dispatch`,
+  and `test-docker all` locally) — runs **every** fixture so the long tail (the routing,
+  watch, and plugin-runtime fixtures) cannot silently rot.
+
+The detailed per-scenario "should verify" blocks below document the highest-value scenarios;
+they are illustrative, not the complete inventory.
 
 #### `webhook-ingress`
 Goal:
@@ -332,15 +349,15 @@ Should verify:
   with a `context.*` predicate is suppressed (absent context evaluates
   to false, no error)
 
-### Deferred wave-2 concerns
-These are valuable, but should not be in the first Docker wave:
-- reload/restart nuance beyond initial recovery scenarios
-- plugin runtime matrix testing
-- multi-hop expansion suites
-- load/stress validation
-- broad config matrix coverage
+### Still deferred
+Most route-runtime and plugin-runtime scenarios now exist as nightly fixtures (see the
+README index). What remains genuinely out of scope for now:
+- load/stress validation (no committed harness; a `test/stress/` scaffold was removed as
+  unwired — reintroduce deliberately if/when a stress tier is wanted)
+- multi-hop route expansion suites beyond the current `if:`/`call:`/`from_plugin:` coverage
+- broad config-matrix coverage
 
-Wave 1 should stay small, high-value, and stable.
+The PR gate stays small, high-value, and stable; breadth lives in the nightly sweep.
 
 ---
 
@@ -467,12 +484,19 @@ Conceptually this means:
 Run full validation on merged trunk:
 - `scripts/test-main`
 
-Initially, `scripts/test-main` should provide at least the same coverage as pre-merge validation.
+`scripts/test-main` provides at least the same coverage as pre-merge validation.
+
+### Nightly full Docker sweep
+A scheduled job (`docker-validation-full`, nightly cron + `workflow_dispatch`) runs
+**every** Docker fixture via `./scripts/test-docker all`. This is non-blocking for PRs; its
+job is to catch breakage in the fixtures outside the PR gate before they rot. Failures are
+trunk-health issues — triage promptly and use the uploaded artifacts.
 
 ### CI job visibility
-CI should expose at least separate visible checks for:
+CI exposes separate visible checks for:
 - fast validation
-- Docker validation
+- Docker validation (PR gate)
+- Docker validation — full (nightly / on-demand)
 
 This makes failures easier to diagnose and rerun.
 

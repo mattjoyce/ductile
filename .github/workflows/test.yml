@@ -5,6 +5,9 @@ on:
   push:
     branches:
       - main
+  schedule:
+    # Nightly full Docker sweep (all fixtures) — 14:00 UTC ≈ 00:00 AEST.
+    - cron: "0 14 * * *"
   workflow_dispatch:
 
 jobs:
@@ -38,9 +41,12 @@ jobs:
           version: latest
           install-mode: goinstall
 
+  # PR / push gate — the load-bearing minimum (fast feedback). The nightly
+  # docker-validation-full job covers the long tail of fixtures.
   docker-validation:
     runs-on: ubuntu-latest
     needs: fast-validation
+    if: github.event_name != 'schedule'
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -61,11 +67,44 @@ jobs:
           ./scripts/test-docker api-e2e
           ./scripts/test-docker scheduler-recovery
           ./scripts/test-docker webhook-ingress
+          ./scripts/test-docker vault-secret-delivery
+          ./scripts/test-docker sync-terminal-route
 
       - name: Upload Docker test artifacts
         if: failure()
         uses: actions/upload-artifact@v4
         with:
           name: docker-test-artifacts
+          path: test-artifacts/docker
+          if-no-files-found: ignore
+
+  # Nightly (and on-demand) full sweep — runs every Docker fixture so the
+  # fixtures outside the PR gate cannot silently rot. Non-blocking for PRs.
+  docker-validation-full:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Install jq and sqlite3
+        run: sudo apt-get update && sudo apt-get install -y jq sqlite3
+
+      - name: Build ductile binary
+        run: make build
+
+      - name: Run all Docker fixtures
+        run: ./scripts/test-docker all
+
+      - name: Upload Docker test artifacts
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: docker-test-artifacts-full
           path: test-artifacts/docker
           if-no-files-found: ignore

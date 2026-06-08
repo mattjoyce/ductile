@@ -138,7 +138,7 @@ ductile/
 ├── plugins/            Bundled reference plugins
 ├── schemas/            JSON schemas for config files
 ├── scripts/            Test orchestration, version, migrations
-├── test/               Fixtures (test/fixtures/) and stress harness (test/stress/)
+├── test/               Docker/system fixtures (test/fixtures/docker/)
 └── docs/               Canonical documentation
 ```
 
