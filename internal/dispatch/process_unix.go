@@ -50,6 +50,15 @@ func configurePluginProcess(cmd *exec.Cmd) {
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 }
 
+// isExecTextBusy reports whether a cmd.Start() error is ETXTBSY ("text file
+// busy") — the entrypoint was momentarily held open for writing when execve ran.
+// This happens when a concurrent fork inherits a writer fd to a just-written or
+// just-updated plugin file (golang.org/issue/22315). The execve never ran, so the
+// process did not start and the caller may safely retry the spawn.
+func isExecTextBusy(err error) bool {
+	return errors.Is(err, syscall.ETXTBSY)
+}
+
 // applyAccountCredential composes the privsep uid/gid drop onto an already-
 // configured command (PrivSec ADR §3 Layer 1b; tracer #92). It is deliberately
 // separate from configurePluginProcess: that sets process-group lifecycle (*how*
