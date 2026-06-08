@@ -1,6 +1,6 @@
 ---
 id: 114
-status: todo
+status: done
 priority: High
 blocked_by: []
 tags: [docs, skills, vault, privsep, api, v1.0, post-merge-drift]
@@ -91,3 +91,7 @@ now rejects at boot, or a plugin that face-plants under enforce.
   secret API by design, so item 3 documents the posture without implying a GET. (by @assistant)
 </content>
 </invoke>
+- 2026-06-08: **CLOSED.** The flat-wrong must-fix (config.md inline-token example teaching
+  now-rejected syntax) was corrected at filing (`6bf02f4`); the confined-runtime-contract reference
+  resolves via the canonical ADR link. No ship-blocking doc drift remains. Any further confined-env
+  cross-link is v1.x polish. (by @assistant)
