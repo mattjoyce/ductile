@@ -50,6 +50,11 @@ func (v *ConfigValidator) ValidateCrossReferences() error {
 		return err
 	}
 
+	// Validate API auth tokens reference valid vault secrets.
+	if err := v.validateAPITokens(); err != nil {
+		return err
+	}
+
 	// Validate plugin configs with _ref suffixes reference valid tokens
 	if err := v.validatePluginTokenRefs(); err != nil {
 		return err
@@ -135,6 +140,27 @@ func (v *ConfigValidator) validateRelay() error {
 		}
 	}
 
+	return nil
+}
+
+// validateAPITokens checks that each API auth token is vault-only (#94, ADR §8.5):
+// a literal token value is rejected outright and secret_ref is mandatory and must
+// resolve. Mirrors the always-run validate() and ResolveAPITokens so the
+// cross-reference pass gives the precise error rather than deferring to load.
+// Resolution failure is warn-when-blind (the daemon, holding the key, is the
+// authoritative check — see checkSecretRef).
+func (v *ConfigValidator) validateAPITokens() error {
+	for i, token := range v.config.API.Auth.Tokens {
+		if token.Token != "" {
+			return fmt.Errorf("api.auth.tokens[%d]: a literal token value is not allowed — API secrets live in the vault; use secret_ref (ADR §8.5, #94)", i)
+		}
+		if strings.TrimSpace(token.SecretRef) == "" {
+			return fmt.Errorf("api.auth.tokens[%d]: secret_ref is required (API tokens are vault-only, #94)", i)
+		}
+		if err := v.checkSecretRef(token.SecretRef, fmt.Sprintf("api.auth.tokens[%d]", i)); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 

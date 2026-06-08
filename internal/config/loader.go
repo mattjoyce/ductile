@@ -771,15 +771,15 @@ func validate(cfg *Config) error {
 			return fmt.Errorf("api.auth.tokens must be configured when API is enabled")
 		}
 		for i, tok := range cfg.API.Auth.Tokens {
-			if tok.Token == "" {
-				return fmt.Errorf("api.auth.tokens[%d].token is required", i)
+			// API bearer tokens are secrets and are vault-only (#94, ADR §8.5).
+			// A literal token value — including a ${ENV} reference — is rejected:
+			// there is no YAML path for an API secret. secret_ref is mandatory and
+			// resolves from the vault at boot (ResolveAPITokens, fail-closed).
+			if tok.Token != "" {
+				return fmt.Errorf("api.auth.tokens[%d]: a literal token value is not allowed — API secrets live in the vault; use secret_ref (ADR §8.5, #94)", i)
 			}
-			if envVarPattern.MatchString(tok.Token) {
-				matches := envVarPattern.FindStringSubmatch(tok.Token)
-				if len(matches) > 1 {
-					return fmt.Errorf("api.auth.tokens[%d].token: environment variable ${%s} is not set", i, matches[1])
-				}
-				return fmt.Errorf("api.auth.tokens[%d].token: unresolved environment variable", i)
+			if tok.SecretRef == "" {
+				return fmt.Errorf("api.auth.tokens[%d]: secret_ref is required (API tokens are vault-only, #94)", i)
 			}
 			// Empty scope list is valid: token authenticates but passes only
 			// scope-free endpoints (e.g. discovery). All operation endpoints

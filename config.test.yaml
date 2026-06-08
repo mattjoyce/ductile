@@ -18,9 +18,9 @@ api:
   listen: "0.0.0.0:8080"       # Listen on all interfaces in container
   auth:
     tokens:
-      - token: ${DUCTILE_TOKEN_ADMIN}
+      - secret_ref: ductile-api-admin
         scopes: ["*"]
-      - token: ${DUCTILE_TOKEN_READONLY}
+      - secret_ref: ductile-api-readonly
         scopes: ["plugin:ro", "job:ro", "state:ro"]
 
 plugin_roots:

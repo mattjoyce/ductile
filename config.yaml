@@ -17,12 +17,13 @@ api:
   enabled: true                # Enable/disable API server
   listen: "localhost:8080"     # Listen address
   auth:
-    # Legacy single token (admin/full access):
-    # api_key: ${API_KEY}
-    #
-    # Scoped tokens:
+    # API bearer tokens are secrets — they live in the vault and are referenced
+    # by name (ADR §8.5, #94). A literal token: value is rejected at boot.
+    # Provision once:
+    #   ductile vault register-principal --name ductile-api --kind consumer
+    #   printf '%s' "$TOKEN" | ductile vault set ductile-api-admin --principal ductile-api
     tokens:
-      - token: ${DUCTILE_TOKEN_ADMIN}
+      - secret_ref: ductile-api-admin
         scopes: ["*"]
 
 plugin_roots:

@@ -320,11 +320,16 @@
     },
     "APIToken": {
       "type": "object",
-      "description": "A bearer token with scoped permissions.",
+      "description": "A bearer token with scoped permissions. Provide exactly one of token or secret_ref.",
       "properties": {
         "token": {
           "type": "string",
-          "description": "Bearer token value (use ${ENV_VAR} for secrets).",
+          "description": "Literal bearer token value (legacy; prefer secret_ref). Migration warns at load.",
+          "minLength": 1
+        },
+        "secret_ref": {
+          "type": "string",
+          "description": "Name of a vault secret holding the bearer token (ADR §8.5 — if it's a secret, it's in the vault).",
           "minLength": 1
         },
         "scopes": {
