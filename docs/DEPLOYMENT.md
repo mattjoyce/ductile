@@ -524,7 +524,7 @@ covers only the deploy-specific theory.
 ### Order at a glance
 
 backup → `vault_audit` migration → age key + genesis → config reconcile →
-import `tokens.yaml` → **`config lock` + `plugin lock --all`** → cutover → verify.
+seed secrets offline (`vault set --vault --key`) → **`config lock` + `plugin lock --all`** → cutover → verify.
 
 **The two steps operators miss — both fail loud, both cost a crash-loop:**
 
@@ -575,9 +575,17 @@ chmod 600 ~/.config/secrets/ductile/genesis.out # capture the token from here; i
 #      service.plugin_env_passthrough: [ ... ]   # only env names a plugin actually reads
 "$NEW" config check --config "$CFG"             # MUST be clean — resolve every "ignored config key"
 
-# 5. Migrate existing tokens.yaml secrets into the vault and prove parity.
-#    Use an ABSOLUTE --tokens path. tokens.yaml stays as a coexistence shim.
-"$NEW" vault import --config "$CFG" --tokens "$CFG/tokens.yaml"   # add --resolve-env only to freeze ${ENV}
+# 5. Seed every gateway secret into the vault BEFORE first boot. The daemon is the
+#    sole writer WHILE RUNNING, so the genesis seed is offline & key-touching
+#    (daemon stopped): `vault set --vault --key` (value from stdin, never argv).
+#    This is what lets an API-only secret_ref (#94) resolve at boot (#128).
+#    The API bearer token MUST be seeded — grant it to the gateway principal `core`:
+printf '%s' "$DUCTILE_API_TOKEN" | "$NEW" vault set \
+  --vault "$CFG/vault.age" --key "$KEY" --name ductile-api-admin --principal core
+#    Repeat one `vault set --vault --key --name <n> --principal <p>` per secret your
+#    config references via secret_ref (webhook HMAC secrets, relay peers, …). There
+#    is no bulk `vault import` — seed each secret_ref the config names. (`tokens.yaml`
+#    is retired, epic #48; it is not a runtime fallback.)
 
 # 6. Seal BOTH: config files AND plugin attestation. Attestation is keyed by the vault
 #    nonce, so genesis (step 3) must already be done.

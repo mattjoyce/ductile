@@ -85,6 +85,9 @@ func printVaultNounHelp(w *os.File) {
 	_, _ = fmt.Fprintln(w, "  Common flags: --api-url, --token (or DUCTILE_VAULT_TOKEN), --name")
 	_, _ = fmt.Fprintln(w, "  register-principal Register a deliver-to principal                     [--kind plugin|consumer|gateway]")
 	_, _ = fmt.Fprintln(w, "  set                Set a secret (value from stdin, never argv)         [--pattern manual|auto --principal a,b]")
+	_, _ = fmt.Fprintln(w, "                     Offline genesis seed (daemon STOPPED, holds the age key) to put a")
+	_, _ = fmt.Fprintln(w, "                     vault-only secret in place BEFORE first boot — e.g. the API bearer")
+	_, _ = fmt.Fprintln(w, "                     token (#94/#128):  [--vault <path> --key <path> --principal core]")
 	_, _ = fmt.Fprintln(w, "  roll               Roll a secret's value (manual: stdin; auto: minted)")
 	_, _ = fmt.Fprintln(w, "  revoke             Revoke a secret (terminal; clears the value)")
 	_, _ = fmt.Fprintln(w, "  revoke-principal   Revoke a principal (its secrets stop being delivered)")
@@ -395,6 +398,11 @@ func runVaultSet(args []string) int {
 	fs := flag.NewFlagSet("vault set", flag.ContinueOnError)
 	apiURL := fs.String("api-url", "", "Daemon API base URL (e.g. http://127.0.0.1:8080)")
 	token := fs.String("token", "", "Vault admin token (or set DUCTILE_VAULT_TOKEN)")
+	// Offline (genesis seed) mode: hold the age key and write directly, daemon
+	// STOPPED. Use to seed a gateway secret (e.g. the API bearer token) into the
+	// vault BEFORE first boot, so a vault-only secret_ref (#94) resolves (#128).
+	vaultPath := fs.String("vault", "", "Offline mode: path to the vault blob (with --key, daemon stopped)")
+	keyPath := fs.String("key", "", "Offline mode: path to the age key (with --vault, daemon stopped)")
 	name := fs.String("name", "", "Secret name")
 	// Empty default: the daemon defaults pattern to manual on CREATE and leaves it
 	// unchanged on UPDATE — so a metadata edit can't silently flip an auto secret.
@@ -434,12 +442,58 @@ func runVaultSet(args []string) int {
 		principals = &list
 	})
 
+	// Route: offline (key-touching, daemon stopped) vs daemon API (sole writer).
+	if *vaultPath != "" || *keyPath != "" {
+		if strings.TrimSpace(*apiURL) != "" {
+			fmt.Fprintln(os.Stderr, "vault set: choose one mode — offline (--vault + --key) OR daemon (--api-url), not both")
+			return 1
+		}
+		if *vaultPath == "" || *keyPath == "" {
+			fmt.Fprintln(os.Stderr, "vault set: offline mode requires BOTH --vault and --key (the daemon must be stopped)")
+			return 1
+		}
+		var grants []string
+		if principals != nil {
+			grants = *principals
+		}
+		if err := doVaultSetOffline(*vaultPath, *keyPath, *name, value, grants, *pattern); err != nil {
+			fmt.Fprintf(os.Stderr, "vault set: %v\n", err)
+			return 1
+		}
+		fmt.Fprintf(os.Stderr, "Set secret %q offline (local age key-holder; daemon must be stopped).\n", *name)
+		return 0
+	}
+
 	if err := doVaultSet(*apiURL, tok, *name, value, principals, *pattern); err != nil {
 		fmt.Fprintf(os.Stderr, "vault set: %v\n", err)
 		return 1
 	}
 	fmt.Fprintf(os.Stderr, "Set secret %q via the daemon.\n", *name)
 	return 0
+}
+
+// doVaultSetOffline sets a secret by holding the age key directly, with NO
+// running daemon — the genesis seed path (#128). It exists to break the
+// vault-native bootstrap cycle: an API bearer token must be a vault secret_ref
+// resolved at boot (#94), but the live `vault set` goes through the daemon, which
+// cannot boot until that secret exists. Like init/rotate-key/rotate-admin-token,
+// this is a local, key-touching op — the daemon must be STOPPED (it is the sole
+// writer while running). `v.SetSecret` validates-then-persists atomically; if the
+// daemon IS running, its external-modification backstop (ErrVaultModifiedExternally)
+// catches the divergence on the next save.
+func doVaultSetOffline(vaultPath, keyPath, name, value string, grants []string, pattern string) error {
+	kr, err := secrets.LoadKeyringFromFile(keyPath)
+	if err != nil {
+		return fmt.Errorf("load key %s: %w", keyPath, err)
+	}
+	v, err := vault.Load(vaultPath, kr)
+	if err != nil {
+		return fmt.Errorf("load vault %s: %w", vaultPath, err)
+	}
+	if pattern == "" {
+		pattern = vault.PatternManual
+	}
+	return v.SetSecret(name, value, grants, pattern, time.Now())
 }
 
 // doVaultSet POSTs a secret to the daemon's /vault/secret endpoint. principals is

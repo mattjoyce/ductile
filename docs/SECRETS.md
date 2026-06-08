@@ -203,8 +203,19 @@ That splits the CLI into two classes (see `ductile vault --help`):
 
 ```bash
 # 1. Genesis: create a new vault. Seeds the core principal, the fingerprint nonce,
-#    and a one-time admin token (printed once — store it; it is the API credential).
+#    and a one-time admin token (printed once — store it; it is the vault management
+#    credential — DUCTILE_VAULT_TOKEN — distinct from API bearer tokens below).
 ductile vault init --vault vault.age --key ~/.config/ductile/age.key
+
+# 1b. Seed the gateway's OWN secrets (the API bearer token, webhook HMAC secrets)
+#     OFFLINE, before first boot. API bearer tokens are vault-only and resolved
+#     fail-closed at boot (#94), but the daemon is the sole writer only WHILE
+#     RUNNING — so the bootstrap seed is local & key-touching (daemon stopped),
+#     mirroring init/rotate-key. Grant to `core` so it lands in the gateway's
+#     load-time view, letting `api.auth.tokens[].secret_ref` resolve at boot (#128):
+printf '%s' "$API_BEARER_TOKEN" | ductile vault set \
+  --vault vault.age --key ~/.config/ductile/age.key --name ductile-api-admin --principal core
+#     The daemon can now boot. Plugin secrets (below) go through the running daemon.
 
 # 2. Register a plugin as a deliver-to principal.
 ductile vault register-principal --api-url http://127.0.0.1:8080 \
