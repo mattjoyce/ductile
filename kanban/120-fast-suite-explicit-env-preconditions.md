@@ -1,6 +1,6 @@
 ---
 id: 120
-status: todo
+status: doing
 priority: Normal
 tags: [testing, fast-tier, preconditions, privsep]
 ---
@@ -30,3 +30,11 @@ an explicit, named precondition (Lamport: state the assumption or skip with it n
 ## Done when
 `go test ./...` is green as root AND non-root (skips, never false failures), each skip naming its
 assumption. The ETXTBSY flake is already handled separately (#115 / PR #123).
+
+## Progress
+- 2026-06-08 (PR #126): **euid guard DONE.** `requireWritablePermsEnforced`
+  (`internal/vault/preconditions_test.go`) `t.Skip`s the two chmod-0500 persist-failure tests under
+  euid 0 with the assumption named; TESTING.md §2 now points at it instead of describing folklore.
+- **Remaining:** the `bash`/`python3` named-skip guards on the `internal/e2e` / `internal/dispatch`
+  exec tests. (Both binaries exist on the Mac + Dell, so these don't false-fail here yet — lower
+  priority; do when curating the system tier or hardening CI images.)

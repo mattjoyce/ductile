@@ -1,6 +1,6 @@
 ---
 id: 119
-status: doing
+status: done
 priority: High
 tags: [testing, boot, fail-closed, security, characterization, trust]
 ---

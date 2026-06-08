@@ -1,6 +1,6 @@
 ---
 id: 117
-status: todo
+status: doing
 priority: High
 tags: [testing, queue, state-machine, invariants, fast-tier]
 ---
@@ -34,6 +34,15 @@ as a table test, plus property tests for the named invariants:
 - A `(from, event, to)` transition table exists as a checked artifact and the suite asserts it.
 - Crash-recovery property test (enqueue → force-orphan `running` → recover → `queued`, `attempt+1`)
   passes in-process with no Docker.
+
+## Progress
+- 2026-06-08: **suite LANDED** in `internal/queue/statemachine_test.go` (PR #126). `legalTransitions`
+  is the written-down `(from,event,to)` artifact; `TestQueueLegalTransitionsHoldInStore` drives every
+  edge through the real store; `TestQueueTransitionRelationIsWellFormed` asserts reachable + absorbing
+  + no dead-ends; `TestQueueCrashRecoveryRequeuesOrphanedRunning` proves orphaned `running` → `queued`,
+  `attempt+1`, re-claimable; `timed_out` distinct from `failed`; `Complete` rejects non-terminal target.
+  In-process, temp SQLite, no Docker. Attempt-bounding *decision* stays covered by existing
+  `internal/dispatch/retry_policy_test.go` (not duplicated). Merge when #126 fast-validation green.
 
 ## Notes
 Tracer bullet for the whole redesign (Lamport): `internal/queue/statemachine_test.go`. When green,
