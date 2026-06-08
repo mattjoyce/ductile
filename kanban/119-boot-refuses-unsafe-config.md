@@ -31,6 +31,14 @@ Smallest possible slice — no Docker, no fixture rebuild.
   being legible (field name dropped, wrong stream, zero exit).
 - Runs in the fast tier (no Docker).
 
+## Progress
+- 2026-06-08: **boot-seam characterization LANDED** (PR #125, `cmd/ductile/boot_failclosed_test.go`).
+  `TestBootRejectsLiteralAPIToken` drives the real seam (`config.LoadWithVault` = what `system start`
+  calls) and asserts fail-closed + legibility (names `api.auth.tokens`, points at `secret_ref`);
+  `TestBootAcceptsSecretRefAPIToken` proves the rule discriminates. Fast tier, no Docker.
+- **Remaining:** the `${ENV}`-token variant (env-sourced literal still outside the vault); and the
+  live `boot-refuses-bad-config` system fixture once the tier is curated ([[118]]).
+
 ## Notes
 Feeds the `boot-refuses-bad-config` system fixture in [[118-system-tier-curate-trust-property-fixtures]]
 and the fail-closed invariant in [[117-queue-state-machine-invariant-suite]]. **Started 2026-06-08.**
