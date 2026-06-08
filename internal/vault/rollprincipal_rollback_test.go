@@ -10,6 +10,7 @@ import (
 // atomic — when the persist fails after rolling secrets in memory, the model is
 // restored, so no partial roll is left resident (the value stays at its original).
 func TestRollPrincipalRollsBackOnSaveFailure(t *testing.T) {
+	requireWritablePermsEnforced(t)
 	v := savedVault(t)
 	if err := v.RegisterPrincipal("rollerx", KindPlugin); err != nil {
 		t.Fatalf("register: %v", err)
