@@ -143,23 +143,22 @@ func (v *ConfigValidator) validateRelay() error {
 	return nil
 }
 
-// validateAPITokens checks that each API auth token names exactly one credential
-// source and that a secret_ref resolves against the vault. Mirrors the
-// webhook/relay secret_ref checks; resolution failure is warn-when-blind (the
-// daemon, holding the key, is the authoritative check — see checkSecretRef).
+// validateAPITokens checks that each API auth token is vault-only (#94, ADR §8.5):
+// a literal token value is rejected outright and secret_ref is mandatory and must
+// resolve. Mirrors the always-run validate() and ResolveAPITokens so the
+// cross-reference pass gives the precise error rather than deferring to load.
+// Resolution failure is warn-when-blind (the daemon, holding the key, is the
+// authoritative check — see checkSecretRef).
 func (v *ConfigValidator) validateAPITokens() error {
 	for i, token := range v.config.API.Auth.Tokens {
-		hasRef := strings.TrimSpace(token.SecretRef) != ""
-		hasLiteral := token.Token != ""
-		switch {
-		case hasRef && hasLiteral:
-			return fmt.Errorf("api.auth.tokens[%d]: set exactly one of token or secret_ref, not both", i)
-		case !hasRef && !hasLiteral:
-			return fmt.Errorf("api.auth.tokens[%d]: must set token or secret_ref", i)
-		case hasRef:
-			if err := v.checkSecretRef(token.SecretRef, fmt.Sprintf("api.auth.tokens[%d]", i)); err != nil {
-				return err
-			}
+		if token.Token != "" {
+			return fmt.Errorf("api.auth.tokens[%d]: a literal token value is not allowed — API secrets live in the vault; use secret_ref (ADR §8.5, #94)", i)
+		}
+		if strings.TrimSpace(token.SecretRef) == "" {
+			return fmt.Errorf("api.auth.tokens[%d]: secret_ref is required (API tokens are vault-only, #94)", i)
+		}
+		if err := v.checkSecretRef(token.SecretRef, fmt.Sprintf("api.auth.tokens[%d]", i)); err != nil {
+			return err
 		}
 	}
 	return nil
