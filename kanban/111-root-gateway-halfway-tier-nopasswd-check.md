@@ -78,10 +78,16 @@ Empirical test (gateway-as-root model, real hardware):
 - ✅ the pushed binary (commit 367c028) runs on x86 Linux
 
 ## TODO
-- [ ] Implement the nopasswd-sudo boot-gate check in Go (alongside `hasDropCapability` /
-      `reconcileAccountFilesystem`) — fail closed on a drop target with passwordless sudo. Handle
-      sudo-not-installed (= safe) and no-such-user. Scope: drop accounts only (root/gateway exempt —
-      root is never a drop target per `Validate`).
+- [x] Implement the tier-aware root-sidedoor boot audit in Go (MacM1, 2026-06-08) — BUILT + TDD-green,
+      NOT yet grilled/Dell-proven/pushed. Expanded beyond nopasswd-sudo to **all four checks** (operator
+      scope call): nopasswd sudo, docker/lxd/incus group, writable secure_path dir, account-writable
+      setuid-root binary. Tier-aware reactor: confined+sidedoor → SECURITY warn (fail-closed only under
+      strict `admission.fail_on_sidedoor`); credentialed+sidedoor → informed-consent warn, always
+      proceeds; default → warn loudly, never bricks. New `OSLookup` interface (testability seam; none
+      existed) + real unix impl + non-POSIX stub; wired into `runtime.go` after `ReconcileAccountFilesystem`.
+      sudo-absent = safe, sudo-undeterminable = surfaced inconclusive, no-such-user handled. Files:
+      `internal/dispatch/sidedoor_audit{,_unix,_other,_test}.go`; `AdmissionConfig.FailOnSideDoor` +
+      strict bundle + JSON schema. 18 table tests green; build clean darwin/linux/windows; vet clean.
 - [ ] Deploy recipe + systemd unit variant (`User=root`) + config example for the tier.
 - [ ] ADR/runbook section positioning the three postures (all-as-me ✗ / root+user-drop ✓ / full privsep ✓✓)
       with the two tradeoffs as the operator's informed accept.
@@ -167,3 +173,23 @@ C state_dir rebase. See `docs/adr/credentialed-runtime-contract.md`.
 - 2026-06-08: NO-ROOT cap-only e2e PASSES — trust-tier substrate proven without root; root hybrid
   dropped; deployment scenarios crystallized (1 full-privsep / 2 cap-only hybrid). Credentialed flavour
   is the sole remaining gateway build. (by @assistant)
+- 2026-06-08: **Sidedoor audit BUILT + TDD-green (MacM1), gates pending.** All four checks + tier-aware
+  fail-closed reactor implemented behind a testable `OSLookup` seam; wired into the boot path; strict
+  knob `admission.fail_on_sidedoor` (+ schema). 18 unit tests pass, build/vet clean (darwin/linux/windows).
+  **NOT pushed** — per the no-push-without-empirical-proof rule, this awaits: (1) the luminary seam grill
+  (Hickey/Liskov/Armstrong/Ousterhout) on the OSLookup boundary + the fail-closed decision, and (2) a
+  Dell e2e run on real hardware (confined+docker-group → strict fail-closed refusal; credentialed+sudo →
+  warn-and-proceed; sudo-absent → safe). Card stays `todo` until grilled, Dell-proven, then merged. (by @assistant)
+- 2026-06-08: **GRILLED + revised (MacM1).** 4-luminary panel (Hickey/Liskov/Armstrong/Ousterhout) =
+  unanimous DO-NOT-SHIP first cut — it found real **fail-open** holes, all now fixed + retested:
+  (1) the tier rule was re-derived from `Home!=""` (a 3rd/5th copy that fails open) → now single-sourced
+  through `configuredAccount(...).Mode` + `Validate()` (the same fix the credentialed grill forced for
+  `mostRestrictedAccount`); (2) an INCONCLUSIVE probe (uncertain sudo / lookup error / no login name /
+  unsupported platform) was silently treated as CLEAN → now first-class: always surfaced, and a CONFINED
+  account that can't be verified **fails closed under strict** ("can't prove the wall = no wall");
+  (3) the non-POSIX stub returned clean → now reports inconclusive (`errProbeUnsupported`), never silent;
+  (4) the boot-time `sudo` exec had no timeout (PAM/LDAP hang = boot DoS) → 4s `CommandContext` +
+  `LC_ALL=C`; (7) the setuid probe missed the parent-dir rename hijack → now composes dir-writability;
+  (8) scan permission-errors were swallowed as clean → now inconclusive. Seam unexported. 21 unit tests
+  green; build/vet/cross-compile clean. **Still uncommitted** — sole remaining gate is the Dell e2e run.
+  (Accepted follow-up: collapse the 5-method `osLookup` to one deep `ProbeSideDoors` — design, not a hole.) (by @assistant)

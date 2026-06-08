@@ -50,7 +50,8 @@ func TestAdmissionPolicyExplicitBlockWins(t *testing.T) {
 }
 
 // TestAdmissionPolicyStrictAliasEnablesAll — the deprecated strict_mode: true
-// alias, with no admission block, turns on all four policies (back-compat).
+// alias, with no admission block, turns on every policy (back-compat). The
+// privsep side-door fail-closed (#111) is a strict gate, so it is included.
 func TestAdmissionPolicyStrictAliasEnablesAll(t *testing.T) {
 	svc := ServiceConfig{StrictMode: true}
 	got := svc.AdmissionPolicy()
@@ -59,6 +60,7 @@ func TestAdmissionPolicyStrictAliasEnablesAll(t *testing.T) {
 		FailOnDrift:           true,
 		ValidateConfigOnBoot:  true,
 		RequireAPIAuth:        true,
+		FailOnSideDoor:        true,
 	}
 	if got != want {
 		t.Fatalf("AdmissionPolicy() = %+v, want all-true %+v", got, want)

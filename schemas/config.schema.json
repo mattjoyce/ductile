@@ -206,7 +206,7 @@
         },
         "strict_mode": {
           "type": "boolean",
-          "description": "DEPRECATED bundled admission switch. strict_mode: true is an alias enabling all four admission policies; prefer an explicit service.admission block. When admission is also set, strict_mode is ignored. P2-10.",
+          "description": "DEPRECATED bundled admission switch. strict_mode: true is an alias enabling all admission policies; prefer an explicit service.admission block. When admission is also set, strict_mode is ignored. P2-10.",
           "deprecated": true,
           "default": false
         },
@@ -251,6 +251,11 @@
         "require_api_auth": {
           "type": "boolean",
           "description": "Reject an enabled API that has no auth tokens configured.",
+          "default": false
+        },
+        "fail_on_sidedoor": {
+          "type": "boolean",
+          "description": "Promote a CONFINED drop account's detected host root side-door (passwordless sudo, docker/lxd/incus group, writable secure_path or setuid-root binary) from a loud boot warning to a boot refusal — the privsep wall is a lie for an account that can escalate to root anyway (#111). Credentialed (trusted) accounts are root-equivalent by design and are never failed closed. Detection is best-effort; the default (false) warns loudly and never bricks a boot.",
           "default": false
         }
       },

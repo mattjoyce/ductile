@@ -670,6 +670,17 @@ func buildRuntime(cfg *config.Config, configPath string, configSource string, re
 			logger.Error("privsep filesystem reconciliation failed", "error", err)
 			return nil, err
 		}
+		// Tier-aware root side-door audit (#111): probe each drop account for a host
+		// root-escalation path (nopasswd sudo, docker/lxd/incus group, writable
+		// secure_path, account-writable setuid-root). A CONFINED account with a
+		// side-door has no real wall — warn loudly, and under strict mode
+		// (admission.fail_on_sidedoor) refuse the boot. A CREDENTIALED account is
+		// root-equivalent by design — informed-consent warn, always proceed.
+		// Detection is best-effort: a false positive never bricks a non-strict boot.
+		if err := dispatch.AuditAccountSideDoors(cfg, cfg.Service.AdmissionPolicy().FailOnSideDoor, logger); err != nil {
+			logger.Error("privsep side-door audit refused startup", "error", err)
+			return nil, err
+		}
 	case len(cfg.Accounts) > 0 || cfg.Service.Unconfined:
 		// Unconfined despite a configured/privileged host is the explicit override —
 		// say so loudly so it can never pass unnoticed.

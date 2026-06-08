@@ -71,8 +71,8 @@ type ServiceConfig struct {
 	// the deprecated StrictMode alias is consulted (see AdmissionPolicy).
 	Admission *AdmissionConfig `yaml:"admission,omitempty"`
 	// StrictMode is the DEPRECATED bundled switch. strict_mode: true is an alias
-	// that enables all four admission policies; prefer the explicit admission
-	// block. Retained for back-compat (a coexistence window, like tokens.yaml).
+	// that enables all admission policies; prefer the explicit admission block.
+	// Retained for back-compat (a coexistence window, like tokens.yaml).
 	StrictMode    bool `yaml:"strict_mode"`
 	AllowSymlinks bool `yaml:"allow_symlinks"`
 	// HookMaxDepth caps the on-hook lifecycle chain depth. A root job that fires
@@ -104,6 +104,12 @@ type AdmissionConfig struct {
 	ValidateConfigOnBoot bool `yaml:"validate_config_on_boot"`
 	// RequireAPIAuth rejects an enabled API that has no auth tokens configured.
 	RequireAPIAuth bool `yaml:"require_api_auth"`
+	// FailOnSideDoor promotes a CONFINED drop account's detected host root
+	// side-door (nopasswd sudo, docker/lxd/incus group, writable secure_path or
+	// setuid-root) from a loud warning to a boot refusal — the privsep wall is a
+	// lie for an account that can escalate anyway (#111). Credentialed (trusted)
+	// accounts are root-equivalent by design and are never failed closed.
+	FailOnSideDoor bool `yaml:"fail_on_sidedoor"`
 }
 
 // AdmissionPolicy resolves the effective admission policy. An explicit admission
@@ -120,6 +126,7 @@ func (s ServiceConfig) AdmissionPolicy() AdmissionConfig {
 			FailOnDrift:           true,
 			ValidateConfigOnBoot:  true,
 			RequireAPIAuth:        true,
+			FailOnSideDoor:        true,
 		}
 	}
 	return AdmissionConfig{}
