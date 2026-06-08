@@ -50,6 +50,11 @@ func (v *ConfigValidator) ValidateCrossReferences() error {
 		return err
 	}
 
+	// Validate API auth tokens reference valid vault secrets.
+	if err := v.validateAPITokens(); err != nil {
+		return err
+	}
+
 	// Validate plugin configs with _ref suffixes reference valid tokens
 	if err := v.validatePluginTokenRefs(); err != nil {
 		return err
@@ -135,6 +140,28 @@ func (v *ConfigValidator) validateRelay() error {
 		}
 	}
 
+	return nil
+}
+
+// validateAPITokens checks that each API auth token names exactly one credential
+// source and that a secret_ref resolves against the vault. Mirrors the
+// webhook/relay secret_ref checks; resolution failure is warn-when-blind (the
+// daemon, holding the key, is the authoritative check — see checkSecretRef).
+func (v *ConfigValidator) validateAPITokens() error {
+	for i, token := range v.config.API.Auth.Tokens {
+		hasRef := strings.TrimSpace(token.SecretRef) != ""
+		hasLiteral := token.Token != ""
+		switch {
+		case hasRef && hasLiteral:
+			return fmt.Errorf("api.auth.tokens[%d]: set exactly one of token or secret_ref, not both", i)
+		case !hasRef && !hasLiteral:
+			return fmt.Errorf("api.auth.tokens[%d]: must set token or secret_ref", i)
+		case hasRef:
+			if err := v.checkSecretRef(token.SecretRef, fmt.Sprintf("api.auth.tokens[%d]", i)); err != nil {
+				return err
+			}
+		}
+	}
 	return nil
 }
 

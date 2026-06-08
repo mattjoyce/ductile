@@ -168,9 +168,22 @@ type APIAuthConfig struct {
 }
 
 // APIToken defines a bearer token and its scopes.
+//
+// The bearer credential comes from EXACTLY ONE of two sources, kept in separate
+// fields so the reference is never conflated with the resolved value (ADR §8.5,
+// card #94):
+//   - SecretRef names a vault secret resolved at load into cfg.ResolvedSecrets —
+//     the preferred form ("if it's a secret, it's in the vault").
+//   - Token is a literal (or ${ENV}) value carried inline — the legacy form,
+//     retained for migration and warned about at load.
+//
+// Resolution (ResolveAPITokens) reads these into a separate ResolvedAPIToken and
+// never writes back here, so provenance — was this a vault ref or a literal? —
+// survives load for the migration warning to act on.
 type APIToken struct {
-	Token  string   `yaml:"token"`
-	Scopes []string `yaml:"scopes"`
+	Token     string   `yaml:"token,omitempty"`
+	SecretRef string   `yaml:"secret_ref,omitempty"`
+	Scopes    []string `yaml:"scopes"`
 }
 
 // AccountConf is the unprivileged OS identity a plugin is dropped to at spawn

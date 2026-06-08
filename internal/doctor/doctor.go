@@ -508,11 +508,14 @@ func (d *Doctor) warnUnusedPlugins(r *Result) {
 func (d *Doctor) warnMissingEnvVars(r *Result) {
 	envVarRe := regexp.MustCompile(`\$\{([A-Z_][A-Z0-9_]*)\}`)
 
-	// Check token values and webhook secrets for unresolved env vars
+	// Check token values and webhook secrets for unresolved env vars. A token
+	// backed by secret_ref legitimately carries no literal value (it resolves
+	// from the vault at boot — card #94), so only an entry with neither a
+	// literal nor a secret_ref is the empty/unresolved-${ENV} smell.
 	for i, token := range d.cfg.API.Auth.Tokens {
-		if token.Token == "" {
+		if token.Token == "" && token.SecretRef == "" {
 			d.addWarning(r, "env_vars", fmt.Sprintf("api.auth.tokens[%d].token", i),
-				"token value is empty (possibly unresolved environment variable)")
+				"token value is empty (possibly unresolved environment variable) and no secret_ref is set")
 		}
 	}
 

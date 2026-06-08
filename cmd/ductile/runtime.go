@@ -723,8 +723,22 @@ func buildRuntime(cfg *config.Config, configPath string, configSource string, re
 	}()
 
 	if cfg.API.Enabled || relayReceiver != nil {
-		tokens := make([]auth.TokenConfig, 0, len(cfg.API.Auth.Tokens))
-		for _, t := range cfg.API.Auth.Tokens {
+		// Resolve secret_ref-backed bearer tokens against the vault projection
+		// before the listener opens. ResolveAPITokens is fail-closed: an
+		// unresolvable or empty secret_ref returns an error here, buildRuntime
+		// aborts, and on reload the previous runtime is restored (the API never
+		// opens — or stays open on its old config — authenticating against an
+		// empty credential). buildRuntime is the named supervisor (card #94).
+		resolvedTokens, tokenWarnings, err := config.ResolveAPITokens(cfg)
+		if err != nil {
+			logger.Error("API token resolution failed", "error", err)
+			return nil, fmt.Errorf("api tokens: %w", err)
+		}
+		for _, w := range tokenWarnings {
+			logger.Warn("config: API token not vault-backed", "detail", w)
+		}
+		tokens := make([]auth.TokenConfig, 0, len(resolvedTokens))
+		for _, t := range resolvedTokens {
 			tokens = append(tokens, auth.TokenConfig{
 				Token:  t.Token,
 				Scopes: t.Scopes,
