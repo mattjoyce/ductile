@@ -71,3 +71,6 @@ test-artifacts/
 
 # Beads / Dolt files (added by bd init)
 .beads-credential-key
+
+# stray pytest cache (plugin tests live in the separate ductile-plugins repo)
+.pytest_cache/

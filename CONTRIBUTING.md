@@ -53,8 +53,8 @@ Ductile uses staged validation. Pick the gate that matches your scope:
 | Pre-merge | `scripts/test-premerge` | Before requesting merge |
 | Main | `scripts/test-main` | Post-merge validation |
 
-Test fixtures for system-level scenarios live in `test/fixtures/docker/`.
-Stress harness lives in `test/stress/`.
+Test fixtures for system-level scenarios live in `test/fixtures/docker/` (see the
+[fixture index](test/fixtures/docker/README.md)).
 
 ---
 
