@@ -128,3 +128,22 @@ admin's observation surfaced the gap.
     (`config.yaml`, `config.test.yaml`, `README.md` off `${DUCTILE_TOKEN_ADMIN}`) and the three-host
     `api.yaml` migration, run on the boxes. The loader fails closed if a `secret_ref` is unprovisioned,
     so provision before cutover. (by @assistant)
+- 2026-06-08: **No new Go code remains — verified against the shipped CLI.** The full recommended
+  path uses commands that already exist (`vault register-principal --kind` accepts
+  `plugin|consumer|gateway`, `vault.go:530`; `vault set --principal` grants a stdin-valued secret,
+  `vault.go:87`; `--pattern auto` daemon-mints). Provisioning runbook:
+  ```bash
+  ductile vault register-principal --name ductile-api --kind consumer
+  printf '%s' "$ADMIN_TOKEN"    | ductile vault set ductile-api-admin    --principal ductile-api
+  printf '%s' "$READONLY_TOKEN" | ductile vault set ductile-api-readonly --principal ductile-api
+  ```
+  ```yaml
+  # api.yaml
+  auth:
+    tokens:
+      - { secret_ref: ductile-api-admin,    scopes: ["*"] }
+      - { secret_ref: ductile-api-readonly, scopes: ["read:jobs"] }
+  ```
+  Everything else left for ThinkPad is config/doc edits (drop `${DUCTILE_TOKEN_ADMIN}`) and the host
+  cutover — no logic. (Only a future `vault mint-api-token --role` convenience would be new code; #94
+  doesn't ask for it.) (by @assistant)
