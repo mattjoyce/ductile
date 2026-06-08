@@ -10,6 +10,10 @@ import (
 
 func configurePluginProcess(cmd *exec.Cmd) {}
 
+// isExecTextBusy is unix-only (ETXTBSY); platforms without it never report a
+// text-file-busy spawn error, so there is nothing to retry.
+func isExecTextBusy(error) bool { return false }
+
 // hasDropCapability is always false on a platform with no Unix uid-drop model, so
 // the boot gate refuses any host that configures accounts here (fail-closed).
 func hasDropCapability() bool { return false }
