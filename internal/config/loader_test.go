@@ -72,6 +72,60 @@ plugins:
 			},
 		},
 		{
+			name: "api token via secret_ref loads (vault resolution deferred to runtime)",
+			yaml: `
+service:
+  tick_interval: 60s
+state:
+  path: ./test.db
+plugin_roots:
+  - ./plugins
+api:
+  enabled: true
+  listen: "localhost:8081"
+  auth:
+    tokens:
+      - secret_ref: ductile-api-admin
+        scopes: ["*"]
+plugins:
+  echo:
+    enabled: true
+`,
+			wantErr: false,
+			checkFn: func(t *testing.T, cfg *Config) {
+				if len(cfg.API.Auth.Tokens) != 1 {
+					t.Fatalf("expected 1 api token, got %d", len(cfg.API.Auth.Tokens))
+				}
+				if cfg.API.Auth.Tokens[0].SecretRef != "ductile-api-admin" {
+					t.Errorf("secret_ref not preserved: %q", cfg.API.Auth.Tokens[0].SecretRef)
+				}
+				if cfg.API.Auth.Tokens[0].Token != "" {
+					t.Errorf("a secret_ref token must not carry a literal Token, got %q", cfg.API.Auth.Tokens[0].Token)
+				}
+			},
+		},
+		{
+			name: "api token with neither token nor secret_ref is rejected at load",
+			yaml: `
+service:
+  tick_interval: 60s
+state:
+  path: ./test.db
+plugin_roots:
+  - ./plugins
+api:
+  enabled: true
+  listen: "localhost:8081"
+  auth:
+    tokens:
+      - scopes: ["*"]
+plugins:
+  echo:
+    enabled: true
+`,
+			wantErr: true,
+		},
+		{
 			name: "plugin_roots parsed",
 			yaml: `
 service:

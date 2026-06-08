@@ -771,10 +771,16 @@ func validate(cfg *Config) error {
 			return fmt.Errorf("api.auth.tokens must be configured when API is enabled")
 		}
 		for i, tok := range cfg.API.Auth.Tokens {
-			if tok.Token == "" {
-				return fmt.Errorf("api.auth.tokens[%d].token is required", i)
+			// A token value is either a literal or sourced from the vault via
+			// secret_ref (resolved by ResolveAPITokens before the listener opens,
+			// #94). At least one must be set here; the resolver owns the both-set
+			// and empty-after-resolution checks, fail-closed at boot.
+			if tok.Token == "" && tok.SecretRef == "" {
+				return fmt.Errorf("api.auth.tokens[%d]: must set token or secret_ref", i)
 			}
-			if envVarPattern.MatchString(tok.Token) {
+			// The ${ENV} interpolation guard applies only to a literal token; a
+			// secret_ref carries a vault secret name, not an env reference.
+			if tok.Token != "" && envVarPattern.MatchString(tok.Token) {
 				matches := envVarPattern.FindStringSubmatch(tok.Token)
 				if len(matches) > 1 {
 					return fmt.Errorf("api.auth.tokens[%d].token: environment variable ${%s} is not set", i, matches[1])
