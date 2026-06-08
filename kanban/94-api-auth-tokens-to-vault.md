@@ -113,3 +113,18 @@ admin's observation surfaced the gap.
     (`config.yaml`, `config.test.yaml`, `README.md` still use `${DUCTILE_TOKEN_ADMIN}`) and the
     three-host `api.yaml` cutover. Left for the host/test pass so the default config doesn't fail
     closed before the vault entry exists. (by @assistant)
+- 2026-06-08: **Provisioning decision (operator) — operator CLI, multiple tokens, NOT genesis
+  auto-seed.** Rationale: key zero always opens the vault, so the operator can always see inside;
+  provisioning stays explicit and the CLI mints as many API tokens as needed. Both halves already
+  ship — no new minting engine:
+  - *Consumption:* `cfg.API.Auth.Tokens` is a list; `config.ResolveAPITokens` resolves each
+    `secret_ref` independently (N tokens, N scope sets).
+  - *Provisioning:* `vault set <name>` (value from stdin) and `vault roll <name>` (manual or
+    daemon-minted) already exist as keyless API-client commands (`main.go:277-278`); principals via
+    `vault register-principal` (`vault.go:44`). One vault secret per logical token
+    (`ductile-api-admin`, `ductile-api-readonly`, …), each referenced by its own `secret_ref`.
+  - **ThinkPad remaining work** (mechanism already on this branch): grant the token secrets to a
+    `consumer`-kind `ductile-api` principal (or no-grant shortcut); then the example/doc cutover
+    (`config.yaml`, `config.test.yaml`, `README.md` off `${DUCTILE_TOKEN_ADMIN}`) and the three-host
+    `api.yaml` migration, run on the boxes. The loader fails closed if a `secret_ref` is unprovisioned,
+    so provision before cutover. (by @assistant)
