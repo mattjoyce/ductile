@@ -28,7 +28,7 @@
         <string>system</string>
         <string>start</string>
         <string>--config</string>
-        <string>/etc/ductile/config.yaml</string>
+        <string>/opt/ductile/etc/config.yaml</string>
     </array>
 
     <!-- NO UserName key => runs as root. Required: only euid 0 can setuid-drop to the
@@ -46,13 +46,15 @@
     </dict>
 
     <key>WorkingDirectory</key>
-    <string>/var/lib/ductile</string>
+    <string>/opt/ductile/var</string>
 
-    <!-- launchd has no journal; capture stdio to files the installer creates 0755-root. -->
+    <!-- launchd has no journal; capture stdio to files the installer creates 0755-root.
+         Everything lives under /opt (a REAL dir on macOS) — NOT /etc or /var, which are
+         symlinks to /private/* and trip ductile's runtime config-path symlink guard. -->
     <key>StandardOutPath</key>
-    <string>/var/log/ductile/ductile.log</string>
+    <string>/opt/ductile/log/ductile.log</string>
     <key>StandardErrorPath</key>
-    <string>/var/log/ductile/ductile.err</string>
+    <string>/opt/ductile/log/ductile.err</string>
 
     <!-- Long-running background service, not a UI job. -->
     <key>ProcessType</key>

@@ -57,10 +57,11 @@ cap-only model; an Agent runs as-you and physically can't `setuid`-drop → conf
 - **`deploy/install-macos.sh`** (new, NOT a branch in install.sh — kept the live-proven Linux
   installer untouched): the launchd peer. `dscl` creates hidden nologin worker accounts
   `_ductile-default`(1001)/`_ductile-untrusted`(1002) — uids mirror Linux so ONE `accounts:` map
-  works on both OSes — with a uid-collision guard. Lays the FHS skeleton (root:wheel; `/etc/ductile`
-  0700, `/var/lib/ductile` 0711 + worker dirs 0700, `/opt/ductile/plugins` world r-x, `/var/log/ductile`),
-  installs binary 0755, installs the plist root:wheel 0644. `bash -n` clean; BSD-`install` flag form +
-  awk collision logic dry-run-verified on Darwin.
+  works on both OSes — with a uid-collision guard. Lays the FHS skeleton (root:wheel) under
+  **`/opt/ductile`** (`etc` 0700, `var` 0711 + worker dirs 0700, `plugins` world r-x, `log`), installs
+  binary 0755 to `/usr/local/bin`, installs the plist root:wheel 0644. `bash -n` clean; BSD-`install`
+  flag form + awk collision logic dry-run-verified on Darwin. **(Originally `/etc`+`/var`; relocated to
+  `/opt` during Phase 2 — macOS symlink guard, see Phase 2 below.)**
 - **macOS asymmetry captured in the header:** gateway is root → no unprivileged gateway account (only
   workers), and its boot fs-reconcile owns the account dirs itself (the Phase-0 reconcile path); Linux
   needs tmpfiles.d because cap-only can't chown. FHS paths mirror Linux for config parity; only the
@@ -68,10 +69,23 @@ cap-only model; an Agent runs as-you and physically can't `setuid`-drop → conf
 - **NOT yet run live** (that's Phase 2): no `dscl`/`launchctl` executed — templates + installer authored
   and statically validated only.
 
-### Phase 2 — Deploy-as-new on this Mac + observe live
-- Config/plugins/secrets **out of `/Users/matt` (0700)**, empty DB, confinable plugins only (the
-  Thinkpad recipe). Bootstrap the LaunchDaemon, run one real first-party plugin confined, wall-proof
-  live: `sys_exec(id)` → worker uid · `sudo -u worker cat key` → denied.
+### Phase 2 — Deploy-as-new on this Mac + observe live — **PROVEN 2026-06-08 ✅ (live MacM1)**
+- **Wall holds LIVE under a root LaunchDaemon.** `sudo` deploy-as-new on this M1: install-macos.sh
+  (accounts+FHS+binary+plist) + lean config (no API/vault) + `sys_exec` confined `run_as: untrusted`
+  + a root `0600` secret. Boot log: `privsep enforcing: plugins drop to their resolved account` →
+  job dropped to **uid=1002(_ductile-untrusted)** → `cat /opt/ductile/etc/secret/age.key` →
+  **Permission denied**. Real first-party plugin, confined, live host. (Independent check:
+  `sudo -u _ductile-untrusted cat <secret>` → denied.)
+- **macOS layout = `/opt/ductile` base, NOT `/etc`+`/var`.** Discovered live: `/etc` & `/var` are
+  symlinks to `/private/*` on macOS, and ductile's **runtime** refuses symlinked config paths (the
+  path-swap guard — stricter than `config check`, which only WARNs). Fix = real paths under `/opt`
+  (same rationale as Homebrew's `/usr/local/etc`), NOT weakening the guard with `allow_symlinks`.
+  Plist + install-macos.sh + deploy recipe all relocated to `/opt/ductile/{etc,var,log,plugins}`.
+- **Two non-blocking findings:** (a) the probe job reads `status: failed` because `cat` of a denied
+  file exits 1 — the failure IS the wall; verdict file is truth. (b) `WARN: no default account tier`
+  — lean config defined only `untrusted`; a REAL config MUST add a `default` account or ungranted
+  plugins run at the gateway uid (= **root** on macOS). → Phase 3 docs.
+- Deploy harness was `/tmp/phase2-deploy.sh` (throwaway proof rig); the real how-to is Phase 3.
 
 ### Phase 3 — Honest docs + close
 - `docs/MACOS_INSTALLATION.md`: root-LaunchDaemon posture + SIP/`task_for_pid` threat-model note (do

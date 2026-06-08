@@ -3,13 +3,17 @@
 # The launchd peer of deploy/install.sh. Run as root from the repo root. Idempotent.
 #
 # WHY THIS DIFFERS FROM THE LINUX INSTALLER:
-#   launchd has no per-capability grant (no CAP_SETUID/SETGID), so the gateway runs as a
-#   ROOT LaunchDaemon — there is NO unprivileged `ductile` gateway account on macOS, only
-#   the WORKER accounts the plugins drop to. Because the gateway is root it HAS chown, so
-#   its boot fs-reconcile can own the account state dirs itself (the Phase-0
-#   TestReconcileAccountFilesystemAsRoot path, proven on Darwin — card #95, commit 5770b59);
-#   on Linux a cap-only gateway can't chown, so tmpfiles.d must pre-create them. We still
-#   lay the skeleton here (the package layer), the same as install.sh does.
+#   1. launchd has no per-capability grant (no CAP_SETUID/SETGID), so the gateway runs as a
+#      ROOT LaunchDaemon — there is NO unprivileged `ductile` gateway account on macOS, only
+#      the WORKER accounts the plugins drop to. Because the gateway is root it HAS chown, so
+#      its boot fs-reconcile can own the account state dirs itself (the Phase-0
+#      TestReconcileAccountFilesystemAsRoot path, proven on Darwin — card #95, commit 5770b59);
+#      on Linux a cap-only gateway can't chown, so tmpfiles.d must pre-create them.
+#   2. EVERYTHING LIVES UNDER /opt/ductile, NOT /etc + /var. On macOS /etc and /var are
+#      symlinks to /private/*, and ductile's RUNTIME refuses symlinked config paths (a path-
+#      swap guard) — a config at /etc/ductile fails to start. /opt is a real dir, so we site
+#      config/state/logs there (same reason Homebrew uses /usr/local/etc). The binary stays
+#      at /usr/local/bin (on PATH for the CLI; not a config path, so symlink-safe).
 #
 # Installs the PACKAGE layer only: worker accounts (dscl), the FHS skeleton, the binary
 # (root-owned, never setuid), and the root LaunchDaemon plist. It deliberately does NOT
@@ -17,9 +21,10 @@
 set -euo pipefail
 
 BIN_SRC=${BIN_SRC:-./ductile}               # the built ductile binary to install
-BIN_DST=${BIN_DST:-/usr/local/bin/ductile}  # root-owned 0755, never setuid
+BIN_DST=${BIN_DST:-/usr/local/bin/ductile}  # root-owned 0755, never setuid; on PATH for the CLI
 HERE=$(cd "$(dirname "$0")" && pwd)
 PLIST_DST=/Library/LaunchDaemons/com.mattjoyce.ductile.plist
+BASE=/opt/ductile                           # real, non-symlinked base (NOT /etc or /var on macOS)
 
 # Worker accounts (drop targets). uids mirror the Linux defaults so ONE config
 # `accounts:` map works on both OSes. Override to dodge a collision.
@@ -55,23 +60,23 @@ echo "1. worker accounts (dscl):"
 make_worker _ductile-default   "$DEFAULT_UID"
 make_worker _ductile-untrusted "$UNTRUSTED_UID"
 
-# 2. FHS skeleton — owner/mode = the privsep wall. Root-owned (group wheel on macOS).
-#    /etc + /var are symlinks into /private on macOS; install -d resolves through them.
-echo "2. FHS skeleton:"
+# 2. FHS skeleton under /opt/ductile (real path) — owner/mode = the privsep wall.
+#    Root-owned (group wheel on macOS).
+echo "2. FHS skeleton under $BASE:"
 install -d -o root -g wheel -m0755 /usr/local/bin
-install -d -o root -g wheel -m0700 /etc/ductile           # config + integrity surface (root reads; accounts walled)
-install -d -o root -g wheel -m0700 /etc/ductile/secret    # secret-zero (age key) home, sshd-style
-install -d -o root -g wheel -m0755 /opt/ductile           # plugin code: root-owned, world r-x (immutable to accounts)
-install -d -o root -g wheel -m0755 /opt/ductile/plugins
-install -d -o root -g wheel -m0711 /var/lib/ductile       # state root: traverse-only (#109), not listable
-install -d -o root -g wheel -m0711 /var/lib/ductile/accounts
-install -d -o root -g wheel -m0755 /var/log/ductile       # launchd stdio (no journal on macOS)
+install -d -o root -g wheel -m0755 "$BASE"
+install -d -o root -g wheel -m0700 "$BASE/etc"            # config + integrity surface (root reads; accounts walled)
+install -d -o root -g wheel -m0700 "$BASE/etc/secret"     # secret-zero (age key) home, sshd-style
+install -d -o root -g wheel -m0755 "$BASE/plugins"        # plugin code: root-owned, world r-x (immutable to accounts)
+install -d -o root -g wheel -m0711 "$BASE/var"            # state root: traverse-only (#109), not listable
+install -d -o root -g wheel -m0711 "$BASE/var/accounts"
+install -d -o root -g wheel -m0755 "$BASE/log"            # launchd stdio (no journal on macOS)
 # per-worker 0700 dirs OWNED by the worker — the cross-account wall. Root chowns (the
 # gateway would also reconcile these at boot, but lay them now for a clean first start).
-install -d -m0700 /var/lib/ductile/accounts/default
-chown "$DEFAULT_UID:$DEFAULT_UID"     /var/lib/ductile/accounts/default
-install -d -m0700 /var/lib/ductile/accounts/untrusted
-chown "$UNTRUSTED_UID:$UNTRUSTED_UID" /var/lib/ductile/accounts/untrusted
+install -d -m0700 "$BASE/var/accounts/default"
+chown "$DEFAULT_UID:$DEFAULT_UID"     "$BASE/var/accounts/default"
+install -d -m0700 "$BASE/var/accounts/untrusted"
+chown "$UNTRUSTED_UID:$UNTRUSTED_UID" "$BASE/var/accounts/untrusted"
 
 # 3. binary — root-owned 0755, NEVER setuid (privilege is conferred by launchd-as-root)
 echo "3. binary:"
@@ -85,21 +90,24 @@ echo "  installed $PLIST_DST"
 
 cat <<EOF
 
-macOS skeleton laid (root LaunchDaemon posture — see docs/DEPLOYMENT_POSTURES.md):
+macOS skeleton laid under $BASE (root LaunchDaemon posture — docs/DEPLOYMENT_POSTURES.md):
   binary   $BIN_DST           root:wheel 0755, never setuid
-  config   /etc/ductile                  root 0700   <- place config.yaml + includes
-  secret   /etc/ductile/secret           root 0700   <- place age.key (0600)
-  state    /var/lib/ductile              root 0711   + accounts/{default,untrusted} 0700 (worker-owned)
-  code     /opt/ductile/plugins          root 0755 world r-x  <- copy plugin code here
-  logs     /var/log/ductile              root 0755   (launchd stdout/stderr)
+  config   $BASE/etc                 root 0700   <- place config.yaml + includes
+  secret   $BASE/etc/secret          root 0700   <- place age.key (0600)
+  state    $BASE/var                 root 0711   + accounts/{default,untrusted} 0700 (worker-owned)
+  code     $BASE/plugins             root 0755 world r-x  <- copy plugin code here
+  logs     $BASE/log                 root 0755   (launchd stdout/stderr)
   daemon   $PLIST_DST  root:wheel 0644 (runs as root)
   workers  _ductile-default ($DEFAULT_UID), _ductile-untrusted ($UNTRUSTED_UID)  hidden, nologin
+
+Everything is under /opt (a REAL dir) because /etc and /var are symlinks on macOS and
+ductile's runtime refuses symlinked config paths.
 
 NOT placed by this installer (operator data): config, age key, vault.age, plugin code.
 Next: place those (config accounts: map must use uid $DEFAULT_UID/$UNTRUSTED_UID), then
   ductile config lock && ductile plugin lock --all   (BEFORE first enforce boot)
 then load + verify the wall-bite:
   sudo launchctl bootstrap system $PLIST_DST
-  ductile job inspect ...    # sys_exec(id) -> the worker uid; sudo -u _ductile-untrusted cat <key> -> denied
+  sudo -u _ductile-untrusted cat $BASE/etc/secret/age.key   # -> Permission denied
 Stop: sudo launchctl bootout system/com.mattjoyce.ductile
 EOF
