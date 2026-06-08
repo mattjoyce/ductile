@@ -84,6 +84,7 @@ func TestVaultSetSecretValidationLeavesModelClean(t *testing.T) {
 // happen, the in-memory model is reverted to the last persisted state so memory
 // and disk never diverge.
 func TestVaultSetSecretRollsBackOnSaveFailure(t *testing.T) {
+	requireWritablePermsEnforced(t)
 	v := savedVault(t)
 	dir := filepath.Dir(v.Path())
 

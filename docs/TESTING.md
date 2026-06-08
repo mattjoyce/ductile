@@ -50,9 +50,11 @@ To preserve velocity, the fast inner loop should **not require Docker** and shou
 Run the fast suite as a **non-root user** with **`bash` and `python3` on `PATH`**:
 
 - Some `internal/vault` tests force a persist failure with `chmod 0500` on a directory
-  and assert the write is rejected. **root bypasses file permissions**, so these tests
-  fail with "expected a save failure" when run as root (e.g. in a stock CI container or a
-  bare `golang` image).
+  and assert the write is rejected. **root bypasses file permissions**, so the injected
+  failure never fires under root. This precondition is now enforced *in code*:
+  `requireWritablePermsEnforced` (`internal/vault/preconditions_test.go`) `t.Skip`s these
+  tests under euid 0 with the assumption named — so root sees an explicit skip, not a
+  false "expected a save failure". (A skip is never a pass; run as non-root for coverage.)
 - The `internal/e2e` and `internal/dispatch` plugin-spawn tests exec real plugin
   entrypoints, which need `bash` (and `python3` for the `sys_exec`/python plugins).
   Without them you get `env: can't execute 'bash'` and spurious failures.
