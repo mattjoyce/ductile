@@ -98,3 +98,18 @@ admin's observation surfaced the gap.
     (`unregisteredGrantee`, `vault_secrets.go:136`), no enum change, `core` untouched. Acceptable v1.0
     shortcut: a secret with *no* grant (resolves via the `len==0` branch, `vault_secrets.go:153`) —
     but it's invisible to the typo guard. (by @assistant)
+- 2026-06-08: **Loader/runtime mechanism implemented** (commit on `feat/94-api-tokens-to-vault`).
+  Mechanism done per the review above: `APIToken.SecretRef` sibling field; `config.ResolveAPITokens`
+  resolves against `cfg.ResolvedSecrets` and is fail-closed (unresolvable/empty/both/neither → hard
+  error); `buildRuntime` resolves before the listener opens (named supervisor; reload restores the
+  old runtime on error); `validateAPITokens` (warn-when-blind); doctor false-warn fixed; schema
+  accepts `secret_ref`. A literal token still boots with a migration warning (backward compatible).
+  New tests prove the empty-credential path fails closed. `go build/vet/test ./...` green (one
+  unrelated flaky `dispatch` process-group test, passes in isolation).
+  - **What's covered:** items 1 (loader), 3 (loader warning), 4 (startup ordering + reload), and the
+    *advisory* part of 5 (doctor). The hard resolution check lives at boot, not doctor — per the review.
+  - **Still open (deploy-coordinated, deliberately not in the code commit):** item 2 — seed the vault
+    secret under a `consumer`-kind principal via genesis; then item 3's example/doc migration
+    (`config.yaml`, `config.test.yaml`, `README.md` still use `${DUCTILE_TOKEN_ADMIN}`) and the
+    three-host `api.yaml` cutover. Left for the host/test pass so the default config doesn't fail
+    closed before the vault entry exists. (by @assistant)
