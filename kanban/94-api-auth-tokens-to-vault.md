@@ -1,6 +1,6 @@
 ---
 id: 94
-status: todo
+status: done
 priority: High
 blocked_by: []
 tags: [vault, api, security, secret-ref, config, adr-8.5, v1.0]
@@ -147,3 +147,7 @@ admin's observation surfaced the gap.
   Everything else left for ThinkPad is config/doc edits (drop `${DUCTILE_TOKEN_ADMIN}`) and the host
   cutover — no logic. (Only a future `vault mint-api-token --role` convenience would be new code; #94
   doesn't ask for it.) (by @assistant)
+- 2026-06-08: **Closed — shipped via PR #120** (`feat/94-api-tokens-to-vault`, merged `1bfb50a`;
+  loader/cross-ref work in `02cc650`/`a25d16b`). Status flipped `todo → done`; the stale divergent
+  edit parked in `stash@{0}` was discarded (its 109/config changes were already on `main`, and its
+  card-94 variant regressed this log). (by @assistant)
