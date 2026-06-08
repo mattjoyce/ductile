@@ -34,15 +34,20 @@ running confined on a live host.
 wall FIRST, alone, before any template. The macOS gateway is a **root LaunchDaemon** (launchd has no
 cap-only model; an Agent runs as-you and physically can't `setuid`-drop → confinement ⟺ root Daemon).
 
-### Phase 0 — Prove the wall on Darwin (this Mac M1) ← the whole risk
-- Lift the four proof files off `_linux` build tags and retag `_unix`/`_darwin`, patching Linux-isms
-  (no `/proc`, perms/SIP differences): `privsep_wall_linux_test.go`,
-  `privsep_negative_suite_linux_test.go`, `privsep_capdrop_linux_test.go`, `fsreconcile_linux_test.go`.
-- Create 2–3 throwaway hidden worker accounts via `dscl` (needs sudo — surface explicitly).
-- `sudo go test` (root, so it can really setuid-drop). Assert: confined plugin lands on worker uid ·
-  cross-account read of age key → `Permission denied` · drop-without-privilege fails **closed**.
-- **Gate:** green → v1.0 claim is real, rest is mechanical. Red/surprise (SIP, setuid semantics) → found
-  cheaply, before building install tooling on a false floor.
+### Phase 0 — Prove the wall on Darwin (this Mac M1) ← the whole risk — **PROVEN 2026-06-08 ✅**
+- **DONE (commit 7b01531):** wall / negative-suite / fsreconcile proofs ported off `_linux` tags →
+  `darwin || linux || *bsd` (the `_linux` *filename suffix* alone was forcing linux-only). No `/proc`
+  dependency; script-probe based, so they ported unchanged. `capdrop` stays `_linux` (CAP_SETUID-only/
+  non-root has no macOS equivalent — the as-root path is the macOS story).
+- **`dscl` accounts NOT needed:** `applyAccountCredential` sets a purely numeric `Credential{Uid,Gid,
+  Groups:[gid]}` (no `initgroups`), so root setuid-drops to uid 65534/65533 worked with no account
+  provisioning. The macOS "setuid to a non-existent uid" wrinkle did not materialize.
+- **GREEN on `sudo /tmp/dispatch.test` (root, this M1):** all three PASS —
+  `TestReconcileAccountFilesystemAsRoot`, `TestPrivsepNegativeSuite`
+  (`key/config/statedb/sibling=DENIED, own=WRITABLE`), `TestPrivsepAccountCannotReadAgeKey` (0600 age
+  key → DENIED). **The setuid wall holds on Darwin.** Non-root run SKIPs (skip ≠ pass, #90 honoured).
+- **Verdict:** the load-bearing risk is retired — Mac-as-v1.0 is now mechanical (Phases 1–3: templates,
+  live deploy-as-new, docs). No SIP/setuid surprise at the mechanism level.
 
 ### Phase 1 — Templates (only after Phase 0 green)
 - `deploy/launchd/com.mattjoyce.ductile.plist`: root, `RunAtLoad`+`KeepAlive`, mirrors
