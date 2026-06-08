@@ -92,19 +92,26 @@ plugins:
 
 ## Tokens & Scopes
 
-API tokens are declared **inline** under `api.auth.tokens`. The standalone
-`tokens.yaml` file surface (and its external `scopes_file`/`scopes_hash` fields)
-was retired in epic #48 — a token now carries its `scopes` array directly:
+API bearer tokens are **vault-only** (#94, ADR §8.5 — "if it's a secret, it's in
+the vault"). Each token MUST carry a `secret_ref` naming a vault secret; the value
+is resolved from the vault at boot. A literal `token:` value or `${ENV}`
+interpolation is **rejected at load** — fail-closed, no migration window. The
+standalone `tokens.yaml` file surface was retired in epic #48; a token carries its
+`scopes` array directly:
 
 ```yaml
 api:
   auth:
     tokens:
-      - token: ${ADMIN_API_KEY}            # env var interpolation
+      - secret_ref: ductile-api-admin       # resolved from the vault at boot
         scopes: ["*"]
-      - token: readonly_token
+      - secret_ref: ductile-api-readonly
         scopes: ["plugin:ro", "jobs:ro", "events:ro"]
 ```
+
+Provision the referenced secrets with `ductile vault set <name> ...` (the vault
+must be unlocked before the API listener opens; a missing or empty `secret_ref`
+is a hard boot error, not a request-time failure).
 
 Custom scope definitions still live in `scopes/*.json` (High Security tier —
 walked at discovery and integrity-checked at lock/boot).
