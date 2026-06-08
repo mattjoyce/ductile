@@ -1,6 +1,6 @@
 ---
 id: 112
-status: todo
+status: done
 priority: High
 blocked_by: []
 tags: [docs, privsep, deployment, onboarding]
@@ -61,15 +61,31 @@ Increasing in what plugins are permitted; ALL are now real + proven this session
 - **No root anywhere** except one-time install (every posture).
 
 ## TODO
-- [ ] Write the guide — likely `docs/DEPLOYMENT_MODES.md` (or extend DEPLOYMENT.md): the three postures
-      as a chooser (when-to-use / what-it-protects / setup-essentials / tradeoffs) + the rejected root note.
-- [ ] A decision table / one diagram (operator-owned mermaid per [[diagrams-are-user-owned]]).
-- [ ] Link the relevant ADRs (confined-runtime, credentialed-runtime, filesystem-layout) + runbooks
-      (privsep-thinkpad-enforce, ductile-admin-instance).
-- [ ] Cross-link the plugin-tier guidance (PLUGIN_DEVELOPMENT.md §10.6, the `_template`) — postures
-      (deploy) vs tiers (per-plugin) are orthogonal axes; say so.
-- [ ] Confirm "three" matches the operator's intent (unconfined / full-privsep / hybrid) before writing.
+- [x] Write the guide — landed as `docs/DEPLOYMENT_POSTURES.md` (not DEPLOYMENT_MODES.md; "posture" is
+      the dominant term + avoids clashing with the AccountMode enum). Standalone file, NOT an extension
+      of DEPLOYMENT.md: #98 already put how-to (§5b) + reference (§5c) there, so the missing register is
+      explanation/chooser. Three postures as a chooser (when-to-use / what-it-protects / setup-pointer /
+      tradeoffs) + the rejected-root note.
+- [x] Decision table done ("Choose in one glance", 9 axes incl. a Platform row). The architecture
+      DIAGRAM stays operator-owned mermaid per [[diagrams-are-user-owned]] — left an explicit placeholder
+      note in the doc, did NOT author ASCII.
+- [x] Linked the 3 ADRs (confined-runtime, credentialed-runtime, filesystem-layout) + both runbooks
+      (privsep-thinkpad-enforce, ductile-admin-instance), all by verified relative path.
+- [x] Cross-linked the plugin-tier guidance (PLUGIN_DEVELOPMENT §10.6 + `_template`); postures-vs-tiers
+      called out as orthogonal axes.
+- [x] Confirmed "three" with the operator before writing — "Yes — these three" (2026-06-08).
 
 ## Narrative
 - 2026-06-08: Carded after the credentialed flavour landed — the three postures are proven + ADR'd but
   lack a single operator-facing chooser doc. Content drafted above as the spec. (by @assistant)
+- 2026-06-08: DONE (authored + reviewed). Wrote `docs/DEPLOYMENT_POSTURES.md` as an **[explanation]**-
+  register Diátaxis doc (operator's "Naur × Procida — theory × need" steer) — it transmits the privsep
+  theory via a "secret zero" frame so an operator can choose, and points to DEPLOYMENT.md §5b/§5c for
+  execution rather than duplicating it (#98 discipline upheld). Structure: secret-zero theory → key-terms
+  box → "Choose in one glance" table → three posture sections → road-not-taken (root rejected) →
+  cross-cutting (no-root, tier vocab + needs-secret≠trusted, postures-vs-tiers) → where-to-next. Registered
+  in `docs/index.md` (grid card) + `mkdocs.yml` (Operating nav, above Deployment). Grilled by two agents:
+  a fact-check pass (11/11 claims CONFIRMED vs the 3 ADRs + DEPLOYMENT.md; one max_workers scope nit fixed)
+  and an operator-persona clarity pass (all 6 polish items applied: cap-only defined pre-table, Platform row,
+  jargon glossed, vocab box hoisted, Posture-1 two-instance annotated, repeated dates/kanban links trimmed).
+  No ASCII diagrams. **Commit/merge pending operator go-ahead** (this session.) (by @assistant)

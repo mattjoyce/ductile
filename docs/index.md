@@ -52,6 +52,14 @@ See the [Constitution](https://github.com/mattjoyce/ductile/blob/main/CONSTITUTI
 
     [:octicons-arrow-right-24: Secrets & Vault](SECRETS.md)
 
+-   :material-shield-lock:{ .lg .middle } **Choose a posture**
+
+    ---
+
+    How much to confine plugins: unconfined, full privsep, or hybrid trust-tier — and why.
+
+    [:octicons-arrow-right-24: Deployment Postures](DEPLOYMENT_POSTURES.md)
+
 </div>
 
 ---
