@@ -98,7 +98,7 @@ cap-only model; an Agent runs as-you and physically can't `setuid`-drop → conf
 **ALL FOUR PHASES DONE — #95 complete.** macOS is a proven v1.0 enforced host: wall proven on Darwin
 (Phase 0), templates shipped (Phase 1), wall held LIVE under a root LaunchDaemon (Phase 2), honest docs
 (Phase 3). Closes the last open [[102-v1.0-readiness-privsep-ship-line]] gate → **v1.0 line green**.
-Remaining hygiene: merge `feat/95-launchd-mac-privsep` → main; move this card to closed/.
+Remaining: merge `feat/95-launchd-mac-privsep` → main (PR open).
 
 **Scope discipline:** Phase 0 proves the **confined wall** (the v1.0 security property). The
 credentialed/hybrid tier rides the same `_unix` mechanism already proven on Linux — comes along free;
