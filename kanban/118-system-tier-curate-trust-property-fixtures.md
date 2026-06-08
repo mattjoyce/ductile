@@ -77,7 +77,12 @@ because the template doesn't work. Corrected order: **first make ONE fixture gen
 extract `fixture_vault_init`/`fixture_grant_token` into `scripts/test-docker-lib`, THEN port
 `webhook-ingress` (api token + webhook secret + tokens.yaml retirement).** This re-scopes step 1.
 
-### THE BLOCKER to resolve first (bootstrap chicken-and-egg)
+### THE BLOCKER to resolve first (bootstrap chicken-and-egg) — now carded as [[128-vault-native-bootstrap-no-offline-seed]]
+**Root cause confirmed: the offline seed command the deploy docs prescribe (`vault import`) does NOT
+exist in the binary** (`Unknown vault action: import`), so the cycle below is currently unbreakable.
+The full analysis + the three fix options live in [[128-vault-native-bootstrap-no-offline-seed]];
+**#118 is blocked on #128.**
+
 `ductile vault set` **requires `--api-url`** — vault writes go through the running daemon (sole-writer
 arch, `cmd/ductile/vault.go:466`). But an **API bearer token must already be in the vault at BOOT**
 (resolved at load by `ResolveAPITokens` before the listener opens). So: you can't `vault set` the api
