@@ -577,10 +577,10 @@ config_keys:
 **`plugins/sqlite_change/run.py`:**
 
 ```python
-#!/usr/bin/env -S uv run --script
-# /// script
-# dependencies = []
-# ///
+#!/usr/bin/env python3
+# Tier 1 (stdlib): plain python3 shebang, no dependencies fetched at spawn.
+# Do NOT use `#!/usr/bin/env -S uv run --script` unless you genuinely need a
+# third-party library that cannot be vendored — see §10.6 Runtime contract.
 
 import json
 import sqlite3
@@ -875,21 +875,47 @@ is dispatch, state, and routing; filesystem is the plugin's concern.
   subprocess stdout to disk on your behalf; the operationally meaningful
   fragments are already captured in the database (`job_log`,
   `plugin_facts`, `event_context`).
-- **Cwd.** Plugin subprocesses inherit the dispatcher's working
-  directory. If your plugin cares where it runs, the run script should
-  `cd` to a path of its own choosing.
+- **Cwd.** An *unconfined* plugin inherits the dispatcher's working
+  directory. A **confined** plugin (privsep enforce) is given a cwd of its
+  own account `state_dir` — see §10.6. Write state relative to cwd; do not
+  assume the gateway's directory.
 
 ## 10. Security & Isolation
 
 - **Allowed paths.** Plugins should only read/write paths they
   themselves create (per the previous section) or paths explicitly
   named in their config.
-- **Execution.** Plugins run as the same OS user as the gateway. Use
-  filesystem permissions to limit blast radius.
+- **Execution.** Without privsep, plugins run as the same OS user as the
+  gateway. Under **privsep enforce** each plugin is dropped to a distinct,
+  unprivileged account uid — see §10.6 for what that guarantees and forbids.
 - **Trust.** Ductile refuses to load plugins with world-writable directories
   or `..` in their `entrypoint`. The entrypoint must be `chmod +x`.
 - **No persistent state outside what is declared.** Plugins must not write
-  to their own plugin directory at runtime. 
+  to their own plugin directory at runtime (under privsep it is read-only).
+
+## 10.6 Runtime contract (privsep)
+
+Under privsep enforce the gateway drops the plugin to an unprivileged
+**account** uid and roots its runtime at that account's own `0700`
+`state_dir`. This is the authoritative contract — it supersedes any older
+"same OS user / inherits the dispatcher cwd" assumption above. Full rationale:
+[`docs/adr/confined-plugin-runtime-contract.md`](adr/confined-plugin-runtime-contract.md).
+Working reference: [`plugins/_template/`](../plugins/_template/) (copy it).
+
+**A confined plugin may rely on:**
+
+- `cwd`, `$HOME`, and `$XDG_CACHE_HOME` all `==` its `state_dir` — writable,
+  private, owned by no other account. Write state with relative paths.
+- Secrets in `request["secrets"]` — never the environment, never argv.
+- A writable, shared `/tmp`.
+
+**A confined plugin must NOT** (each fails closed): write outside its
+`state_dir` (or `/tmp`); read `$HOME` dotfiles, `/home/<user>`, or ambient
+host credentials; or **fetch dependencies at spawn** (`uv run --script`,
+`pip`/`npm install`). The blessed default is **Tier 1: stdlib, fetch nothing
+at spawn**; reach for spawn-time dependency resolution only when a
+third-party library is unavoidable, and prefer building/vendoring it ahead of
+time into the read-only plugin dir.
 
 ## 10.5 Resource & Execution Limits
 
@@ -932,6 +958,20 @@ When you finish a new plugin, walk this list before merging:
       required.
 - [ ] Entrypoint is `chmod +x`.
 - [ ] Tests cover the snapshot constructor and the response shape.
+
+Runtime contract (privsep — §10.6):
+
+- [ ] **Tier 1 by default:** stdlib / system runtime, `#!/usr/bin/env python3`
+      (or equivalent) — **no dependencies fetched at spawn**. Spawn-time
+      resolution (`uv run --script`, `pip`/`npm install`) only when a
+      third-party lib is unavoidable, and documented as such.
+- [ ] Writes go **only under cwd / `state_dir`** (or `/tmp`) — never `$HOME`
+      dotfiles, `/home/<user>`, sibling account dirs, or system paths.
+- [ ] Secrets are read from `request["secrets"]`, never the environment or
+      argv — and never logged, echoed, or emitted.
+- [ ] If the plugin needs a secret, the operator config carries
+      `requires_vault: true` + a `vault_principal` (fail-closed); the code
+      does not assume ambient credentials.
 
 If every box ticks, the plugin is aligned with the durability model and
 should not need a future migration sprint to fix.

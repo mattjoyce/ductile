@@ -4,7 +4,9 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io/fs"
 	"log/slog"
 	"os/exec"
 	"time"
@@ -18,10 +20,30 @@ type subprocessExecutor struct {
 	// extraEnv lists operator-granted environment variable names passed through
 	// to plugin children on top of the built-in allowlist (see buildPluginEnv).
 	extraEnv []string
+	// account is the resolved privsep identity this plugin spawns under. The zero
+	// value (Confined=false) means unconfined — spawn at the gateway uid, as today.
+	account ResolvedAccount
 }
 
-func newSubprocessExecutor(events *events.Hub, extraEnv []string) *subprocessExecutor {
-	return &subprocessExecutor{events: events, extraEnv: extraEnv}
+func newSubprocessExecutor(events *events.Hub, extraEnv []string, account ResolvedAccount) *subprocessExecutor {
+	return &subprocessExecutor{events: events, extraEnv: extraEnv, account: account}
+}
+
+// publishDropFailed emits the privsep drop-failure signal — its own event, distinct
+// from a generic spawn failure, so an operator (and #90) can tell "the wall could
+// not be built" from "the binary is missing."
+func (e *subprocessExecutor) publishDropFailed(req *protocol.Request, pluginName string, cause error) {
+	if e.events == nil {
+		return
+	}
+	e.events.Publish("plugin.drop_failed", map[string]any{
+		"job_id":  req.JobID,
+		"plugin":  pluginName,
+		"account": e.account.Name,
+		"uid":     e.account.UID,
+		"gid":     e.account.GID,
+		"error":   cause.Error(),
+	})
 }
 
 // spawnPlugin spawns the plugin subprocess, writes the request to stdin, and reads the response from stdout.
@@ -45,7 +67,38 @@ func (e *subprocessExecutor) execute(
 	// Replace full-environment inheritance with a minimal allowlist so the child
 	// never receives a copy of the gateway's environment (1a spawn hygiene).
 	cmd.Env = buildPluginEnv(e.extraEnv)
+	// Runtime contract by tier (the drop itself is identical; only the runtime
+	// rooting differs). Unconfined plugins are untouched — gateway uid/HOME/cwd.
+	switch {
+	case e.account.Credentialed():
+		// Trusted/credentialed runtime — the INVERSE of the #109 confined contract.
+		// The plugin drops to its uid but runs with the operator's REAL home so it
+		// can reach on-disk creds (~/.ssh, ~/.config/gh). HOME is rebased to the
+		// account home (never the gateway's, which is dropped); cwd is that home;
+		// operator-granted passthrough env (plugin_env_passthrough, e.g.
+		// SSH_AUTH_SOCK) is preserved. NOT walled to a state_dir.
+		cmd.Env = withCredentialedHome(cmd.Env, e.account.Home)
+		cmd.Dir = e.account.Home
+	case e.account.Walled() && e.account.StateDir != "":
+		// #109 runtime contract: a confined plugin gets a usable runtime rooted at
+		// the account's own state_dir — a writable HOME + cache (env) and working
+		// directory (cmd.Dir). Privsep gave a dropped account no writable home, and
+		// (before the 0711 traversal floor) no way to even reach its state_dir, so
+		// any plugin that wrote state, or a runtime needing a cache, failed closed.
+		// cmd.Dir alone can't fix it (Go drops the uid before chdir), so
+		// HOME/XDG_CACHE_HOME travel as env; with the 0711 floor the dropped uid can
+		// now also chdir into the dir it owns.
+		cmd.Env = withAccountRuntimeEnv(cmd.Env, e.account.StateDir)
+		cmd.Dir = e.account.StateDir
+	}
 	configurePluginProcess(cmd)
+	// Compose the privsep uid/gid drop onto the lifecycle-configured command. A
+	// confined account on a platform that cannot drop fails the spawn closed here —
+	// never a silent run at gateway privilege (PrivSec ADR §3 Layer 1b, §8).
+	if err := applyAccountCredential(cmd, e.account); err != nil {
+		e.publishDropFailed(req, pluginName, err)
+		return nil, protocol.ResponseCompat{}, nil, nil, "", 0, fmt.Errorf("%w: %v", ErrAccountDropFailed, err)
+	}
 
 	// Prepare stdin pipe
 	stdin, err := cmd.StdinPipe()
@@ -63,8 +116,15 @@ func (e *subprocessExecutor) execute(
 
 	logger.Info("plugin executing", "entrypoint", entrypoint, "timeout", timeout)
 
-	// Start the process
+	// Start the process. When the plugin drops (confined OR credentialed), the kernel
+	// performs the uid/gid drop in the fork-child before execve — so a Start failure
+	// on a dropping spawn that is NOT a missing binary is a failed drop, not a generic
+	// spawn error. Classify it as such so it fails closed and terminal (no retry).
 	if err := cmd.Start(); err != nil {
+		if e.account.Drops() && !errors.Is(err, fs.ErrNotExist) {
+			e.publishDropFailed(req, pluginName, err)
+			return nil, protocol.ResponseCompat{}, nil, nil, "", 0, fmt.Errorf("%w (account %q uid %d): %v", ErrAccountDropFailed, e.account.Name, e.account.UID, err)
+		}
 		return nil, protocol.ResponseCompat{}, nil, nil, "", 0, fmt.Errorf("start process: %w", err)
 	}
 

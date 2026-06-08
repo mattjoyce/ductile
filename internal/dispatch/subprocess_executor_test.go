@@ -51,7 +51,7 @@ func TestExecutorWithholdsSecretEnvFromChild(t *testing.T) {
 	script := writeDispatchTestScript(t, `#!/bin/sh
 echo "probe=[$DUCTILE_TEST_GATEWAY_SECRET]"
 `)
-	executor := newSubprocessExecutor(nil, nil)
+	executor := newSubprocessExecutor(nil, nil, ResolvedAccount{})
 	req := &protocol.Request{Protocol: 2, JobID: "job-env", Command: "poll"}
 	// The script emits non-protocol output, so execute returns a decode error;
 	// only the raw stdout bytes matter here.
@@ -97,7 +97,7 @@ func TestSubprocessExecutorTimeoutNotReclassifiedByLateOutput(t *testing.T) {
 	// parallel contention inflates that latency.
 	scriptPath := writeRunawayPlugin(t)
 
-	executor := newSubprocessExecutor(nil, nil)
+	executor := newSubprocessExecutor(nil, nil, ResolvedAccount{})
 	req := &protocol.Request{Protocol: 2, JobID: "job-runaway", Command: "poll"}
 	resp, _, _, _, _, _, err := executor.execute(
 		context.Background(), "runaway", scriptPath, req, 1500*time.Millisecond, slog.Default())
@@ -116,7 +116,7 @@ func TestSubprocessExecutorReturnsMalformedProtocolResponse(t *testing.T) {
 echo '{not-json'
 `)
 
-	executor := newSubprocessExecutor(nil, nil)
+	executor := newSubprocessExecutor(nil, nil, ResolvedAccount{})
 	req := &protocol.Request{Protocol: 2, JobID: "job-malformed", Command: "poll"}
 	resp, _, rawResp, rawStdout, _, _, err := executor.execute(context.Background(), "malformed", scriptPath, req, 5*time.Second, slog.Default())
 	if err == nil {

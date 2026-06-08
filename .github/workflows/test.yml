@@ -22,6 +22,16 @@ jobs:
       - name: Run fast tests
         run: ./scripts/test-fast
 
+      # Privsep negative-test gate (#90). The privileged tests skip as a non-root
+      # user (which is how ./scripts/test-fast runs them — a skip is never a pass),
+      # so run them explicitly under sudo where they actually drop privilege and the
+      # wall is exercised. Worker uids are numeric, so no account provisioning needed.
+      - name: Privsep negative suite (privileged gate)
+        run: |
+          go test -c -o /tmp/dispatch.test ./internal/dispatch/
+          sudo /tmp/dispatch.test -test.v -test.run \
+            'TestPrivsepAccountCannotReadAgeKey|TestPrivsepNegativeSuite|TestReconcileAccountFilesystemAsRoot|TestHasDropCapabilityAsRoot|TestBindAccountToFingerprint|TestEvaluateBootGate|TestResolveAccount|TestApplyAccountCredential|TestValidateAccounts'
+
       - name: Run lint
         uses: golangci/golangci-lint-action@v6
         with:

@@ -34,6 +34,14 @@ type PluginVerifier interface {
 // errors.Is. Its text IS the vault DenialFingerprintMismatch reason.
 var ErrFingerprintMismatch = errors.New(string(vault.DenialFingerprintMismatch))
 
+// ErrVaultPrincipalRequired marks a plugin declared `requires_vault: true` whose
+// vault principal is unknown/unregistered. It closes the fail-open seam (#108):
+// without the declaration, an unknown principal opts out silently (fine for a
+// keyless plugin, a footgun for one that should receive secrets). With it, the
+// spawn fails CLOSED and loud — a misnamed/missing principal can no longer run
+// the plugin secret-less by accident.
+var ErrVaultPrincipalRequired = errors.New("vault: plugin requires vault secrets but its principal is unknown/unregistered")
+
 // composePluginSecrets resolves the secrets to deliver to a plugin at spawn.
 //
 // Registration as a vault principal is purely about secret *authorization*; a
@@ -42,8 +50,11 @@ var ErrFingerprintMismatch = errors.New(string(vault.DenialFingerprintMismatch))
 // and this contract reflects that:
 //
 //   - composer nil          -> no secrets, no error (vault not wired)
-//   - unknown principal      -> no secrets, no error (the plugin is simply not in
-//     the secret model; it runs and resolves via its normal config)
+//   - unknown principal, requiresVault=false -> no secrets, no error (the plugin
+//     is simply not in the secret model; it runs and resolves via its normal config)
+//   - unknown principal, requiresVault=true  -> error (fail closed, #108: the plugin
+//     DECLARED it needs vault secrets, so a missing/misnamed principal is a
+//     misconfiguration, not a silent opt-out)
 //   - registered + revoked   -> error (fail closed: an explicit revocation is a
 //     "must not operate" signal and must stop the spawn, not run secret-less)
 //   - registered + active    -> the composed secrets; withheld (revoked) grants
@@ -51,14 +62,27 @@ var ErrFingerprintMismatch = errors.New(string(vault.DenialFingerprintMismatch))
 //
 // Any Compose error other than a benign unknown-principal also fails closed — a
 // composer that cannot answer is never treated as "no secrets."
-func composePluginSecrets(composer SecretComposer, verifier PluginVerifier, plugin string, logger *slog.Logger) (map[string]string, error) {
+// principal is the vault principal the plugin composes its secrets under — the
+// plugin name by default, or plugins.<name>.vault_principal when set (#107: lets a
+// snake_case plugin map to a kebab principal the vault will accept). Attestation
+// (verifier) still uses the plugin name, since it gates the plugin's own bytes.
+func composePluginSecrets(composer SecretComposer, verifier PluginVerifier, plugin, principal string, requiresVault bool, logger *slog.Logger) (map[string]string, error) {
 	if composer == nil {
+		if requiresVault {
+			return nil, fmt.Errorf("%w: %q (principal %q, no vault wired)", ErrVaultPrincipalRequired, plugin, principal)
+		}
 		return nil, nil
 	}
 
-	comp, err := composer.Compose(plugin)
+	comp, err := composer.Compose(principal)
 	if err != nil {
 		if errors.Is(err, vault.ErrUnknownPrincipal) {
+			if requiresVault {
+				// #108: declared requires_vault → an unknown principal fails CLOSED
+				// and loud, instead of silently opting out and running secret-less.
+				return nil, fmt.Errorf("%w: plugin %q → principal %q", ErrVaultPrincipalRequired, plugin, principal)
+			}
+			logger.Debug("plugin is not a vault principal; running keyless (opt-out)", "plugin", plugin, "principal", principal)
 			return nil, nil // opt-out: plugin is not a vault principal
 		}
 		return nil, err // revoked principal or any other error: fail closed

@@ -4,13 +4,86 @@ package dispatch
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
+	"strconv"
+	"strings"
 	"syscall"
 )
 
+// hasDropCapability reports whether this process can drop a child to another
+// uid/gid — root holds it implicitly, and a non-root process can hold it via
+// CAP_SETUID+CAP_SETGID (e.g. systemd AmbientCapabilities, the #88 deploy). It is
+// the privsep boot gate's capability probe (ADR §5); evaluated once at startup.
+func hasDropCapability() bool {
+	if os.Geteuid() == 0 {
+		return true
+	}
+	return hasLinuxSetuidCaps()
+}
+
+// hasLinuxSetuidCaps inspects the effective capability set for CAP_SETUID (7) and
+// CAP_SETGID (6) via /proc/self/status. On non-Linux Unix the file is absent, so
+// it returns false — there, only root (handled above) can drop.
+func hasLinuxSetuidCaps() bool {
+	data, err := os.ReadFile("/proc/self/status")
+	if err != nil {
+		return false
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		hex, ok := strings.CutPrefix(line, "CapEff:")
+		if !ok {
+			continue
+		}
+		mask, err := strconv.ParseUint(strings.TrimSpace(hex), 16, 64)
+		if err != nil {
+			return false
+		}
+		const capSetgid, capSetuid = 6, 7
+		return mask&(1<<capSetgid) != 0 && mask&(1<<capSetuid) != 0
+	}
+	return false
+}
+
 func configurePluginProcess(cmd *exec.Cmd) {
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+}
+
+// applyAccountCredential composes the privsep uid/gid drop onto an already-
+// configured command (PrivSec ADR §3 Layer 1b; tracer #92). It is deliberately
+// separate from configurePluginProcess: that sets process-group lifecycle (*how*
+// the child is terminated); this sets privilege identity (*who* it runs as). The
+// kernel applies the credential in the fork-child window before execve as
+// setgroups → setgid → setuid, so the parent must hold CAP_SETUID/SETGID; a
+// failure surfaces from cmd.Start() and must fail the spawn closed.
+//
+// Unconfined resolutions are a no-op (run at the gateway uid, as today).
+// Supplementary groups are reset to the account's own gid so an inherited gateway
+// group cannot silently re-grant access (the ADR §8 botched-drop guard).
+func applyAccountCredential(cmd *exec.Cmd, w ResolvedAccount) error {
+	// #100: refuse any inconsistent verdict at the seam — a malformed ResolvedAccount
+	// (e.g. confined-but-uid-0, or a confined value with an unconfined/zero source)
+	// must NEVER become a privilege drop. Fail closed, terminal.
+	if err := w.Validate(); err != nil {
+		return fmt.Errorf("%w: %v", ErrAccountDropFailed, err)
+	}
+	if !w.Drops() {
+		return nil
+	}
+	if cmd.SysProcAttr == nil {
+		cmd.SysProcAttr = &syscall.SysProcAttr{}
+	}
+	// uid/gid are validated positive and within range at config load (validateAccounts,
+	// #84), so these conversions cannot overflow or go negative.
+	uid := uint32(w.UID) // #nosec G115 -- account uid validated positive + bounded at config load
+	gid := uint32(w.GID) // #nosec G115 -- account gid validated positive + bounded at config load
+	cmd.SysProcAttr.Credential = &syscall.Credential{
+		Uid:    uid,
+		Gid:    gid,
+		Groups: []uint32{gid},
+	}
+	return nil
 }
 
 func terminatePluginProcess(cmd *exec.Cmd) error {

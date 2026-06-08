@@ -148,6 +148,7 @@ nav:
       - YAML Tips: YAML_TIPS.md
 
   - Operating:
+      - Deployment Postures: DEPLOYMENT_POSTURES.md
       - Deployment: DEPLOYMENT.md
       - macOS Installation: MACOS_INSTALLATION.md
       - Operator Guide: OPERATOR_GUIDE.md

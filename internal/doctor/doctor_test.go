@@ -542,3 +542,42 @@ func TestValidate_StopwatchRetention_ZeroOldest_NoWarning(t *testing.T) {
 	r := d.Validate()
 	assertNoWarningCategory(t, r, "telemetry")
 }
+
+// #101: a valid config with secrets/vault configured but NO accounts map runs
+// UNCONFINED — config check must WARN (valid ≠ enforcing), not stay silent.
+func TestValidatePrivsepPostureWarnsSecretsButUnconfined(t *testing.T) {
+	cfg := validConfig()
+	cfg.Secrets = config.SecretsConfig{AgeKeyFile: "/etc/ductile/secret/age.key"}
+	// no Accounts map → unconfined posture
+	r := New(cfg, registryWith(echoPlugin())).Validate()
+	if !r.Valid {
+		t.Fatalf("config should still be VALID (unconfined is legal): %+v", r.Errors)
+	}
+	found := false
+	for _, w := range r.Warnings {
+		if w.Category == "privsep" && strings.Contains(w.Message, "UNCONFINED") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("expected a privsep UNCONFINED warning when secrets configured + no accounts, got warnings: %+v", r.Warnings)
+	}
+}
+
+// #101: an explicit unconfined override sitting on a configured accounts map must
+// WARN — the wall is declared but deliberately disabled.
+func TestValidatePrivsepPostureWarnsOverrideOnConfiguredAccounts(t *testing.T) {
+	cfg := validConfig()
+	cfg.Accounts = map[string]config.AccountConf{"default": {UID: 1001, GID: 1001, StateDir: "/var/lib/ductile/accounts/default"}}
+	cfg.Service.Unconfined = true
+	r := New(cfg, registryWith(echoPlugin())).Validate()
+	found := false
+	for _, w := range r.Warnings {
+		if w.Category == "privsep" && w.Field == "service.unconfined" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("expected a privsep override warning, got: %+v", r.Warnings)
+	}
+}

@@ -103,9 +103,32 @@ func (d *Doctor) Validate() *Result {
 	d.warnMissingEnvVars(r)
 	d.warnSuspiciousSchedule(r)
 	d.warnStopwatchRetention(r)
+	d.warnPrivsepPosture(r)
 
 	r.Valid = len(r.Errors) == 0
 	return r
+}
+
+// warnPrivsepPosture surfaces the "valid config ≠ enforcing on this host" trap
+// (#101): a config can pass every check and still leave plugins running at the
+// gateway uid. The dangerous case is a vault/age key configured (the operator
+// clearly cares about secrets) with NO accounts map — so privsep is unconfined
+// and a popped plugin reads the decrypted secrets directly. We also flag an
+// explicit unconfined override sitting on top of a configured accounts map (the
+// wall is declared but deliberately disabled). Both are warnings, not errors:
+// unconfined is a legitimate posture, it just must never be a silent surprise.
+func (d *Doctor) warnPrivsepPosture(r *Result) {
+	secretsConfigured := d.cfg.Secrets.AgeKeyFile != "" || d.cfg.Secrets.VaultFile != ""
+	if len(d.cfg.Accounts) == 0 && secretsConfigured {
+		d.addWarning(r, "privsep", "accounts",
+			"config is VALID but privsep is UNCONFINED (no `accounts:` map) while secrets/vault are configured — "+
+				"plugins run at the gateway uid and a popped plugin can read the decrypted secrets. "+
+				"If you intend enforce: add an `accounts:` map and run on a CAP_SETUID host. If unconfined is intended, this is informational.")
+	}
+	if len(d.cfg.Accounts) > 0 && d.cfg.Service.Unconfined {
+		d.addWarning(r, "privsep", "service.unconfined",
+			"`service.unconfined: true` is set on a host WITH a configured `accounts:` map — the privsep wall is declared but deliberately disabled. Remove the override to enforce.")
+	}
 }
 
 // warnStopwatchRetention surfaces unbounded growth of job_stopwatch

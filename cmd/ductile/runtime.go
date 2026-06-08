@@ -624,9 +624,79 @@ func buildRuntime(cfg *config.Config, configPath string, configSource string, re
 		logger.Info("vault secret delivery enabled (compose-time attestation on)")
 	}
 
+	// Privsep boot gate (#86): the capability to drop privilege and a configured
+	// accounts table must agree, or the gateway refuses to start — no silent run at
+	// gateway privilege. Evaluated once here (boot and reload); the result drives
+	// whether the dispatcher drops each plugin to its account.
+	privsepMode, gateErr := dispatch.BootGate(cfg)
+	if gateErr != nil {
+		logger.Error("privsep boot gate refused startup", "error", gateErr)
+		return nil, gateErr
+	}
+	switch {
+	case privsepMode == dispatch.BootEnforce:
+		logger.Info("privsep enforcing: plugins drop to their resolved account", "accounts", len(cfg.Accounts))
+		// Surface the conventional-tier dependencies at boot (luminary review T1/T2):
+		// the `default`/`untrusted` tier roles are matched by NAME in code, so their
+		// absence silently changes posture. Warn loudly rather than fail — both
+		// directions are fail-safe (no default → ungranted run unconfined; no
+		// untrusted → a mismatch fails closed), but the operator must not learn it
+		// per-job at first spawn.
+		if _, ok := cfg.Accounts["default"]; !ok {
+			logger.Warn("privsep: no `default` account tier configured — ungranted plugins will run UNCONFINED (at the gateway uid), not behind a wall")
+		}
+		if _, ok := cfg.Accounts["untrusted"]; !ok {
+			logger.Warn("privsep: no `untrusted` account tier configured — a fingerprint-mismatched plugin has no downgrade target, so its spawn fails closed")
+		}
+		// Name every credentialed (trusted) account loudly at boot — a plugin granted
+		// one runs as that REAL user with their on-disk creds and NO wall, so its
+		// compromise == that user's. This must be auditable, never inferred from a
+		// `home:` field's presence (grill: Ousterhout/Armstrong informed-consent).
+		for name, w := range cfg.Accounts {
+			if w.Home != "" {
+				logger.Warn("privsep: account is CREDENTIALED (trusted) — runs as a real user with their creds, NOT walled; its compromise equals that user's",
+					"account", name, "uid", w.UID, "home", w.Home)
+			}
+		}
+		// Reconcile the filesystem floor (#87) before any plugin can spawn: lock the
+		// secrets surface (gateway-owned, 0600/0700) and give each account its private
+		// 0700 dir. All-or-refuse — a failure here aborts the boot (never run
+		// half-confined). The age key is already enforced fail-closed at load. The
+		// surface is single-sourced in dispatch.SecretSurfacePaths and reconciles the
+		// config DIRECTORY, so sibling secret files (tokens, vault blob, .checksums)
+		// are covered even when the config path is a single file (review T4).
+		secretPaths := dispatch.SecretSurfacePaths(cfg, configDir)
+		if err := dispatch.ReconcileAccountFilesystem(cfg, secretPaths); err != nil {
+			logger.Error("privsep filesystem reconciliation failed", "error", err)
+			return nil, err
+		}
+		// Tier-aware root side-door audit (#111): probe each drop account for a host
+		// root-escalation path (nopasswd sudo, docker/lxd/incus group, writable
+		// secure_path, account-writable setuid-root). A CONFINED account with a
+		// side-door has no real wall — warn loudly, and under strict mode
+		// (admission.fail_on_sidedoor) refuse the boot. A CREDENTIALED account is
+		// root-equivalent by design — informed-consent warn, always proceed.
+		// Detection is best-effort: a false positive never bricks a non-strict boot.
+		if err := dispatch.AuditAccountSideDoors(cfg, cfg.Service.AdmissionPolicy().FailOnSideDoor, logger); err != nil {
+			logger.Error("privsep side-door audit refused startup", "error", err)
+			return nil, err
+		}
+	case len(cfg.Accounts) > 0 || cfg.Service.Unconfined:
+		// Unconfined despite a configured/privileged host is the explicit override —
+		// say so loudly so it can never pass unnoticed.
+		logger.Warn("privsep UNCONFINED: plugins run at the gateway uid despite configuration",
+			"accounts", len(cfg.Accounts), "unconfined_override", cfg.Service.Unconfined)
+	default:
+		// Plain dev/hygiene-only host (no accounts, no capability, no override).
+		// Log the posture explicitly so it is never a silent surprise (#101) —
+		// "valid config" must never be mistaken for "enforcing".
+		logger.Info("privsep posture: UNCONFINED — no accounts configured; plugins run at the gateway uid (hygiene-only)")
+	}
+
 	disp := dispatch.New(q, st, contextStore, routerEngine, registry, hub, cfg,
 		dispatch.WithAdmitter(admitter), dispatch.WithSecretComposer(secretComposer),
-		dispatch.WithPluginVerifier(pluginVerifier))
+		dispatch.WithPluginVerifier(pluginVerifier),
+		dispatch.WithPrivsepEnforce(privsepMode == dispatch.BootEnforce))
 	rt.dispatcher = disp
 
 	relayReceiver, err := relay.NewReceiver(cfg, q, routerEngine, contextStore, admitter, log.WithComponent("relay"))

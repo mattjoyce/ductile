@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"fmt"
 	"maps"
+	"math"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -830,10 +831,110 @@ func validate(cfg *Config) error {
 		}
 	}
 
+	if err := validateAccounts(cfg); err != nil {
+		return err
+	}
+
+	if err := validateAccountGrants(cfg); err != nil {
+		return err
+	}
+
 	if err := validateRelayConfig(cfg); err != nil {
 		return err
 	}
 
+	return nil
+}
+
+// validateAccounts checks the privsep `accounts` map (PrivSec ADR §5; epic card #84).
+// The map is open — any number of rows is accepted — but each must describe a real,
+// unprivileged, isolated identity:
+//
+//   - uid/gid positive: rejects 0, so an account can never be root (the whole point is
+//     dropping privilege), and rejects negatives.
+//   - state_dir absolute: each account owns a persistent directory (#87); a relative
+//     or empty path cannot be reconciled at boot.
+//   - no two accounts share a uid: a duplicate uid is *false isolation* — #87 chowns
+//     both state_dirs to one owner and same-uid ptrace/memory access is back, so the
+//     wall is painted on. This is correctness, not ergonomics, hence validated now.
+//
+// Deferred (named in #84): kebab-case naming rules and arbitrary-N ergonomics.
+func validateAccounts(cfg *Config) error {
+	// Deterministic iteration so a config with multiple problems fails the same way
+	// every load (and duplicate-uid errors name a stable pair).
+	names := make([]string, 0, len(cfg.Accounts))
+	for name := range cfg.Accounts {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+
+	uidOwner := make(map[int]string, len(cfg.Accounts))
+	for _, name := range names {
+		w := cfg.Accounts[name]
+		// Positive AND within range: rejects root (0) and negatives, and bounds the
+		// value so the spawn-time uint32 conversion (syscall.Credential) is provably
+		// safe — no overflow. No real uid approaches MaxInt32.
+		if w.UID <= 0 || w.UID > math.MaxInt32 {
+			return fmt.Errorf("accounts.%s: uid must be a positive uid within range (got %d) — an account is an unprivileged user, never root", name, w.UID)
+		}
+		if w.GID <= 0 || w.GID > math.MaxInt32 {
+			return fmt.Errorf("accounts.%s: gid must be a positive gid within range (got %d)", name, w.GID)
+		}
+		// A credentialed (trusted) account is rooted at a real `home` instead of a
+		// walled `state_dir`; require the path that roots its runtime to be absolute
+		// (home when credentialed, else state_dir). A credentialed account may also
+		// carry a state_dir, but home is what its runtime uses.
+		if w.Home != "" {
+			// The shared `default` tier is the fallback for EVERY ungranted plugin. A
+			// `home:` there would silently make the credentialed (trusted) tier the
+			// default — every ungranted plugin would drop to a real user with their
+			// on-disk creds, by silence. The trusted tier must be opt-in by an explicit
+			// `run_as` grant only, never inherited via the fallback (grill: Armstrong).
+			if name == "default" {
+				return fmt.Errorf("accounts.default: the shared fallback tier must not be credentialed (remove `home:`) — an ungranted plugin would silently run as that real user; grant the trusted tier explicitly via a plugin's run_as instead")
+			}
+			if !filepath.IsAbs(w.Home) {
+				return fmt.Errorf("accounts.%s: home must be an absolute path (got %q)", name, w.Home)
+			}
+			if w.StateDir != "" && !filepath.IsAbs(w.StateDir) {
+				return fmt.Errorf("accounts.%s: state_dir must be an absolute path (got %q)", name, w.StateDir)
+			}
+		} else if !filepath.IsAbs(w.StateDir) {
+			return fmt.Errorf("accounts.%s: state_dir must be an absolute path (got %q)", name, w.StateDir)
+		}
+		if owner, dup := uidOwner[w.UID]; dup {
+			return fmt.Errorf("accounts.%s and accounts.%s share uid %d — duplicate uids are false isolation; give each account a distinct uid", owner, name, w.UID)
+		}
+		uidOwner[w.UID] = name
+	}
+	return nil
+}
+
+// validateAccountGrants verifies, at config load, that every plugin's `run_as`
+// grant resolves to an account defined in the `accounts` map (PrivSec ADR §4/§5;
+// luminary review Hickey A3/B3, Brooks F1, O×L F2). validateAccounts proves the host
+// CAN enforce; this proves every declared wall is BUILDABLE — moving a knowable fault
+// from spawn-time/per-plugin/late to boot-time/whole-config/early, consistent with
+// the all-or-refuse stance. An empty grant (no privsep request) is always fine; a
+// grant naming an undefined account (typo, or no accounts map at all) fails closed.
+func validateAccountGrants(cfg *Config) error {
+	// Deterministic ordering so a config with multiple bad grants fails identically
+	// every load.
+	names := make([]string, 0, len(cfg.Plugins))
+	for name := range cfg.Plugins {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+
+	for _, name := range names {
+		grant := cfg.Plugins[name].RunAs
+		if grant == "" {
+			continue // no privsep grant — resolves to default/unconfined at runtime
+		}
+		if _, ok := cfg.Accounts[grant]; !ok {
+			return fmt.Errorf("plugins.%s: run_as names an undefined account %q — define it in the accounts map or remove the grant (a declared wall must be buildable at boot, not fail per-job at first spawn)", name, grant)
+		}
+	}
 	return nil
 }
 

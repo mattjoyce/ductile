@@ -64,3 +64,65 @@ func TestBuildPluginEnvHonoursOperatorPassthrough(t *testing.T) {
 		t.Error("ungranted var leaked into plugin env")
 	}
 }
+
+func TestWithAccountRuntimeEnvRebasesHomeAndCache(t *testing.T) {
+	const stateDir = "/var/lib/ductile/accounts/default"
+	// Base env carries the GATEWAY's home — exactly what must not reach the child.
+	base := []string{"PATH=/usr/bin", "HOME=/var/lib/ductile", "TZ=Australia/Sydney"}
+
+	env := envMap(withAccountRuntimeEnv(base, stateDir))
+
+	if env["HOME"] != stateDir {
+		t.Errorf("HOME = %q, want account state_dir %q", env["HOME"], stateDir)
+	}
+	if env["XDG_CACHE_HOME"] != stateDir {
+		t.Errorf("XDG_CACHE_HOME = %q, want account state_dir %q", env["XDG_CACHE_HOME"], stateDir)
+	}
+	// Unrelated allowlisted vars are preserved untouched.
+	if env["PATH"] != "/usr/bin" || env["TZ"] != "Australia/Sydney" {
+		t.Errorf("non-override vars not preserved: PATH=%q TZ=%q", env["PATH"], env["TZ"])
+	}
+}
+
+func TestWithAccountRuntimeEnvDoesNotLeakGatewayHome(t *testing.T) {
+	const stateDir = "/var/lib/ductile/accounts/untrusted"
+	base := []string{"HOME=/var/lib/ductile", "HOME=/some/other", "XDG_CACHE_HOME=/var/lib/ductile/.cache"}
+
+	// Every inherited HOME/XDG_CACHE_HOME entry must be dropped — a single leftover
+	// gateway HOME would point a confined child at a dir it cannot write (or read).
+	for _, kv := range withAccountRuntimeEnv(base, stateDir) {
+		name, val, _ := strings.Cut(kv, "=")
+		if (name == "HOME" || name == "XDG_CACHE_HOME") && val != stateDir {
+			t.Errorf("inherited %s=%q survived; want only %q", name, val, stateDir)
+		}
+	}
+}
+
+func TestWithCredentialedHomeRebasesHomeOnly(t *testing.T) {
+	const home = "/home/matt"
+	// Base carries the gateway's HOME (must be replaced) plus passthrough + cache
+	// vars (must survive untouched — credentialed is NOT walled like confined).
+	base := []string{"PATH=/usr/bin", "HOME=/var/lib/ductile", "XDG_CACHE_HOME=/var/lib/ductile/.cache", "SSH_AUTH_SOCK=/run/agent.sock"}
+
+	env := envMap(withCredentialedHome(base, home))
+
+	if env["HOME"] != home {
+		t.Errorf("HOME = %q, want real home %q", env["HOME"], home)
+	}
+	// Unlike the confined rebase, ONLY HOME changes — cache defaults under the real
+	// home, and operator-granted passthrough (SSH_AUTH_SOCK) is preserved.
+	if env["XDG_CACHE_HOME"] != "/var/lib/ductile/.cache" {
+		t.Errorf("credentialed runtime must not pin XDG_CACHE_HOME; got %q", env["XDG_CACHE_HOME"])
+	}
+	if env["SSH_AUTH_SOCK"] != "/run/agent.sock" || env["PATH"] != "/usr/bin" {
+		t.Errorf("passthrough env altered: SSH_AUTH_SOCK=%q PATH=%q", env["SSH_AUTH_SOCK"], env["PATH"])
+	}
+}
+
+func TestWithCredentialedHomeDropsGatewayHome(t *testing.T) {
+	for _, kv := range withCredentialedHome([]string{"HOME=/var/lib/ductile", "HOME=/other"}, "/home/matt") {
+		if name, val, _ := strings.Cut(kv, "="); name == "HOME" && val != "/home/matt" {
+			t.Errorf("inherited gateway HOME=%q leaked; want only /home/matt", val)
+		}
+	}
+}

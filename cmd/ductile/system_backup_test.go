@@ -487,3 +487,44 @@ func contains(haystack []string, needle string) bool {
 	}
 	return false
 }
+
+// #104: lock the secret-zero exclusion under the ADR filesystem layout, where the
+// age key lives in a `secret/` SUBDIR of the config dir (secrets.age_key_file points
+// inside the config tree). A `--scope config`/`all` archive must contain NEITHER the
+// key file NOR any `secret/` entry — the key's safety is enforced, not incidental.
+func TestBackupNeverContainsSecretZeroADRLayout(t *testing.T) {
+	for _, scope := range []backupScope{scopeConfig, scopeAll} {
+		t.Run(scope.name(), func(t *testing.T) {
+			fx := newBackupFixture(t)
+			// ADR layout: vault.age in the config dir; age key in <configDir>/secret/age.key.
+			if err := os.WriteFile(filepath.Join(fx.configDir, "vault.age"), []byte("AGE-ENCRYPTED-VAULT-BLOB"), 0o600); err != nil {
+				t.Fatalf("write vault.age: %v", err)
+			}
+			if err := os.MkdirAll(filepath.Join(fx.configDir, "secret"), 0o700); err != nil {
+				t.Fatalf("mkdir secret: %v", err)
+			}
+			if err := os.WriteFile(filepath.Join(fx.configDir, "secret", "age.key"), []byte("AGE-SECRET-KEY-PRIVATE"), 0o600); err != nil {
+				t.Fatalf("write secret/age.key: %v", err)
+			}
+			t.Setenv("DUCTILE_AGE_KEY_FILE", "")
+
+			cfg := &config.Config{}
+			cfg.State.Path = fx.dbPath
+			cfg.Secrets.AgeKeyFile = "secret/age.key" // co-located, sshd-style (ADR)
+
+			plan, err := buildBackupPlan(scope, cfg, fx.configDir, fx.dbPath)
+			if err != nil {
+				t.Fatalf("buildBackupPlan: %v", err)
+			}
+			dest := filepath.Join(t.TempDir(), "out.tar.gz")
+			if err := writeBackupArchive(dest, plan); err != nil {
+				t.Fatalf("writeBackupArchive: %v", err)
+			}
+			for _, p := range tarPaths(t, dest) {
+				if strings.HasSuffix(p, "age.key") || strings.Contains(p, "/secret/") || strings.HasPrefix(p, "secret/") {
+					t.Fatalf("secret-zero must NEVER be in a %s archive; found %q", scope.name(), p)
+				}
+			}
+		})
+	}
+}

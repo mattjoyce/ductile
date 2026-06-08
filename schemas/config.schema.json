@@ -51,6 +51,13 @@
         "$ref": "#/$defs/PluginConf"
       }
     },
+    "accounts": {
+      "type": "object",
+      "description": "Privsep account tiers keyed by name (PrivSec ADR §5). Each maps to an unprivileged OS identity a plugin is dropped to at spawn. Open map; ship/document `default` + `untrusted`. An absent/empty map engages the boot gate (no capability → unconfined; CAP_SETUID → refuse), not a synthesised default.",
+      "additionalProperties": {
+        "$ref": "#/$defs/AccountConf"
+      }
+    },
     "instances": {
       "type": "array",
       "description": "Outbound named relay instances.",
@@ -87,6 +94,17 @@
         { "required": ["service", "state", "plugin_roots"] }
       ]
     },
+    "AccountConf": {
+      "type": "object",
+      "description": "An unprivileged account identity (PrivSec ADR §5). uid/gid are positive (never 0/root); state_dir is an absolute path the account owns. No two accounts may share a uid (duplicate uids are false isolation).",
+      "properties": {
+        "uid": { "type": "integer", "minimum": 1, "description": "Unprivileged user id (>0; never root). Provisioned by the deploy layer (sysusers.d / image), referenced here by number." },
+        "gid": { "type": "integer", "minimum": 1, "description": "Unprivileged group id (>0)." },
+        "state_dir": { "type": "string", "minLength": 1, "description": "Absolute path to the account's owned, persistent 0700 state directory (created/reconciled at boot — see card #87)." }
+      },
+      "required": ["uid", "gid", "state_dir"],
+      "additionalProperties": false
+    },
     "SecretsConfig": {
       "type": "object",
       "description": "Encryption-at-rest settings (age). Encrypted config/token includes are decrypted in memory at load, before ${ENV} interpolation.",
@@ -94,6 +112,10 @@
         "age_key_file": {
           "type": "string",
           "description": "Path to the age identity (private key) file used to decrypt encrypted includes. Relative paths resolve against the config dir. Overridden by the DUCTILE_AGE_KEY_FILE environment variable. The file must have mode 0600 or load fails. When unset and no default key file exists, encryption at rest is off."
+        },
+        "vault_file": {
+          "type": "string",
+          "description": "Path to the age-encrypted vault blob (the owned secret store). Relative paths resolve against the config dir; unset uses the default <configDir>/vault.age. The vault.age is mutable STATE (daemon sole-writer) — under the FHS layout (docs/adr/filesystem-layout.md) it lives in /var/lib/ductile, so this key points there explicitly."
         }
       },
       "additionalProperties": false
@@ -184,7 +206,7 @@
         },
         "strict_mode": {
           "type": "boolean",
-          "description": "DEPRECATED bundled admission switch. strict_mode: true is an alias enabling all four admission policies; prefer an explicit service.admission block. When admission is also set, strict_mode is ignored. P2-10.",
+          "description": "DEPRECATED bundled admission switch. strict_mode: true is an alias enabling all admission policies; prefer an explicit service.admission block. When admission is also set, strict_mode is ignored. P2-10.",
           "deprecated": true,
           "default": false
         },
@@ -198,6 +220,11 @@
           "description": "Maximum on-hook lifecycle chain depth. A root job that fires a hook produces a depth-1 hook job; if that hook job's plugin also has notify_on_complete: true, its hook is depth 2, and so on. The dispatcher refuses any hook enqueue beyond this cap. 0 means use the built-in default (4). Negative values are rejected. P2-11.",
           "minimum": 0,
           "default": 4
+        },
+        "unconfined": {
+          "type": "boolean",
+          "description": "Privsep boot-gate escape hatch (PrivSec ADR §5). When true, the gateway runs plugins at its own uid (no privilege drop) even on a host that holds the drop capability and configures accounts — the one explicit, audited way to opt out of enforcement. Logged loudly at boot. Default false: capability and a configured accounts map must agree, or the gateway refuses to start.",
+          "default": false
         }
       },
       "additionalProperties": false
@@ -224,6 +251,11 @@
         "require_api_auth": {
           "type": "boolean",
           "description": "Reject an enabled API that has no auth tokens configured.",
+          "default": false
+        },
+        "fail_on_sidedoor": {
+          "type": "boolean",
+          "description": "Promote a CONFINED drop account's detected host root side-door (passwordless sudo, docker/lxd/incus group, writable secure_path or setuid-root binary) from a loud boot warning to a boot refusal — the privsep wall is a lie for an account that can escalate to root anyway (#111). Credentialed (trusted) accounts are root-equivalent by design and are never failed closed. Detection is best-effort; the default (false) warns loudly and never bricks a boot.",
           "default": false
         }
       },
@@ -316,6 +348,19 @@
         "uses": {
           "type": "string",
           "description": "Alias: use another plugin's implementation by name."
+        },
+        "run_as": {
+          "type": "string",
+          "description": "Privsep account this plugin is granted (PrivSec ADR §4; names an entry in the top-level accounts map). The operator's core config grants privilege — a manifest hint is never trusted. Empty/absent = no grant (falls back to the shared default account, or unconfined if none)."
+        },
+        "vault_principal": {
+          "type": "string",
+          "description": "The vault principal this plugin composes its secrets under (default: the plugin name). The vault rejects non-kebab principal names, so this maps a snake_case plugin (discord_notify) to a kebab principal (discord-notify) WITHOUT renaming the plugin and breaking its config/pipeline refs (#107). Attestation still uses the plugin name."
+        },
+        "requires_vault": {
+          "type": "boolean",
+          "description": "When true, vault secret delivery is MANDATORY for this plugin: an unknown/unregistered vault principal (the plugin name) fails the spawn CLOSED instead of opting out (#108). Closes the fail-open seam where a misnamed/unregistered principal silently runs the plugin with no secrets. Default false preserves the coexistence opt-out for keyless plugins.",
+          "default": false
         },
         "schedule": {
           "$ref": "#/$defs/ScheduleConfig",

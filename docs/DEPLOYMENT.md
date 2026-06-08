@@ -187,6 +187,171 @@ journalctl --user -u ductile-local -f
 
 ---
 
+## 5b. Privsep — system service with account users (opt-in)
+
+The `--user` service above runs every plugin as your own uid (hygiene-only, ADR
+Layer 1a). To contain a *popped* plugin — so it cannot read the gateway's secrets
+or another plugin's memory — run the gateway as a **system service holding only
+`CAP_SETUID`+`CAP_SETGID`** and drop each plugin to an unprivileged **account** user
+(ADR Layer 1b). Templates live in [`deploy/systemd/`](../deploy/systemd/).
+
+**The model:** the binary is never setuid — privilege is *init-conferred*. The
+gateway runs as the unprivileged `ductile` account with exactly the two capabilities,
+just enough to setuid each plugin to its account at spawn. A cap-only gateway holds
+**no `CAP_CHOWN`**, so the accounts and their `0700` state dirs are provisioned
+by the init layer (`sysusers.d` + `tmpfiles.d`); the gateway only **verifies** them
+at boot and **refuses to start** if they are wrong (fail-closed).
+
+Install once, as root:
+
+```bash
+sudo install -m0644 deploy/systemd/ductile-accounts.sysusers.conf  /etc/sysusers.d/ductile-accounts.conf
+sudo install -m0644 deploy/systemd/ductile-accounts.tmpfiles.conf  /etc/tmpfiles.d/ductile-accounts.conf
+sudo systemd-sysusers                                              # create ductile + account users
+sudo systemd-tmpfiles --create /etc/tmpfiles.d/ductile-accounts.conf  # create 0700 account dirs
+sudo install -m0644 deploy/systemd/ductile.service                /etc/systemd/system/ductile.service
+sudo systemctl daemon-reload && sudo systemctl enable --now ductile
+```
+
+Match the config `accounts:` map to the provisioned uids/dirs:
+
+```yaml
+accounts:
+  default:   { uid: 1001, gid: 1001, state_dir: /var/lib/ductile/accounts/default }
+  untrusted: { uid: 1002, gid: 1002, state_dir: /var/lib/ductile/accounts/untrusted }
+plugins:
+  sys_exec:  { run_as: untrusted }   # arbitrary-command → isolated tier
+  # ungranted first-party plugins fall back to the shared `default` tier
+```
+
+> **One source of truth you hand-maintain (T11).** The same `{uid, gid, state_dir}` triple
+> is written in **three** places that must agree exactly: the config `accounts:` map (above),
+> `ductile-accounts.sysusers.conf` (which *creates* the users), and `ductile-accounts.tmpfiles.conf`
+> (which *creates* the `0700` state dirs). There is no generator — you keep them in sync by hand.
+> The safety net is that the gateway **verifies the coupling at boot and refuses to start** if it
+> disagrees (a `run_as:` grant naming an account absent from the map fails even earlier, at config
+> *load*). So a mismatch costs you a loud crash-loop, never a silent half-confined run — but the
+> coupling itself is yours to maintain. Keep the three files adjacent in review for that reason.
+
+**The boot gate is fail-closed (ADR §5):** capability and a configured `accounts`
+map must agree. A privileged gateway with no accounts, or accounts configured on a
+host without the capability, **refuses to start** — never a silent run at gateway
+privilege. The one escape hatch is an explicit `service.unconfined: true`. The full
+truth table and the new boot-time refusals/warnings are in [§5c](#5c-privsep-config-reference).
+
+> **Dev gotcha — root with no accounts refuses to boot, by design (T13).** If you start
+> the daemon as **root** (or via `sudo`) on a box with **no `accounts:` map** — the common
+> shape when poking at it locally — the boot gate sees *capability held, nothing to drop to*
+> and **refuses to start**: `privsep boot gate: gateway holds the uid-drop capability but no
+> accounts are configured`. This is correct, not a regression — a privileged daemon with no
+> wall to build is the worst case. The one-line fix for local/dev work is the explicit, loud
+> escape hatch:
+>
+> ```yaml
+> service:
+>   unconfined: true   # run at the gateway uid on purpose; logged loudly at boot
+> ```
+>
+> Or simply don't run the daemon privileged in dev — an ordinary `--user` service with no
+> `accounts:` map runs `unconfined` quietly (the dev cell of the boot gate). Reserve root +
+> `accounts:` for the real enforcing deployment.
+
+**Utility subcommands stay unprivileged:** `ductile config validate`, `secrets
+keygen`, etc. run as the *caller* (the binary is not setuid), so they cannot read
+the `0600` root-owned age key — exactly as intended.
+
+**macOS (launchd): enforce is Linux-proven, macOS-pending (T12).** Privilege-dropping
+enforce mode is proven only on a privileged **Linux** host so far; the launchd equivalent
+and the live rollout are still open — see [[95-privsep-launchd-and-live-rollout]] (and
+[MACOS_INSTALLATION.md](MACOS_INSTALLATION.md) for the install shape). Until then a Mac runs
+**hygiene-only / `unconfined`** (no `accounts:` map, no drop capability under launchd), which
+the boot gate permits quietly. Do not assume a Mac gateway is confined.
+
+### Docker / Unraid — hygiene-only by default (decision, card #89)
+
+**The Docker/Unraid image stays hygiene-only (ADR Layer 1a) — no account drop.** The
+image runs `USER ductile` (unprivileged), and adopting full privsep there would
+*raise* the container's privilege (run as root or with `SETUID`/`SETGID` caps),
+which is the worst trade on the one host where a privileged container is most
+costly. The ADR explicitly allows hygiene-only as a legitimate per-host default,
+and at one author it is the honest choice.
+
+You lose nothing silently: with **no `accounts:` map configured**, the boot gate runs
+the gateway `unconfined` — exactly today's behaviour — and 1a still bounds the spawn
+(env allowlist + secrets only over stdin). And the gate is **fail-closed against
+misconfiguration**: if you *do* add an `accounts:` map to a container that lacks the
+drop capability, the gateway **refuses to start** rather than presenting a wall it
+cannot enforce. So "hygiene-only" here is a deliberate, safe state, not a silent gap.
+
+*If you ever want full uid separation in a container* (e.g. running `sys_exec` on
+Unraid): run it `--cap-add=SETUID --cap-add=SETGID` (prefer caps over root), bake
+the account uids into the image, provision the per-account `0700` dirs on a persistent
+volume (the tmpfiles.d equivalent), and bind-mount the `0600` age key from the host
+(no TPM/Keychain in a container). That is opt-in and intentionally undocumented as a
+default — the homelab floor is hygiene-only.
+
+---
+
+## 5c. Privsep config reference
+
+Lookup-only companion to the §5b how-to: every privsep config key, the boot-gate
+outcomes, the reserved tier names, and the failure modes — in one greppable place.
+For *why* it is shaped this way, see the ADR (`Ductile - PrivSec and Secrets.md`).
+
+### Config keys
+
+| Key | Type | Meaning |
+|---|---|---|
+| `accounts:` | map (open) | Privsep account tiers, keyed by name. Each value is an account identity. Absent/empty map → boot gate decides posture (below). |
+| `accounts.<name>.uid` | int > 0 | Unprivileged user id the plugin is dropped to. Never `0`/root. Provisioned by `sysusers.d`; referenced here by number. No two accounts may share a uid (false isolation). |
+| `accounts.<name>.gid` | int > 0 | Unprivileged group id. |
+| `accounts.<name>.state_dir` | absolute path | The account's owned, persistent `0700` dir (created by `tmpfiles.d`, reconciled/verified at boot). |
+| `plugins.<name>.run_as` | string | The account this plugin is granted (names an `accounts:` entry). Empty/absent = no grant → falls back to the `default` tier, or `unconfined` if no `default` exists. The operator grants this — a plugin manifest hint is never trusted. |
+| `service.unconfined` | bool (default `false`) | Boot-gate escape hatch: run plugins at the gateway uid (no drop) even on a capable/configured host. Logged loudly. The only sanctioned way to opt out of enforcement. |
+
+### Reserved tier keywords (T14)
+
+Two account names are matched **by name in code** — they are not ordinary tiers:
+
+| Name | Role | Absence behavior |
+|---|---|---|
+| `default` | The tier an **ungranted** plugin (no `run_as:`) falls back to. | No `default` tier → ungranted plugins run **`unconfined`** (gateway uid), and the gateway **warns at boot**. |
+| `untrusted` | The most-restricted tier a **fingerprint-mismatched** plugin is downgraded to (supply-chain-swap defence). | No `untrusted` tier → a fingerprint mismatch has no downgrade target, so that plugin's spawn is **terminal/no-retry** (`ErrNoDowngradeTarget`), and the gateway **warns at boot**. |
+
+`unconfined` is **not** an account name — it is the named *no-drop state* (gateway uid).
+Never define an account called `unconfined`; reach the state via an absent `accounts:`
+map or `service.unconfined: true`.
+
+### Boot-gate outcomes (capability × accounts)
+
+Evaluated once at startup and on reload (`internal/dispatch/bootgate.go`). The drop
+**capability** is `CAP_SETUID`+`CAP_SETGID` (or root); **accounts configured** means a
+non-empty `accounts:` map.
+
+| | accounts configured | no accounts configured |
+|---|---|---|
+| **capability held** | **enforce** — drop each plugin to its account | **REFUSE to start** — privileged daemon with nothing to drop to |
+| **no capability** | **REFUSE to start** — a wall declared the host cannot build | **`unconfined`** — quiet info log (today's dev behaviour) |
+
+The single invariant: **capability and accounts-configured must agree.** Disagreement
+either direction is a fatal boot error. The one override is `service.unconfined: true`,
+which forces `unconfined` from any cell and is logged loudly.
+
+### Failure modes (when privsep stops a boot or a spawn)
+
+| Condition | When it fires | Outcome |
+|---|---|---|
+| `run_as:` names an account absent from `accounts:` (typo, or no `accounts:` map at all) | config **load** | config rejected — daemon does not boot |
+| capability ↔ accounts disagree (the two REFUSE cells above) | boot gate | refuse to start (unless `service.unconfined: true`) |
+| secrets surface or an `accounts` `state_dir` is foreign-owned / un-tightenable | boot (filesystem reconcile) | refuse to start (all-or-refuse; never half-confined) |
+| no `default` tier defined while enforcing | boot | **warn**; ungranted plugins run `unconfined` |
+| no `untrusted` tier defined while enforcing | boot | **warn**; a later fingerprint mismatch has no downgrade target |
+| plugin fails fingerprint attestation, `untrusted` tier exists | spawn | downgraded to `untrusted` (runs, contained) |
+| plugin fails fingerprint attestation, no `untrusted` tier | spawn | `ErrNoDowngradeTarget` — **terminal, no retry** |
+| the uid/gid drop itself is refused by the kernel at spawn | spawn | `ErrAccountDropFailed` — **terminal, no retry** (never falls back to gateway uid) |
+
+---
+
 ## 6. Verification Checklist
 
 After starting the service, verify the following:

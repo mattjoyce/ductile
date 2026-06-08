@@ -1,0 +1,38 @@
+# ductile-admin.service — the UNCONFINED admin-glue instance (card #106).
+#
+# The ADR data-plane/admin split made real: this SECOND ductile instance runs the
+# automation that CANNOT be confined to an unprivileged account uid — `docker compose`,
+# apt/system scripts, the `fabric` tool (bound to ~/.config/fabric), `file_handler`
+# reading the operator's home, and the `*_notify` plugins triggered by them.
+#
+# It is HYGIENE-ONLY by design (PrivSec ADR Layer 1a): it has NO `accounts:` map, so the
+# boot gate runs it `unconfined` (plugins execute at THIS service's uid). It therefore runs
+# as a PRIVILEGED user (in the `docker` group / with the host access the admin tasks need) —
+# deliberately distinct from the enforced data-plane gateway (ductile.service), which runs as
+# the unprivileged `ductile` account with only CAP_SETUID/SETGID.
+#
+# This is a TEMPLATE — adjust before installing:
+#   - User=            the privileged user that runs admin tasks (docker group; NOT `ductile`)
+#   - --config path    its own config dir (separate from the enforced gateway's /etc/ductile)
+#   - api listen port  MUST differ from the enforced gateway's (e.g. :8092 vs :8081)
+#   - provision /var/lib/ductile-admin + /etc/ductile-admin owned by User= above
+# The two instances share the binary; they differ only in identity + config.
+
+[Unit]
+Description=Ductile Admin-Glue Gateway (unconfined, ADR Layer 1a)
+After=network.target docker.service
+
+[Service]
+Type=simple
+User=ductile-admin
+# NO AmbientCapabilities and NO accounts: map in its config → boot gate resolves to
+# `unconfined` (hygiene-only, by design). Add the user to the docker group out of band.
+WorkingDirectory=/var/lib/ductile-admin
+ExecStart=/usr/local/bin/ductile system start --config /etc/ductile-admin/config.yaml
+Restart=on-failure
+RestartSec=5s
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
