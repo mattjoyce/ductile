@@ -387,6 +387,118 @@ Apple Developer ID codesigning would anchor the designated code requirement on a
 
 ---
 
+## 10. Enforced (privsep) Deployment — Root LaunchDaemon
+
+Sections 1–9 install the **unconfined** dev gateway: a `LaunchAgent` that runs as *you*, in
+your GUI session. That is posture #1 in [DEPLOYMENT_POSTURES.md](DEPLOYMENT_POSTURES.md).
+
+This section covers the **enforced** posture — plugins dropped to unprivileged worker accounts
+behind a uid wall (PrivSec ADR Layer 1b). On macOS that requires a **root `LaunchDaemon`**, and
+the templates live at `deploy/launchd/com.mattjoyce.ductile.plist` + `deploy/install-macos.sh`.
+*Proven live on MacM1, 2026-06-08 (card #95): a confined `sys_exec` dropped to `uid=1002` and a
+root `0600` secret read back `Permission denied`.*
+
+### 10.1 Why root — and why that's the only option here
+
+launchd has **no per-capability grant** (no `CAP_SETUID`/`CAP_SETGID` like systemd). To
+`setuid`-drop each plugin to its account uid, the gateway needs `euid 0`, so it runs as a **root
+LaunchDaemon** (the plist has no `UserName` key → root). The Linux non-root + two-caps posture is
+**unreachable** on macOS.
+
+- The binary is **never setuid** — privilege is conferred by launchd starting the daemon as root.
+- macOS's threat model differs from Linux: `task_for_pid` is SIP-gated, so a dropped worker can't
+  trivially inspect the root gateway's memory. It is **still root**, though — document this posture
+  honestly; do not claim Linux-identical least-privilege.
+
+### 10.2 Layout: everything under `/opt/ductile` (NOT `/etc` or `/var`)
+
+On macOS `/etc`, `/var`, and `/tmp` are **symlinks** to `/private/*`. Ductile's **runtime** refuses
+symlinked config paths (a path-swap guard — stricter than `config check`, which only *warns*). A
+config under `/etc/ductile` fails to start: `symlinks detected in config paths but not allowed`.
+
+So site config/state/logs on a **real** path — `/opt/ductile/{etc,var,log,plugins}` (`/opt` is a
+real dir; the same reason Homebrew uses `/usr/local/etc`). **Do not** paper over it with
+`service.allow_symlinks: true` — that weakens the guard on the very deployment whose purpose is the
+wall. The binary stays at `/usr/local/bin/ductile` (on PATH for the CLI; not a config path).
+
+### 10.3 Install the package layer
+
+```bash
+sudo BIN_SRC=/path/to/ductile bash deploy/install-macos.sh
+```
+
+Creates hidden, nologin worker accounts `_ductile-default`(1001)/`_ductile-untrusted`(1002) via
+`dscl` (the macOS analog of `sysusers.d`), lays the `/opt/ductile` skeleton (root:wheel — `etc`
+0700, `var` 0711 + per-worker `0700` dirs, `plugins` world r-x, `log`), installs the binary 0755
+(never setuid) and the root LaunchDaemon plist (root:wheel 0644). Override `DEFAULT_UID` /
+`UNTRUSTED_UID` to dodge a uid collision (the installer refuses to co-opt an in-use uid).
+
+### 10.4 Place operator data
+
+Plugin code → `/opt/ductile/plugins/<name>/` (root-owned, world r-x). Secret-zero (age key) →
+`/opt/ductile/etc/secret/age.key` (0600 root). Config → `/opt/ductile/etc/config.yaml`:
+
+```yaml
+service:
+  name: ductile-mac
+  log_format: json
+plugin_roots:
+  - /opt/ductile/plugins
+api:
+  enabled: false          # or enable with vault-backed tokens — see DEPLOYMENT.md
+state:
+  path: /opt/ductile/var/state.db
+accounts:
+  default:                # REQUIRED — see the warning below
+    uid: 1001
+    gid: 1001
+    state_dir: /opt/ductile/var/accounts/default
+  untrusted:
+    uid: 1002
+    gid: 1002
+    state_dir: /opt/ductile/var/accounts/untrusted
+plugins:
+  my_plugin:
+    enabled: true
+    run_as: untrusted     # grant: this plugin drops to the untrusted worker
+```
+
+> **⚠ Always define a `default` account.** A plugin with no `run_as` grant falls back to the
+> `default` tier. If you omit `default`, ungranted plugins run at the **gateway uid — which is root
+> on macOS**. The gateway warns loudly (`WARN: no 'default' account tier configured — ungranted
+> plugins will run UNCONFINED`), but the safe wall is the one you configure, not the one you assume.
+
+### 10.5 Load and verify the wall
+
+```bash
+sudo launchctl bootstrap system /Library/LaunchDaemons/com.mattjoyce.ductile.plist
+tail -f /opt/ductile/log/ductile.log     # expect: "privsep enforcing: plugins drop to their resolved account"
+```
+
+Independent wall-bite check (no gateway needed) — the worker can't even traverse the 0700 config dir:
+
+```bash
+sudo -u _ductile-untrusted cat /opt/ductile/etc/secret/age.key
+# cat: /opt/ductile/etc/secret/age.key: Permission denied
+```
+
+A confined plugin run shows `uid=NNNN(_ductile-<tier>)` and `Permission denied` on gateway secrets.
+Stop the daemon with `sudo launchctl bootout system/com.mattjoyce.ductile`.
+
+### 10.6 Enforced-mode gotchas
+
+- **`sys_exec` (and peers) shell out *without* a shell.** `config.command` is `shlex.split` + `exec`
+  — no redirects, pipes, `;`, or `$?`. Wrap shell scripts as `sh -c '…'` (one arg after the split).
+- **Coexistence.** This enforced daemon (Label `com.mattjoyce.ductile`, **system** domain) is fully
+  separate from the dev LaunchAgent (`com.mattjoyce.ductile-local`, **gui** domain) — different
+  label; keep the API off or on a distinct `listen` so the two never clash.
+- **Confined ≠ TCC-granted.** Confined data plugins should operate within `/opt/ductile` and explicit
+  job inputs, not the operator's TCC-protected dirs (`~/Documents`, `/Volumes/…`). Reaching the
+  operator's files/creds is the *credentialed* (trusted) tier, a deliberate opt-in — see
+  [DEPLOYMENT_POSTURES.md](DEPLOYMENT_POSTURES.md), not this confined path.
+
+---
+
 ## Known Differences from Linux Deployment
 
 1. **No `~` expansion in config YAML** — `plugin_roots` and `state.path` do not expand `~`. Use absolute paths (e.g. `/Users/mattjoyce/...`).
@@ -394,12 +506,14 @@ Apple Developer ID codesigning would anchor the designated code requirement on a
 3. **launchd owns PATH** — plugins that shell out (e.g. `sys_exec`) inherit only the PATH set in the plist, not your shell's PATH. Add Homebrew (`/opt/homebrew/bin`) explicitly.
 4. **`strict_mode: false` recommended initially** — On first install, strict mode will reject config files with warnings. Disable until the config is stable, then re-enable.
 5. **TCC resets on every rebuild** — ad-hoc signed binaries change cdhash on every build, invalidating TCC Files-and-Folders grants. See section 9.1 for the required pre-warm step. Linux has no equivalent.
+6. **Enforced mode runs as root, not cap-only** (Section 10) — launchd has no `CAP_SETUID` equivalent, so the privsep gateway is a root `LaunchDaemon` (Linux runs non-root + two caps). Site config under `/opt/ductile`, never `/etc`/`/var` (those are symlinks, which the runtime config-path guard refuses).
 
 ---
 
 ## See Also
 
 - [DEPLOYMENT.md](DEPLOYMENT.md) — Linux/systemd reference deployment
+- [DEPLOYMENT_POSTURES.md](DEPLOYMENT_POSTURES.md) — unconfined / full-privsep / hybrid trust-tier chooser (Section 10 above is the enforced posture on macOS)
 - [GETTING_STARTED.md](GETTING_STARTED.md) — Quickstart with the echo plugin
 - [CONFIG_REFERENCE.md](CONFIG_REFERENCE.md) — Full config schema reference
 - [OPERATOR_GUIDE.md](OPERATOR_GUIDE.md) — Day-2 operations, monitoring, maintenance

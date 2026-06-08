@@ -2,7 +2,6 @@ package dispatch
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"log/slog"
 	"sort"
@@ -27,10 +26,6 @@ import (
 // CONFINED account under strict mode, fails the boot CLOSED: strict mode means
 // "refuse when containment cannot be proven." False positives still never brick a
 // NON-strict boot (the default), which only ever warns.
-
-// errProbeUnsupported is returned by the non-POSIX OSLookup so that the audit treats
-// such a platform as INCONCLUSIVE (loudly), never as a silent clean pass.
-var errProbeUnsupported = errors.New("side-door probes unsupported on this platform")
 
 // dangerousGroups maps a supplementary group to why its membership is an uncontested
 // path to host root, INDEPENDENT of sudo: the docker/lxd/incus control sockets each

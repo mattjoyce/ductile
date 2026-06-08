@@ -1,0 +1,63 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Ductile gateway — privsep system service on macOS (PrivSec ADR §3 Layer 1b, card #95).
+
+  This is the launchd peer of deploy/systemd/ductile.service. The crucial difference:
+  launchd has NO per-capability grant (no CAP_SETUID/SETGID equivalent), so the gateway
+  MUST run as root to setuid-drop each plugin to its account uid. There is no `UserName`
+  key below — a LaunchDaemon with no UserName runs as root, and root is REQUIRED here.
+  (The Linux non-root + two-caps posture is unreachable on macOS; see
+  docs/DEPLOYMENT_POSTURES.md. The setuid wall itself is proven on Darwin — card #95
+  Phase 0, commit 5770b59.) The on-disk binary stays root-owned 0755 and is NEVER setuid:
+  privilege is conferred by launchd starting the daemon as root, not by the file (ADR §11).
+
+  Install to /Library/LaunchDaemons/com.mattjoyce.ductile.plist (root:wheel, 0644 — launchd
+  refuses a group/world-writable plist). Load:   sudo launchctl bootstrap system <path>
+  Stop/unload:                                    sudo launchctl bootout  system/com.mattjoyce.ductile
+  deploy/install-macos.sh lays this down along with the worker accounts and FHS skeleton.
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.mattjoyce.ductile</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/usr/local/bin/ductile</string>
+        <string>system</string>
+        <string>start</string>
+        <string>--config</string>
+        <string>/opt/ductile/etc/config.yaml</string>
+    </array>
+
+    <!-- NO UserName key => runs as root. Required: only euid 0 can setuid-drop to the
+         worker account uids on macOS (launchd has no cap-only model). -->
+
+    <key>RunAtLoad</key>
+    <true/>
+
+    <!-- Restart only on failure (mirrors systemd Restart=on-failure): KeepAlive unless
+         the process exited 0. -->
+    <key>KeepAlive</key>
+    <dict>
+        <key>SuccessfulExit</key>
+        <false/>
+    </dict>
+
+    <key>WorkingDirectory</key>
+    <string>/opt/ductile/var</string>
+
+    <!-- launchd has no journal; capture stdio to files the installer creates 0755-root.
+         Everything lives under /opt (a REAL dir on macOS) — NOT /etc or /var, which are
+         symlinks to /private/* and trip ductile's runtime config-path symlink guard. -->
+    <key>StandardOutPath</key>
+    <string>/opt/ductile/log/ductile.log</string>
+    <key>StandardErrorPath</key>
+    <string>/opt/ductile/log/ductile.err</string>
+
+    <!-- Long-running background service, not a UI job. -->
+    <key>ProcessType</key>
+    <string>Background</string>
+</dict>
+</plist>

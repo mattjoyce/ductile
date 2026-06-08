@@ -1,6 +1,6 @@
 ---
 id: 95
-status: todo
+status: done
 priority: High
 blocked_by: [88]
 tags: [privsep, deploy, launchd, ops]
@@ -34,30 +34,71 @@ running confined on a live host.
 wall FIRST, alone, before any template. The macOS gateway is a **root LaunchDaemon** (launchd has no
 cap-only model; an Agent runs as-you and physically can't `setuid`-drop → confinement ⟺ root Daemon).
 
-### Phase 0 — Prove the wall on Darwin (this Mac M1) ← the whole risk
-- Lift the four proof files off `_linux` build tags and retag `_unix`/`_darwin`, patching Linux-isms
-  (no `/proc`, perms/SIP differences): `privsep_wall_linux_test.go`,
-  `privsep_negative_suite_linux_test.go`, `privsep_capdrop_linux_test.go`, `fsreconcile_linux_test.go`.
-- Create 2–3 throwaway hidden worker accounts via `dscl` (needs sudo — surface explicitly).
-- `sudo go test` (root, so it can really setuid-drop). Assert: confined plugin lands on worker uid ·
-  cross-account read of age key → `Permission denied` · drop-without-privilege fails **closed**.
-- **Gate:** green → v1.0 claim is real, rest is mechanical. Red/surprise (SIP, setuid semantics) → found
-  cheaply, before building install tooling on a false floor.
+### Phase 0 — Prove the wall on Darwin (this Mac M1) ← the whole risk — **PROVEN 2026-06-08 ✅**
+- **DONE (commit 7b01531):** wall / negative-suite / fsreconcile proofs ported off `_linux` tags →
+  `darwin || linux || *bsd` (the `_linux` *filename suffix* alone was forcing linux-only). No `/proc`
+  dependency; script-probe based, so they ported unchanged. `capdrop` stays `_linux` (CAP_SETUID-only/
+  non-root has no macOS equivalent — the as-root path is the macOS story).
+- **`dscl` accounts NOT needed:** `applyAccountCredential` sets a purely numeric `Credential{Uid,Gid,
+  Groups:[gid]}` (no `initgroups`), so root setuid-drops to uid 65534/65533 worked with no account
+  provisioning. The macOS "setuid to a non-existent uid" wrinkle did not materialize.
+- **GREEN on `sudo /tmp/dispatch.test` (root, this M1):** all three PASS —
+  `TestReconcileAccountFilesystemAsRoot`, `TestPrivsepNegativeSuite`
+  (`key/config/statedb/sibling=DENIED, own=WRITABLE`), `TestPrivsepAccountCannotReadAgeKey` (0600 age
+  key → DENIED). **The setuid wall holds on Darwin.** Non-root run SKIPs (skip ≠ pass, #90 honoured).
+- **Verdict:** the load-bearing risk is retired — Mac-as-v1.0 is now mechanical (Phases 1–3: templates,
+  live deploy-as-new, docs). No SIP/setuid surprise at the mechanism level.
 
-### Phase 1 — Templates (only after Phase 0 green)
-- `deploy/launchd/com.mattjoyce.ductile.plist`: root, `RunAtLoad`+`KeepAlive`, mirrors
-  `deploy/systemd/ductile.service`; binary stays root-owned `0755`, **never** setuid.
-- Darwin branch in `deploy/install.sh`: `dscl`/`sysadminctl` create hidden worker accounts + `0700`
-  dirs (the launchd answer to `sysusers.d`+`tmpfiles.d`).
+### Phase 1 — Templates — **DONE 2026-06-08 ✅**
+- **`deploy/launchd/com.mattjoyce.ductile.plist`** (new): root LaunchDaemon (no `UserName` key →
+  runs as root), `RunAtLoad` + `KeepAlive{SuccessfulExit=false}` (= systemd `Restart=on-failure`),
+  stdio → `/var/log/ductile/*` (no journal on macOS), binary `/usr/local/bin/ductile`, never setuid.
+  `plutil -lint` OK; verified no `UserName` key (runs-as-root) via PlistBuddy.
+- **`deploy/install-macos.sh`** (new, NOT a branch in install.sh — kept the live-proven Linux
+  installer untouched): the launchd peer. `dscl` creates hidden nologin worker accounts
+  `_ductile-default`(1001)/`_ductile-untrusted`(1002) — uids mirror Linux so ONE `accounts:` map
+  works on both OSes — with a uid-collision guard. Lays the FHS skeleton (root:wheel) under
+  **`/opt/ductile`** (`etc` 0700, `var` 0711 + worker dirs 0700, `plugins` world r-x, `log`), installs
+  binary 0755 to `/usr/local/bin`, installs the plist root:wheel 0644. `bash -n` clean; BSD-`install`
+  flag form + awk collision logic dry-run-verified on Darwin. **(Originally `/etc`+`/var`; relocated to
+  `/opt` during Phase 2 — macOS symlink guard, see Phase 2 below.)**
+- **macOS asymmetry captured in the header:** gateway is root → no unprivileged gateway account (only
+  workers), and its boot fs-reconcile owns the account dirs itself (the Phase-0 reconcile path); Linux
+  needs tmpfiles.d because cap-only can't chown. FHS paths mirror Linux for config parity; only the
+  plist lives in the mandatory `/Library/LaunchDaemons/`.
+- **NOT yet run live** (that's Phase 2): no `dscl`/`launchctl` executed — templates + installer authored
+  and statically validated only.
 
-### Phase 2 — Deploy-as-new on this Mac + observe live
-- Config/plugins/secrets **out of `/Users/matt` (0700)**, empty DB, confinable plugins only (the
-  Thinkpad recipe). Bootstrap the LaunchDaemon, run one real first-party plugin confined, wall-proof
-  live: `sys_exec(id)` → worker uid · `sudo -u worker cat key` → denied.
+### Phase 2 — Deploy-as-new on this Mac + observe live — **PROVEN 2026-06-08 ✅ (live MacM1)**
+- **Wall holds LIVE under a root LaunchDaemon.** `sudo` deploy-as-new on this M1: install-macos.sh
+  (accounts+FHS+binary+plist) + lean config (no API/vault) + `sys_exec` confined `run_as: untrusted`
+  + a root `0600` secret. Boot log: `privsep enforcing: plugins drop to their resolved account` →
+  job dropped to **uid=1002(_ductile-untrusted)** → `cat /opt/ductile/etc/secret/age.key` →
+  **Permission denied**. Real first-party plugin, confined, live host. (Independent check:
+  `sudo -u _ductile-untrusted cat <secret>` → denied.)
+- **macOS layout = `/opt/ductile` base, NOT `/etc`+`/var`.** Discovered live: `/etc` & `/var` are
+  symlinks to `/private/*` on macOS, and ductile's **runtime** refuses symlinked config paths (the
+  path-swap guard — stricter than `config check`, which only WARNs). Fix = real paths under `/opt`
+  (same rationale as Homebrew's `/usr/local/etc`), NOT weakening the guard with `allow_symlinks`.
+  Plist + install-macos.sh + deploy recipe all relocated to `/opt/ductile/{etc,var,log,plugins}`.
+- **Two non-blocking findings:** (a) the probe job reads `status: failed` because `cat` of a denied
+  file exits 1 — the failure IS the wall; verdict file is truth. (b) `WARN: no default account tier`
+  — lean config defined only `untrusted`; a REAL config MUST add a `default` account or ungranted
+  plugins run at the gateway uid (= **root** on macOS). → Phase 3 docs.
+- Deploy harness was `/tmp/phase2-deploy.sh` (throwaway proof rig); the real how-to is Phase 3.
 
-### Phase 3 — Honest docs + close
-- `docs/MACOS_INSTALLATION.md`: root-LaunchDaemon posture + SIP/`task_for_pid` threat-model note (do
-  NOT claim Linux-identical). Flip #95 → done, #102 5th gate green → **v1.0**.
+### Phase 3 — Honest docs + close — **DONE 2026-06-08 ✅**
+- **`docs/MACOS_INSTALLATION.md` §10 "Enforced (privsep) Deployment — Root LaunchDaemon"** added (the
+  doc previously covered only the unconfined dev LaunchAgent): why root (no launchd cap model) +
+  SIP/`task_for_pid` honesty (NOT Linux-identical), the `/opt` layout + symlink-guard rationale,
+  `install-macos.sh` usage, a config example that **requires a `default` tier**, load+wall-bite verify,
+  enforced gotchas (`sh -c` wrapping, coexistence, confined≠TCC). Known-Differences #6 + See-Also
+  → [[DEPLOYMENT_POSTURES.md]].
+
+**ALL FOUR PHASES DONE — #95 complete.** macOS is a proven v1.0 enforced host: wall proven on Darwin
+(Phase 0), templates shipped (Phase 1), wall held LIVE under a root LaunchDaemon (Phase 2), honest docs
+(Phase 3). Closes the last open [[102-v1.0-readiness-privsep-ship-line]] gate → **v1.0 line green**.
+Remaining: merge `feat/95-launchd-mac-privsep` → main (PR open).
 
 **Scope discipline:** Phase 0 proves the **confined wall** (the v1.0 security property). The
 credentialed/hybrid tier rides the same `_unix` mechanism already proven on Linux — comes along free;

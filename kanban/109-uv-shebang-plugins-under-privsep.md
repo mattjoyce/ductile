@@ -1,6 +1,6 @@
 ---
 id: 109
-status: doing
+status: done
 priority: High
 blocked_by: []
 tags: [privsep, plugins, packaging, uv, enforce]
