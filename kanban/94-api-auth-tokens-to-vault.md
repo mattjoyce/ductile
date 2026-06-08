@@ -63,3 +63,38 @@ admin's observation surfaced the gap.
   the vault before v1.0 ("if it's a secret, it's in the vault", ADR §8.5). Priority → High, tagged
   v1.0. **Separate branch / scope — NOT the privsep branch** (this is vault/API loader work, not uid
   separation). Tracked on the v1.0 line in [[102-v1.0-readiness-privsep-ship-line]]. (by @assistant)
+- 2026-06-08: **Hickey × Armstrong design review** (branch `feat/94-api-tokens-to-vault`, branched off
+  privsep tip `cfeef90` to match what ThinkPad runs). The shipped vault already embodies the absorbed
+  H×A feedback (`vault_secrets.go:108` cites "Rev2 §1.2"); the points below hold *this* spec to that
+  bar, they are not a regression.
+  - **Adopt the existing `SecretRef` pattern; do NOT overload `Token`.** Webhook/relay carry a
+    separate `SecretRef` field distinct from the resolved value (`webhook/config.go:26`,
+    `relay/config.go:23`). Item 1's "introduce a `secret_ref:` scalar resolver" sniffs one stringly
+    field to decide value-vs-pointer — Hickey complecting. Add `APIToken.SecretRef` as a sibling of
+    `Token` (`types.go:157`). Decision before code, not a string prefix.
+  - **Don't braid resolution into projection.** `projectVaultSecrets` builds `cfg.ResolvedSecrets`
+    (available secrets); *binding a consumer* is a separate consume-time pass — that's how
+    webhook/relay already work. Resolve API tokens next to `runtime.go:656`, reading `ResolvedSecrets`;
+    leave the projection alone.
+  - **Don't overwrite `Token` in place.** Item 1 ("Token holds the resolved value") destroys the
+    provenance item 3's migration-warning needs — post-overwrite a resolved ref and an operator
+    literal are byte-identical. Keep the ref in its own field; warn on input shape.
+  - **Failure has no supervisor today.** Resolved-empty token → listener starts anyway
+    (`runtime.go:700`); doctor only *warns* (`doctor.go:491`). Make it fail-closed by extending the
+    existing `admission.RequireAPIAuth` gate (`runtime.go:483`) from "zero tokens" to "zero *resolved*
+    tokens." Validate-time stays warn-when-blind (`validator.go:24`); the **keyed daemon boot** owns
+    the hard stop. Doctor (item 5) is advisory and the wrong owner.
+  - **Declare the reload contract.** `runtime.go` has a live reload/listener-swap path
+    (`runtime.go:178-229`); a reload that can't resolve a token must abort the swap and keep the old
+    listener serving auth (snapshot-at-reload, matching webhook/relay). The card is boot-only — say it.
+  - **Principal choice (item 2) is a correctness decision, not "TBD" — and the card's framing is a
+    false choice.** Kind enum is *closed*: `plugin`/`consumer`/`gateway` (`store.go:21-23`) — there is
+    no `api` kind (a "new class" = extending the enum). `core` is a *reserved name* holding the
+    fingerprint nonce (`genesis.go:14`, `fingerprint.go:9`), not a class — granting api authz onto it
+    complects bootstrap identity with API authz. Resolve-by-kind: `pluginScopedSecret` excludes a
+    secret only when every grantee is `KindPlugin` (`vault_secrets.go:152`), so a plugin-granted api
+    token would *silently never resolve*. **Recommend a dedicated `consumer`-kind principal** (e.g.
+    `ductile-api`): explicit, auditable, exercises the typo/blast-radius guard
+    (`unregisteredGrantee`, `vault_secrets.go:136`), no enum change, `core` untouched. Acceptable v1.0
+    shortcut: a secret with *no* grant (resolves via the `len==0` branch, `vault_secrets.go:153`) —
+    but it's invisible to the typo guard. (by @assistant)
