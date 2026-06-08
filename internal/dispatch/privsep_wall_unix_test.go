@@ -1,4 +1,4 @@
-//go:build linux
+//go:build darwin || linux || freebsd || openbsd || netbsd
 
 package dispatch
 
