@@ -49,11 +49,24 @@ cap-only model; an Agent runs as-you and physically can't `setuid`-drop → conf
 - **Verdict:** the load-bearing risk is retired — Mac-as-v1.0 is now mechanical (Phases 1–3: templates,
   live deploy-as-new, docs). No SIP/setuid surprise at the mechanism level.
 
-### Phase 1 — Templates (only after Phase 0 green)
-- `deploy/launchd/com.mattjoyce.ductile.plist`: root, `RunAtLoad`+`KeepAlive`, mirrors
-  `deploy/systemd/ductile.service`; binary stays root-owned `0755`, **never** setuid.
-- Darwin branch in `deploy/install.sh`: `dscl`/`sysadminctl` create hidden worker accounts + `0700`
-  dirs (the launchd answer to `sysusers.d`+`tmpfiles.d`).
+### Phase 1 — Templates — **DONE 2026-06-08 ✅**
+- **`deploy/launchd/com.mattjoyce.ductile.plist`** (new): root LaunchDaemon (no `UserName` key →
+  runs as root), `RunAtLoad` + `KeepAlive{SuccessfulExit=false}` (= systemd `Restart=on-failure`),
+  stdio → `/var/log/ductile/*` (no journal on macOS), binary `/usr/local/bin/ductile`, never setuid.
+  `plutil -lint` OK; verified no `UserName` key (runs-as-root) via PlistBuddy.
+- **`deploy/install-macos.sh`** (new, NOT a branch in install.sh — kept the live-proven Linux
+  installer untouched): the launchd peer. `dscl` creates hidden nologin worker accounts
+  `_ductile-default`(1001)/`_ductile-untrusted`(1002) — uids mirror Linux so ONE `accounts:` map
+  works on both OSes — with a uid-collision guard. Lays the FHS skeleton (root:wheel; `/etc/ductile`
+  0700, `/var/lib/ductile` 0711 + worker dirs 0700, `/opt/ductile/plugins` world r-x, `/var/log/ductile`),
+  installs binary 0755, installs the plist root:wheel 0644. `bash -n` clean; BSD-`install` flag form +
+  awk collision logic dry-run-verified on Darwin.
+- **macOS asymmetry captured in the header:** gateway is root → no unprivileged gateway account (only
+  workers), and its boot fs-reconcile owns the account dirs itself (the Phase-0 reconcile path); Linux
+  needs tmpfiles.d because cap-only can't chown. FHS paths mirror Linux for config parity; only the
+  plist lives in the mandatory `/Library/LaunchDaemons/`.
+- **NOT yet run live** (that's Phase 2): no `dscl`/`launchctl` executed — templates + installer authored
+  and statically validated only.
 
 ### Phase 2 — Deploy-as-new on this Mac + observe live
 - Config/plugins/secrets **out of `/Users/matt` (0700)**, empty DB, confinable plugins only (the
