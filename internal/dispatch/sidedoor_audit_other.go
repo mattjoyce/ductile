@@ -2,6 +2,12 @@
 
 package dispatch
 
+import "errors"
+
+// errProbeUnsupported is returned by the non-POSIX OSLookup so that the audit treats
+// such a platform as INCONCLUSIVE (loudly), never as a silent clean pass.
+var errProbeUnsupported = errors.New("side-door probes unsupported on this platform")
+
 // newOSLookup returns a probe that reports INCONCLUSIVE on platforms without the
 // POSIX user/sudo model. It deliberately does NOT report "clean": claiming
 // containment was verified on a host the audit cannot inspect is a silent fail-open.
