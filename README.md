@@ -34,7 +34,10 @@ git clone https://github.com/mattjoyce/ductile.git
 cd ductile
 go build -o ductile ./cmd/ductile
 
-# Copy the example config, then set DUCTILE_TOKEN_ADMIN in config.yaml
+# Copy the example config, then provision the API bearer token in the vault
+# (api.yaml references it by secret_ref — a literal token is rejected at boot):
+#   ductile vault register-principal --name ductile-api --kind consumer
+#   printf '%s' "$TOKEN" | ductile vault set ductile-api-admin --principal ductile-api
 cp -R ./config ~/.config/ductile
 
 # Start the gateway

@@ -126,6 +126,28 @@ plugins:
 			wantErr: true,
 		},
 		{
+			name: "api token with a literal value is rejected at load (vault-only, #94)",
+			yaml: `
+service:
+  tick_interval: 60s
+state:
+  path: ./test.db
+plugin_roots:
+  - ./plugins
+api:
+  enabled: true
+  listen: "localhost:8081"
+  auth:
+    tokens:
+      - token: deadbeefdeadbeefdeadbeefdeadbeef
+        scopes: ["*"]
+plugins:
+  echo:
+    enabled: true
+`,
+			wantErr: true,
+		},
+		{
 			name: "plugin_roots parsed",
 			yaml: `
 service:
@@ -763,7 +785,7 @@ api:
   listen: 127.0.0.1:8080
   auth:
     tokens:
-      - token: ro-token
+      - secret_ref: ductile-api-readonly
         scopes: []
 plugins:
   test:
@@ -785,7 +807,7 @@ api:
   listen: 127.0.0.1:8080
   auth:
     tokens:
-      - token: ro-token
+      - secret_ref: ductile-api-readonly
         scopes: [plugin:ro]
 plugins:
   test:
@@ -794,7 +816,7 @@ plugins:
 			wantErr: false,
 		},
 		{
-			name: "api token unresolved env var fails validation",
+			name: "api token with a literal ${ENV} value is rejected (vault-only, #94)",
 			yaml: `
 service:
   tick_interval: 30s
@@ -816,7 +838,7 @@ plugins:
 			wantErr: true,
 		},
 		{
-			name: "api token env var interpolation works",
+			name: "api token via ${ENV} is rejected even when the var is set (literal, vault-only #94)",
 			yaml: `
 service:
   tick_interval: 30s
@@ -838,7 +860,7 @@ plugins:
 			env: map[string]string{
 				"TOKEN": "ro-token",
 			},
-			wantErr: false,
+			wantErr: true,
 		},
 	}
 

@@ -169,19 +169,18 @@ type APIAuthConfig struct {
 
 // APIToken defines a bearer token and its scopes.
 //
-// The bearer credential comes from EXACTLY ONE of two sources, kept in separate
-// fields so the reference is never conflated with the resolved value (ADR §8.5,
-// card #94):
-//   - SecretRef names a vault secret resolved at load into cfg.ResolvedSecrets —
-//     the preferred form ("if it's a secret, it's in the vault").
-//   - Token is a literal (or ${ENV}) value carried inline — the legacy form,
-//     retained for migration and warned about at load.
+// The bearer credential is VAULT-ONLY (ADR §8.5, #94: "if it's a secret, it's in
+// the vault"):
+//   - SecretRef names a vault secret resolved at load into cfg.ResolvedSecrets.
+//     This is the ONLY accepted source.
+//   - Token (a literal or ${ENV} value) is retained ONLY so a stray inline secret
+//     is detected and REJECTED with a clear error at load/resolve — never used.
+//     There is no YAML path for an API secret, and no coexistence window.
 //
-// Resolution (ResolveAPITokens) reads these into a separate ResolvedAPIToken and
-// never writes back here, so provenance — was this a vault ref or a literal? —
-// survives load for the migration warning to act on.
+// Resolution (ResolveAPITokens) reads the ref into a separate ResolvedAPIToken and
+// never writes back here, so the reference is never conflated with the value.
 type APIToken struct {
-	Token     string   `yaml:"token,omitempty"`
+	Token     string   `yaml:"token,omitempty"` // rejected if set — see doc above
 	SecretRef string   `yaml:"secret_ref,omitempty"`
 	Scopes    []string `yaml:"scopes"`
 }

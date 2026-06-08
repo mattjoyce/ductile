@@ -729,13 +729,10 @@ func buildRuntime(cfg *config.Config, configPath string, configSource string, re
 		// aborts, and on reload the previous runtime is restored (the API never
 		// opens — or stays open on its old config — authenticating against an
 		// empty credential). buildRuntime is the named supervisor (card #94).
-		resolvedTokens, tokenWarnings, err := config.ResolveAPITokens(cfg)
+		resolvedTokens, err := config.ResolveAPITokens(cfg)
 		if err != nil {
 			logger.Error("API token resolution failed", "error", err)
 			return nil, fmt.Errorf("api tokens: %w", err)
-		}
-		for _, w := range tokenWarnings {
-			logger.Warn("config: API token not vault-backed", "detail", w)
 		}
 		tokens := make([]auth.TokenConfig, 0, len(resolvedTokens))
 		for _, t := range resolvedTokens {

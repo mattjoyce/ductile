@@ -12,54 +12,44 @@ type ResolvedAPIToken struct {
 }
 
 // ResolveAPITokens turns each configured API auth token into its concrete bearer
-// value, mirroring the webhook/relay secret_ref pattern: the reference resolves
-// against cfg.ResolvedSecrets (the vault projection built at load), never by
-// sniffing or mutating the Token field.
+// value. API bearer tokens are secrets, so they are VAULT-ONLY (#94, ADR §8.5:
+// "if it's a secret, it's in the vault"): every token MUST carry a secret_ref
+// that resolves against cfg.ResolvedSecrets (the vault projection built at load).
+// There is deliberately no YAML path for an API secret — a literal token value is
+// rejected outright (no migration warning, no coexistence window: we are not
+// going back).
 //
-// Fail-closed (Armstrong): an unresolvable or empty secret_ref is a hard error,
-// so the caller (buildRuntime, before the listener opens) refuses to start — the
-// API never authenticates against an empty credential. Each token must name
-// EXACTLY ONE source; literal tokens still work but yield a migration warning
-// (returned, logged by the caller) so an operator is told to move the secret
-// into the vault.
-func ResolveAPITokens(cfg *Config) ([]ResolvedAPIToken, []string, error) {
+// Fail-closed (Armstrong): a literal value, a missing secret_ref, or a ref that
+// is absent or resolves empty is a hard error, so the caller (buildRuntime,
+// before the listener opens) refuses to start — the API never authenticates
+// against an absent or out-of-vault credential.
+func ResolveAPITokens(cfg *Config) ([]ResolvedAPIToken, error) {
 	if cfg == nil {
-		return nil, nil, fmt.Errorf("api tokens: config is nil")
+		return nil, fmt.Errorf("api tokens: config is nil")
 	}
 
 	resolved := make([]ResolvedAPIToken, 0, len(cfg.API.Auth.Tokens))
-	var warnings []string
 
 	for i, t := range cfg.API.Auth.Tokens {
-		hasRef := t.SecretRef != ""
-		hasLiteral := t.Token != ""
-
-		switch {
-		case hasRef && hasLiteral:
-			return nil, nil, fmt.Errorf(
-				"api.auth.tokens[%d]: set exactly one of token or secret_ref, not both", i)
-		case hasRef:
-			secret, ok := cfg.ResolvedSecrets[t.SecretRef]
-			if !ok {
-				return nil, nil, fmt.Errorf(
-					"api.auth.tokens[%d]: secret_ref %q not found in the vault", i, t.SecretRef)
-			}
-			if secret == "" {
-				return nil, nil, fmt.Errorf(
-					"api.auth.tokens[%d]: secret_ref %q resolved to an empty value", i, t.SecretRef)
-			}
-			resolved = append(resolved, ResolvedAPIToken{Token: secret, Scopes: t.Scopes})
-		case hasLiteral:
-			warnings = append(warnings, fmt.Sprintf(
-				"api.auth.tokens[%d]: literal token value is a secret outside the vault — "+
-					"move it to a vault secret and use secret_ref (ADR §8.5, card #94)", i))
-			resolved = append(resolved, ResolvedAPIToken{Token: t.Token, Scopes: t.Scopes})
-		default:
-			return nil, nil, fmt.Errorf(
-				"api.auth.tokens[%d]: must set token or secret_ref (got neither — "+
-					"an unresolved ${ENV} token lands here)", i)
+		if t.Token != "" {
+			return nil, fmt.Errorf(
+				"api.auth.tokens[%d]: a literal token value is not allowed — API secrets live in the vault; use secret_ref (ADR §8.5, #94)", i)
 		}
+		if t.SecretRef == "" {
+			return nil, fmt.Errorf(
+				"api.auth.tokens[%d]: secret_ref is required (API tokens are vault-only, #94)", i)
+		}
+		secret, ok := cfg.ResolvedSecrets[t.SecretRef]
+		if !ok {
+			return nil, fmt.Errorf(
+				"api.auth.tokens[%d]: secret_ref %q not found in the vault", i, t.SecretRef)
+		}
+		if secret == "" {
+			return nil, fmt.Errorf(
+				"api.auth.tokens[%d]: secret_ref %q resolved to an empty value", i, t.SecretRef)
+		}
+		resolved = append(resolved, ResolvedAPIToken{Token: secret, Scopes: t.Scopes})
 	}
 
-	return resolved, warnings, nil
+	return resolved, nil
 }
