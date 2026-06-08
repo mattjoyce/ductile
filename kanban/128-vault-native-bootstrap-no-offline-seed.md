@@ -1,6 +1,6 @@
 ---
 id: 128
-status: todo
+status: doing
 priority: High
 tags: [vault, bootstrap, regression, docs-drift, api, blocker]
 ---
@@ -65,3 +65,17 @@ fast in-process test that a from-scratch genesis→seed→boot path actually boo
 A documented, tested, from-scratch sequence brings up a vault-native gateway with the API enabled (no
 literal tokens, no manual DB surgery), and `docs/DEPLOYMENT.md §11` matches the implemented commands.
 Then [[118]] can migrate fixtures against a real template and [[116]] can gate the green set.
+
+## Progress
+- 2026-06-09 (PR #128): **DONE — Option A (offline `vault set`) implemented.** `vault set --vault --key`
+  (daemon stopped) seeds a secret by holding the age key directly — a sibling of init/rotate-key/get,
+  reusing `vault.Load`+`SetSecret`. Genesis seeds the API token granted to `core` before first boot, so
+  `secret_ref` resolves. **Verified end-to-end on the real binary**: genesis → offline-seed → config
+  lock → `system start` → `GET /topology` = 200 with the seeded token, 401 without. Docs reconciled
+  (DEPLOYMENT §11, SECRETS genesis, skills CLI) — phantom `vault import` removed. Rejected B (staged
+  boot, weakens #94) and C (genesis-seeds, less general). **Unblocks [[118]] and [[116]].** Merge on green.
+- **Deliberate non-goal:** no PID-lock guard on the offline write (genesis parity with `vault init`,
+  which also has none; the same `--vault/--key` interface can't load a cfg to find the lock path) —
+  backstopped by `ErrVaultModifiedExternally` if misused against a live daemon. A bulk `vault import`
+  (many secrets at once) was also left out — seed each `secret_ref` per-secret; revisit if migration
+  ergonomics demand it.
