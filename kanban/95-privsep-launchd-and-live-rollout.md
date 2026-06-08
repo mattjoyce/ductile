@@ -1,6 +1,6 @@
 ---
 id: 95
-status: todo
+status: done
 priority: High
 blocked_by: [88]
 tags: [privsep, deploy, launchd, ops]
@@ -87,9 +87,18 @@ cap-only model; an Agent runs as-you and physically can't `setuid`-drop → conf
   plugins run at the gateway uid (= **root** on macOS). → Phase 3 docs.
 - Deploy harness was `/tmp/phase2-deploy.sh` (throwaway proof rig); the real how-to is Phase 3.
 
-### Phase 3 — Honest docs + close
-- `docs/MACOS_INSTALLATION.md`: root-LaunchDaemon posture + SIP/`task_for_pid` threat-model note (do
-  NOT claim Linux-identical). Flip #95 → done, #102 5th gate green → **v1.0**.
+### Phase 3 — Honest docs + close — **DONE 2026-06-08 ✅**
+- **`docs/MACOS_INSTALLATION.md` §10 "Enforced (privsep) Deployment — Root LaunchDaemon"** added (the
+  doc previously covered only the unconfined dev LaunchAgent): why root (no launchd cap model) +
+  SIP/`task_for_pid` honesty (NOT Linux-identical), the `/opt` layout + symlink-guard rationale,
+  `install-macos.sh` usage, a config example that **requires a `default` tier**, load+wall-bite verify,
+  enforced gotchas (`sh -c` wrapping, coexistence, confined≠TCC). Known-Differences #6 + See-Also
+  → [[DEPLOYMENT_POSTURES.md]].
+
+**ALL FOUR PHASES DONE — #95 complete.** macOS is a proven v1.0 enforced host: wall proven on Darwin
+(Phase 0), templates shipped (Phase 1), wall held LIVE under a root LaunchDaemon (Phase 2), honest docs
+(Phase 3). Closes the last open [[102-v1.0-readiness-privsep-ship-line]] gate → **v1.0 line green**.
+Remaining hygiene: merge `feat/95-launchd-mac-privsep` → main; move this card to closed/.
 
 **Scope discipline:** Phase 0 proves the **confined wall** (the v1.0 security property). The
 credentialed/hybrid tier rides the same `_unix` mechanism already proven on Linux — comes along free;
