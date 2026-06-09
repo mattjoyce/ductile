@@ -829,7 +829,12 @@ func buildRuntime(cfg *config.Config, configPath string, configSource string, re
 		}
 	}
 
-	if cfg.Webhooks != nil && len(cfg.Webhooks.Endpoints) > 0 {
+	// The webhook plane is part of "ductile operable", not "vault operable" — in the
+	// management posture it stays closed (ductile closed), exactly like the public
+	// gateway listener. Skipping it here also avoids a from-scratch deadlock: a
+	// webhook secret_ref cannot resolve until it is minted, but minting needs the
+	// daemon up — so the management posture must not try to resolve/serve webhooks.
+	if bootPosture != config.PostureManagementOnly && cfg.Webhooks != nil && len(cfg.Webhooks.Endpoints) > 0 {
 		webhookConfig, err := webhook.FromGlobalConfig(cfg.Webhooks, cfg.ResolvedSecrets, cfg.Plugins)
 		if err != nil {
 			logger.Error("failed to configure webhooks", "error", err)

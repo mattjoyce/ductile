@@ -1,7 +1,0 @@
-version: 2
-generated_at: "2026-03-24T19:58:45Z"
-hashes:
-    /home/matt/Projects/ductile/test/fixtures/docker/webhook-ingress/config/config.yaml: 5a3288c49d5191701f853c234c94dfdbac25dba1efb00225f6685e959fc246f6
-    /home/matt/Projects/ductile/test/fixtures/docker/webhook-ingress/config/scopes/webhook.json: aa90c819d90e285ae82812d09c592a9d4b81c11e557ae3d9a24db2439749d984
-    /home/matt/Projects/ductile/test/fixtures/docker/webhook-ingress/config/tokens.yaml: 240948c0e028cac1d77cfa90051120998eb7bbd44d1897804a9d4eae609ffdb6
-    /home/matt/Projects/ductile/test/fixtures/docker/webhook-ingress/config/webhooks.yaml: 989a4648b7e959eabace565823132abf2e84ab32d299de1d8cfc94930edd2425

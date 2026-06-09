@@ -1,5 +1,0 @@
-tokens:
-  - name: github_webhook_secret
-    key: test-secret
-    scopes_file: scopes/webhook.json
-    scopes_hash: blake3:dummy
