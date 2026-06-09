@@ -147,6 +147,10 @@ func collectSystemStatus(configPath string) systemStatusReport {
 	}
 	report.Checks = append(report.Checks, pidLockCheck)
 
+	// Informational: the live gateway boot posture (#130). Never flips Healthy —
+	// the management-only posture is intentional, not a fault.
+	report.Checks = append(report.Checks, checkBootPosture(cfg))
+
 	return report
 }
 

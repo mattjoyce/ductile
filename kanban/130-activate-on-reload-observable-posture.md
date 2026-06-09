@@ -1,11 +1,25 @@
 ---
 id: 130
-status: todo
+status: done
 priority: High
 tags: [vault, bootstrap, reload, posture, observability]
 ---
 
 # Activate-on-reload + make the boot posture first-class & observable
+
+> **DONE (branch `feat/129-vault-operable-posture`).**
+> - **Activation:** reload (buildRuntime swap) transitions management→gateway through the normal #94
+>   fail-closed seam once the minted token resolves; management socket torn down. Trigger in the
+>   management posture is **SIGHUP** (the `/system/reload` route isn't on the management surface — deploy
+>   tooling sends it). Test: `cmd/ductile/management_posture_activation_test.go`.
+> - **Observability (live):** posture is surfaced in `/healthz` on BOTH surfaces (gateway TCP + mgmt
+>   socket) via `api.Config.BootPosture`; `system status` probes it (`checkBootPosture`/`probeLivePosture`)
+>   and reports the LIVE posture — not a config guess that could lie about a stuck daemon. Named
+>   `boot_posture` to avoid colliding with the #111/#112 trust/deployment postures.
+> - **Anti-strand:** boot Warn log (from #129) + the live `/healthz` posture + `system status` line make a
+>   daemon stuck pre-activation visibly *that*.
+>
+> Remaining for the ladder: acceptance test + docs reconcile = [[131]].
 
 > **Nav:** child of [[128-vault-native-bootstrap-no-offline-seed]]; design root
 > [[../docs/adr/vault-credential-ladder]]. Depends on [[129-vault-operable-boot-posture]].
