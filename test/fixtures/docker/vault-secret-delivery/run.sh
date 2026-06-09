@@ -17,6 +17,8 @@ FIXTURE_NAME="${FIXTURE_NAME:?}"
 ARTIFACT_ROOT="${ARTIFACT_ROOT:?}"
 # shellcheck source=/dev/null
 source "$ROOT_DIR/scripts/test-docker-lib"
+# shellcheck source=/dev/null
+source "$ROOT_DIR/scripts/test-docker-vault-lib"
 fixture_init
 
 BIN="$ROOT_DIR/ductile"
@@ -55,48 +57,14 @@ cleanup() {
 }
 trap cleanup EXIT
 
-# --- genesis -----------------------------------------------------------------
+# --- genesis + bootstrap the api token via the management posture ------------
 fixture_log "genesis: keygen + vault init"
-"$BIN" secrets keygen -out "$CONFIG_DIR/age.key" >/dev/null 2>>"$ARTIFACT_DIR/genesis.log"
-chmod 600 "$CONFIG_DIR/age.key"
-ADMIN="$("$BIN" vault init --vault "$CONFIG_DIR/vault.age" --key "$CONFIG_DIR/age.key" 2>>"$ARTIFACT_DIR/genesis.log")"
-[[ -n "$ADMIN" ]] || fixture_fail "vault init produced no admin token"
-export DUCTILE_VAULT_TOKEN="$ADMIN"
+fixture_vault_init "$CONFIG_DIR" >/dev/null
+# Boots management posture, mints the api token over the unix socket (proving the
+# public listener stays closed), and appends its secret_ref to api.yaml.
+fixture_bootstrap_vault "$CONFIG_DIR" "$SOCK" ductile-api-admin "$API_TOKEN_VALUE"
 
-# --- management posture: mint the api token over the admin socket -------------
-# Inject the short management socket into the COPIED api.yaml (committed file is the
-# bootstrap state with NO tokens, so this boot is vault-operable / ductile-closed).
-printf '  management_socket: "%s"\n' "$SOCK" >> "$CONFIG_DIR/api.yaml"
-
-fixture_log "boot management posture (no api token yet)"
-"$BIN" system start --config "$CONFIG_DIR" >"$ARTIFACT_DIR/ductile-mgmt.log" 2>&1 &
-PID=$!
-ready=0
-for _ in $(seq 1 60); do
-  if curl -fsS --unix-socket "$SOCK" http://unix/healthz >"$ARTIFACT_DIR/healthz-mgmt.json" 2>/dev/null; then
-    ready=1; break
-  fi
-  sleep 0.25
-done
-[[ "$ready" -eq 1 ]] || fixture_fail "management socket did not become ready"
-posture="$(jq -r '.posture // empty' "$ARTIFACT_DIR/healthz-mgmt.json")"
-[[ "$posture" == "management-only" ]] || fixture_fail "expected management-only posture, got '$posture'"
-# The public gateway listener MUST NOT be open in this posture.
-! curl -fsS "$API/healthz" >/dev/null 2>&1 || fixture_fail "public gateway listener is open in management posture"
-
-fixture_log "mint api token over the admin socket (no principal -> load-visible)"
-printf '%s' "$API_TOKEN_VALUE" | "$BIN" vault set --api-url "unix://$SOCK" \
-  --name ductile-api-admin --pattern manual
-stop_daemon
-
-# --- activation: reference the api token, seal, boot the gateway --------------
-cat >> "$CONFIG_DIR/api.yaml" <<EOF
-  auth:
-    tokens:
-      - secret_ref: ductile-api-admin
-        scopes: ["*"]
-EOF
-
+# --- activation: seal the final config, boot the gateway ---------------------
 fixture_log "attestation: config lock + plugin lock secret-probe"
 "$BIN" config lock --config "$CONFIG_DIR" >>"$ARTIFACT_DIR/lock.log" 2>&1
 "$BIN" plugin lock secret-probe --config "$CONFIG_DIR" >>"$ARTIFACT_DIR/lock.log" 2>&1

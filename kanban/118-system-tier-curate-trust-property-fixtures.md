@@ -89,10 +89,20 @@ audit. `config/api.yaml` is now the bootstrap state (NO literal token); `run.sh`
 multi-file configs (field-by-field merge never updated when #129 added the field) — fixed + regression
 test (commit `cb1f114`). The fixture is the only thing that exercised the include merge.
 
-### Next (this card): extract `fixture_vault_init`/`fixture_grant_token` into `scripts/test-docker-lib`
-Now that ONE caller exists (Brooks×Beck), lift the ladder boilerplate (keygen+genesis, management-boot,
-mint-over-socket, lock+gateway-boot) into helpers; then port `webhook-ingress`; then the
-name-a-unique-risk-or-delete pass over the rest (Dell for linux/amd64 + #116 CI).
+### SECOND FIXTURE GREEN + helpers extracted 2026-06-09
+`scripts/test-docker-vault-lib` now holds `fixture_vault_init` + `fixture_bootstrap_vault` (genesis +
+management-boot + mint-load-visible-secrets + append-token); both `vault-secret-delivery` and
+`webhook-ingress` use them. **`webhook-ingress` migrated + green locally**: api token AND
+`github_webhook_secret` minted via the ladder, `tokens.yaml` RETIRED (deleted), valid 202 / invalid 403
+/ job enqueued. Bootstrap excludes `webhooks.yaml` from the include and run.sh adds it post-mint (a
+config can't reference an unminted secret_ref — same rule as the api token).
+
+**Second prod fix it surfaced:** the management posture was still starting the **webhook server** (a
+public plane in a "closed" posture) — guarded on posture (commit `46e4de8`).
+
+### Next: the name-a-unique-risk-or-delete pass (do WITH Matt — deletions)
+~16 remaining fixtures. Per-fixture: "proves X, which nothing else proves" or DELETE (most routing/state
+belongs in the in-process suite #117). Then Dell linux/amd64 confirm → feeds #116 green-gate.
 
 ## UNBLOCKED 2026-06-09 — #128 resolved via the credential ladder (#129/#130/#131)
 
