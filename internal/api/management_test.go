@@ -287,3 +287,25 @@ func TestStartManagementSocketIsOwnerOnly(t *testing.T) {
 		}
 	}
 }
+
+// #140: StartManagement's early error returns (empty socket, nil vault, long
+// path, non-socket path, bind/chmod failures) must close serveDone — otherwise
+// a later WaitServeStopped burns its full deadline on a misleading timeout.
+func TestStartManagementEarlyErrorClosesServeDone(t *testing.T) {
+	db, err := storage.OpenSQLite(context.Background(), ":memory:")
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	q := queue.New(db)
+	// Empty socket path: the first early return.
+	srv := New(Config{ManagementSocket: "", Vault: &fakeVault{adminToken: "x"}}, q, &mockRegistry{}, &mockRouter{}, &mockWaiter{}, state.NewContextStore(db), state.NewAdmitter(q, state.DefaultMaxContextBytes), nil, events.NewHub(10), slog.Default())
+	if err := srv.StartManagement(context.Background()); err == nil {
+		t.Fatal("StartManagement must error on an empty socket path")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+	if err := srv.WaitServeStopped(ctx); err != nil {
+		t.Fatalf("WaitServeStopped after early StartManagement error must return immediately, got %v", err)
+	}
+}

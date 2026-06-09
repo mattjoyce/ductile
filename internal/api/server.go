@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"time"
 
@@ -130,6 +131,9 @@ type Server struct {
 	syncSemaphore chan struct{}
 	reloadFunc    func(context.Context) (ReloadResponse, error)
 	serveDone     chan struct{}
+	// listener is the gateway TCP listener when Bind() reserved it ahead of
+	// Start (the activation-reload path, #140). nil means Start binds itself.
+	listener      net.Listener
 	relayReceiver *relay.Receiver
 	vault         VaultManager
 	auditor       VaultAuditor
@@ -174,6 +178,21 @@ func New(config Config, queue JobQueuer, registry PluginRegistry, router Pipelin
 	}
 }
 
+// Bind reserves the gateway TCP listener synchronously. The activation reload
+// calls this inside buildRuntime so a bind failure FAILS the reload (and the
+// restore path runs) instead of surfacing on errCh after the reload already
+// answered "ok" (#140). On failure serveDone is closed so WaitServeStopped
+// returns immediately rather than burning its deadline.
+func (s *Server) Bind() error {
+	ln, err := net.Listen("tcp", s.config.Listen)
+	if err != nil {
+		close(s.serveDone)
+		return fmt.Errorf("listen on %s: %w", s.config.Listen, err)
+	}
+	s.listener = ln
+	return nil
+}
+
 // Start starts the HTTP server (blocking)
 func (s *Server) Start(ctx context.Context) error {
 	router := s.setupRoutes()
@@ -188,11 +207,24 @@ func (s *Server) Start(ctx context.Context) error {
 
 	s.logger.Info("API server starting", "listen", s.config.Listen)
 
+	// Bind synchronously when Bind() has not already reserved the listener —
+	// a bind error returns from Start itself, never from inside the serve
+	// goroutine (#140).
+	ln := s.listener
+	if ln == nil {
+		var err error
+		ln, err = net.Listen("tcp", s.config.Listen)
+		if err != nil {
+			close(s.serveDone)
+			return fmt.Errorf("listen on %s: %w", s.config.Listen, err)
+		}
+	}
+
 	// Run server in a goroutine
 	errCh := make(chan error, 1)
 	go func() {
 		defer close(s.serveDone)
-		if err := s.server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		if err := s.server.Serve(ln); err != nil && err != http.ErrServerClosed {
 			errCh <- err
 		}
 	}()

@@ -807,6 +807,14 @@ func buildRuntime(cfg *config.Config, configPath string, configSource string, re
 		}
 		apiServer := api.New(apiConfig, q, registry, routerEngine, disp, contextStore, admitter, st, hub, log.WithComponent("api"))
 		rt.apiServer = apiServer
+		// Gateway posture: reserve the TCP listener NOW, synchronously. An
+		// activation reload whose bind fails must fail the reload here (so the
+		// restore path runs) — not answer "ok" and die later on errCh (#140).
+		if bootPosture != config.PostureManagementOnly {
+			if err := apiServer.Bind(); err != nil {
+				return nil, fmt.Errorf("api: %w", err)
+			}
+		}
 		rt.wg.Add(1)
 		go func() {
 			defer rt.wg.Done()

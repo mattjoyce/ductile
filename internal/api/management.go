@@ -42,6 +42,17 @@ func (s *Server) setupManagementRoutes() *chi.Mux {
 // filesystem boundary, not just a network one. A stale socket left by a crash is
 // removed first (net.Listen refuses to bind over an existing path).
 func (s *Server) StartManagement(ctx context.Context) error {
+	// Every return before the serve goroutine starts must close serveDone, or
+	// a later WaitServeStopped burns its full deadline on a misleading
+	// "context deadline exceeded" (#140). Once the goroutine owns the close,
+	// the guard stands down.
+	serveOwnsDone := false
+	defer func() {
+		if !serveOwnsDone {
+			close(s.serveDone)
+		}
+	}()
+
 	socket := s.config.ManagementSocket
 	if socket == "" {
 		return fmt.Errorf("management socket path is empty")
@@ -124,6 +135,7 @@ func (s *Server) StartManagement(ctx context.Context) error {
 	s.logger.Info("vault management API serving (management-only posture)", "socket", socket)
 
 	errCh := make(chan error, 1)
+	serveOwnsDone = true
 	go func() {
 		defer close(s.serveDone)
 		if err := s.server.Serve(ln); err != nil && err != http.ErrServerClosed {
