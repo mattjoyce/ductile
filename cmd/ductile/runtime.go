@@ -730,17 +730,26 @@ func buildRuntime(cfg *config.Config, configPath string, configSource string, re
 	// pipelines (e.g. job-failure-notify → discord_notify) are triggered.
 	sched.SetRecoveryHook(disp.FireRecoveryHook)
 
-	if err := sched.Start(rt.ctx); err != nil && err != context.Canceled {
-		return nil, fmt.Errorf("scheduler: %w", err)
-	}
-
-	rt.wg.Add(1)
-	go func() {
-		defer rt.wg.Done()
-		if err := disp.Start(rt.ctx); err != nil && err != context.Canceled {
-			rt.errCh <- fmt.Errorf("dispatcher: %w", err)
+	// Trigger planes are part of "ductile operable", not "vault operable": in
+	// the management posture the scheduler and dispatcher stay DOWN, exactly
+	// like the public listener and webhook planes — no pipeline fires and no
+	// vault secret is composed/delivered until the gateway activates (#136,
+	// decided 2026-06-10: gate, not document-as-open).
+	if bootPosture != config.PostureManagementOnly {
+		if err := sched.Start(rt.ctx); err != nil && err != context.Canceled {
+			return nil, fmt.Errorf("scheduler: %w", err)
 		}
-	}()
+
+		rt.wg.Add(1)
+		go func() {
+			defer rt.wg.Done()
+			if err := disp.Start(rt.ctx); err != nil && err != context.Canceled {
+				rt.errCh <- fmt.Errorf("dispatcher: %w", err)
+			}
+		}()
+	} else {
+		logger.Warn("management posture: scheduler and dispatcher gated — no pipelines fire until the gateway activates")
+	}
 
 	if cfg.API.Enabled || relayReceiver != nil {
 		// Resolve secret_ref-backed bearer tokens against the vault projection
@@ -845,9 +854,13 @@ func buildRuntime(cfg *config.Config, configPath string, configSource string, re
 
 	// The webhook plane is part of "ductile operable", not "vault operable" — in the
 	// management posture it stays closed (ductile closed), exactly like the public
-	// gateway listener. Skipping it here also avoids a from-scratch deadlock: a
-	// webhook secret_ref cannot resolve until it is minted, but minting needs the
-	// daemon up — so the management posture must not try to resolve/serve webhooks.
+	// gateway listener AND the scheduler/dispatcher trigger planes gated above
+	// (#136): every plane that could fire a pipeline is down until activation.
+	// Skipping it here also avoids the SERVE half of the from-scratch webhook
+	// deadlock: a webhook secret_ref cannot resolve until it is minted, but
+	// minting needs the daemon up. (The LOAD half — config.Load hard-erroring on
+	// the unminted secret_ref before the posture decision — is relaxed under the
+	// same bootstrap condition in the validator, #138.)
 	if bootPosture != config.PostureManagementOnly && cfg.Webhooks != nil && len(cfg.Webhooks.Endpoints) > 0 {
 		webhookConfig, err := webhook.FromGlobalConfig(cfg.Webhooks, cfg.ResolvedSecrets, cfg.Plugins)
 		if err != nil {
