@@ -32,10 +32,10 @@ type Vault struct {
 	// the owner's concern. Direct Store() access bypasses the lock and is for
 	// single-threaded genesis and tests only — it never escapes into the running
 	// daemon: runtime read consumers take a Snapshot (a deep copy under RLock) and
-	// writers go through the guarded methods (SetSecret, SetManualBatch, and the
-	// lifecycle ops). The remaining cross-process writer hole — a second process
+	// writers go through the guarded methods (SetSecret and the lifecycle
+	// ops). The remaining cross-process writer hole — a second process
 	// loading and re-saving the blob while the daemon serves — is closed outside
-	// the mutex by requiring those local key-touching CLIs (vault init/import/
+	// the mutex by requiring those local key-touching CLIs (vault init/
 	// rotate-key) to hold the daemon PID lock, i.e. run only while it is stopped.
 	mu       sync.RWMutex
 	path     string
@@ -99,7 +99,7 @@ func Load(path string, kr *secrets.Keyring) (*Vault, error) {
 // pointer. Mutations are not persisted until Save. This bypasses the owner's
 // lock, so it is for single-threaded genesis and tests ONLY. Runtime read
 // consumers must take a Snapshot (an independent deep copy) and writers must use
-// the guarded methods (SetSecret, SetManualBatch, the lifecycle ops) — never
+// the guarded methods (SetSecret, the lifecycle ops) — never
 // reach the live model through Store() while the daemon may be serving.
 func (v *Vault) Store() *Store { return v.store }
 
@@ -135,47 +135,6 @@ func cloneStore(s *Store) (*Store, error) {
 		c.Principals = make(map[string]*Principal)
 	}
 	return &c, nil
-}
-
-// ManualSecret is one (name, value) pair for a batched manual import.
-type ManualSecret struct {
-	Name  string
-	Value string
-}
-
-// ImportFailure reports a single entry SetManualBatch could not upsert, with the
-// reason, so the caller can flag it without aborting the rest of the batch.
-type ImportFailure struct {
-	Name   string
-	Reason string
-}
-
-// SetManualBatch upserts a batch of manual-pattern secrets (operator-supplied
-// values, no grants) as ONE guarded critical section followed by a single Save,
-// so a batch load is atomic with respect to concurrent readers and writes the
-// blob exactly once. Per-entry validation failures are returned (name + reason)
-// without aborting the batch; a Save failure rolls the whole batch back to the
-// last persisted state. now stamps each upsert. It is the guarded replacement
-// for reaching the live model through Store().
-//
-// NOTE: this primitive currently has no caller — it was built for the never-wired
-// offline `vault import` command (#128). The implemented bootstrap mints secrets
-// online over the management API (credential-ladder ADR); retained as the basis
-// for a future recovery-import tool, whose fate is the #128 offline-seed decision.
-func (v *Vault) SetManualBatch(entries []ManualSecret, now time.Time) ([]ImportFailure, error) {
-	var failures []ImportFailure
-	err := v.mutate(func(s *Store) error {
-		for _, e := range entries {
-			if setErr := s.SetSecret(e.Name, e.Value, nil, PatternManual, now); setErr != nil {
-				failures = append(failures, ImportFailure{Name: e.Name, Reason: setErr.Error()})
-			}
-		}
-		return nil // per-entry failures are reported, not fatal to the batch
-	})
-	if err != nil {
-		return nil, err
-	}
-	return failures, nil
 }
 
 // Compose resolves a principal's authorized secrets under a read lock, so it is
