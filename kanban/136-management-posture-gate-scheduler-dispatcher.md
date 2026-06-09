@@ -1,6 +1,6 @@
 ---
 id: 136
-status: backlog
+status: done
 priority: Medium
 tags: [runtime, posture, scheduler, dispatcher, secrets, fail-closed]
 ---
@@ -29,3 +29,11 @@ closure.
 ## Done when
 A management-posture boot with a scheduled pipeline either does not fire it (gated), or the
 ADR + comment explicitly state trigger planes stay open; one test asserts whichever is chosen.
+
+## Narrative
+- 2026-06-10: GATED (Matt's call over document-as-open): scheduler and dispatcher now start only
+  when bootPosture != management-only, matching the webhook-plane precedent (46e4de8) — every plane
+  that can fire a pipeline or deliver a vault secret is down until activation. Jobs enqueued during
+  bootstrap stay queued and run after activation (deferred, not lost). Red→green: with the gate
+  stashed, a queued probe job was picked up; with the gate, it stays `queued`. The runtime.go:832
+  comment now names all gated planes. (by @assistant)

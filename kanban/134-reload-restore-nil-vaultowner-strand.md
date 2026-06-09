@@ -1,6 +1,6 @@
 ---
 id: 134
-status: backlog
+status: done
 priority: Medium
 tags: [runtime, reload, posture, vault, fail-closed]
 ---
@@ -29,3 +29,11 @@ in the function. Optionally thread the old runtime's owner into the restore call
 ## Done when
 A failed reload on an armed, management-posture box restores the previous runtime; covered by a
 test (reload broken config under `validate_config_on_boot` + zero tokens + vault).
+
+## Narrative
+- 2026-06-10: Fixed by hoisting the vault-owner resolution to a SINGLE point above the admission
+  gates in buildRuntime — integrity verify, the doctor gate, and the posture decision now all read
+  the same resolved owner, and the reload-restore call (which passes no opts.vaultOwner) gets the
+  fallback load before admission can reject it. Red→green: a restore-shape buildRuntime (nil owner,
+  armed validate_config_on_boot, zero tokens, vault on disk) failed "configuration validation
+  failed" before the fix, passes after. (by @assistant)

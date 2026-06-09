@@ -1,6 +1,6 @@
 ---
 id: 138
-status: backlog
+status: done
 priority: Medium
 tags: [config, webhooks, bootstrap, validation, docs]
 ---
@@ -30,3 +30,12 @@ Either way, correct the `runtime.go` comment to name the load-time half of the d
 ## Done when
 A from-scratch deploy that declares webhooks is either bootable into management posture, or its
 include-staging requirement is documented in the runbook; the comment matches reality.
+
+## Narrative
+- 2026-06-10: SOFTENED under the bootstrap condition (Matt's call over documenting include-staging):
+  ConfigValidator gained a `bootstrap` field derived from DecideBootPosture's own predicate (api
+  enabled, zero tokens, vault present), and checkSecretRef downgrades unresolved refs to a warning
+  only there — the posture that boots exists precisely to mint them. Activation (token configured)
+  or a missing vault restores the hard error; tests pin both directions. The webhook-ingress
+  fixture's include-staging is now optional but kept (it documents the ladder). The runtime.go
+  webhook comment names both halves of the former deadlock. (by @assistant)

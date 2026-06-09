@@ -1,6 +1,6 @@
 ---
 id: 137
-status: backlog
+status: done
 priority: Medium
 tags: [api, unix-socket, security, hardening]
 ---
@@ -32,3 +32,12 @@ window and the unchecked default together); alternatively umask set/restore or b
 ## Done when
 A non-socket file at the configured path refuses boot with a typed error; the socket is never
 observable with perms wider than 0600; the parent directory's mode is verified, not assumed.
+
+## Narrative
+- 2026-06-10: All three findings closed in StartManagement: (1) Lstat gate — a non-socket at the
+  configured path refuses boot with a typed error and the file SURVIVES (test writes a decoy and
+  checks both); (2) perms window closed via bind-chmod-rename in a private 0700 MkdirTemp dir — the
+  socket never appears at the public path wider than 0600 (chose the card's rename alternative over
+  requiring a 0700 parent, which would have broken the fixtures' sticky /tmp sockets); (3) parent dir
+  created 0700 when absent, and a group/other-writable parent WITHOUT the sticky bit refuses boot.
+  Live ladder fixture re-proved the renamed socket accepts connections. (by @assistant)

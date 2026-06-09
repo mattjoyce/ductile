@@ -1,6 +1,6 @@
 ---
 id: 139
-status: backlog
+status: done
 priority: Low
 tags: [config, loader, include-merge, tests]
 ---
@@ -26,3 +26,9 @@ next added field can't silently miss the merge.
 
 ## Done when
 The guard test sets every `APIConfig` field in an include and asserts each survives the merge.
+
+## Narrative
+- 2026-06-10: Two merge lines added (MaxConcurrentSync, MaxSyncTimeout) and the guard test now sets
+  and asserts ALL six APIConfig fields, so its "every field" claim is finally true and the next
+  added field cannot miss the merge silently. Red run failed on exactly the two missing fields.
+  (by @assistant)

@@ -1,6 +1,6 @@
 ---
 id: 135
-status: backlog
+status: done
 priority: Medium
 tags: [cli, system-status, posture, privsep, observability]
 ---
@@ -30,3 +30,10 @@ existence, not its decryptability, is what legitimises the posture.
 ## Done when
 Keyless `system status` against a live management-posture daemon shows `boot_posture` instead of a
 misleading `config_load: FAIL`.
+
+## Narrative
+- 2026-06-10: Took the independent-probe option (Matt's call; the blob-counts-as-present alternative
+  would have relaxed validation for every keyless caller). New config.LoadLenient (no verification,
+  no validation — observability only) feeds checkBootPosture in the config_load failure branch, so a
+  keyless operator on a #112 credentialed host sees the live #130 anti-strand signal. Strict-load
+  semantics untouched; keyless `system reload` remains follow-up if wanted. (by @assistant)

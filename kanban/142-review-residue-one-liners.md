@@ -1,6 +1,6 @@
 ---
 id: 142
-status: backlog
+status: done
 priority: Low
 tags: [tests, fixtures, healthz, posture, hygiene]
 ---
@@ -28,3 +28,10 @@ deployment shape should be observable.
 ## Done when
 A listen-address parse failure fails the fixture loudly; `/healthz` never reports "closed" from a
 listener it is served by.
+
+## Narrative
+- 2026-06-10: Both one-liners landed. The vault-lib listen-parse now fixture_fails loudly instead of
+  silently skipping the closed-listener assertion (the management posture's defining property). The
+  /healthz posture field is suppressed when api.enabled=false via healthzPostureFor at the config
+  wire-level — "closed" is never reported FROM a live relay-only listener; covered by a unit test on
+  the helper. (by @assistant)

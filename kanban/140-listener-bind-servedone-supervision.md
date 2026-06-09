@@ -1,6 +1,6 @@
 ---
 id: 140
-status: backlog
+status: done
 priority: Low
 tags: [api, lifecycle, reload, supervision]
 ---
@@ -34,3 +34,12 @@ goroutine ownership). Each surface adopts the half the other already does right.
 ## Done when
 An activation reload whose gateway bind fails returns an error (restore path exercised, no "ok");
 a failed `StartManagement` followed by a reload does not stall 10s on a misleading timeout.
+
+## Narrative
+- 2026-06-10: Both mirror halves fixed, each surface adopting what the other did right. Gateway:
+  new synchronous Server.Bind() reserves the TCP listener inside buildRuntime, so an activation
+  reload with a taken port FAILS the reload (restore path runs) instead of answering ok and dying
+  on errCh; Start() binds synchronously itself when Bind wasn't called. Management: a deferred
+  serveOwnsDone guard closes serveDone on every early error return (including the new #137
+  refusals) — a failed StartManagement no longer stalls WaitServeStopped for its full deadline.
+  Tests pin both. (by @assistant)
