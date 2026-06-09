@@ -1,11 +1,20 @@
 ---
 id: 129
-status: todo
+status: done
 priority: High
 tags: [vault, bootstrap, api, boot, posture, security]
 ---
 
 # Implement the vault-operable boot posture (the real #128 fix)
+
+> **DONE (branch `feat/129-vault-operable-posture`).** Transport = **unix socket (a)**.
+> `config.BootPosture`/`DecideBootPosture` (pure value); `api.StartManagement` serves only `/vault/*`
+> on a `0600` unix socket (`api.management_socket`); `buildRuntime` boots the posture without opening
+> the public listener; the api-token invariant is single-sourced in `config.APIEnabledWithoutToken`;
+> the `vault` CLI targets it via `unix://`. End-to-end test:
+> `cmd/ductile/management_posture_boot_test.go`. Offline `vault set --vault --key` **kept as recovery
+> tool**, demoted in docs (#131). Remaining: observability + reload activation = [[130]]; acceptance
+> test + docs reconcile = [[131]].
 
 > **Nav:** child of [[128-vault-native-bootstrap-no-offline-seed]]; design root is
 > [[../docs/adr/vault-credential-ladder]] (`docs/adr/vault-credential-ladder.md`).

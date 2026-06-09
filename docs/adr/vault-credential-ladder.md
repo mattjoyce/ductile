@@ -115,6 +115,28 @@ The vault-operable / ductile-closed posture MUST be built so that:
 - **The posture is first-class and observable**, consistent with the deployment-posture vocabulary
   (#111/#112) — not an accidental half-booted state a bug can strand.
 
+## Implementation follow-up (resolved during #129)
+
+The transport left open in the Status note is now decided:
+
+- **Local transport = unix-domain socket (option a).** The management posture serves `/vault/*` on a
+  unix socket (`api.management_socket`, default beside the state DB), created `0600` — a same-host
+  *filesystem* boundary, exactly the invariant in §5. The loopback-mux (b) was rejected for admitting
+  any local process; collapsing the two authenticators into a `vault:admin` scope (c) was rejected
+  because it re-complects vault-write back into a *scope* when the design's premise (and the code,
+  `internal/api/server.go`) is that vault-write is a separate **plane**, not a scope.
+- **The api-enabled-needs-a-token invariant is now single-sourced.** It was triplicated across config
+  load-validation, doctor, and runtime admission; #129 collapses it into one predicate
+  (`config.APIEnabledWithoutToken(cfg, hasVault)`). Zero api tokens is rejected ONLY when no vault is
+  present to bootstrap one — non-vault deploys stay fail-closed exactly as before.
+- **Boot posture is a first-class value** (`config.BootPosture` / `DecideBootPosture`), satisfying the
+  §5 "first-class and observable" invariant at the decision layer; surfacing it in `system status` /
+  doctor / selfcheck is #130.
+- **Offline `vault set --vault --key` (feat/128-vault-offline-seed): kept as a documented recovery
+  tool, not the bootstrap path.** The bootstrap mints the api token through the admin token over the
+  socket (proven end-to-end); the offline seed remains useful only for out-of-band recovery when the
+  daemon cannot run, so it is retained but demoted in the docs (#131 reconciles them).
+
 ## Consequences
 
 - **#128 re-scopes** from "implement an offline `vault set` seed" to "implement the vault-operable boot
