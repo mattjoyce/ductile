@@ -1,6 +1,6 @@
 ---
 id: 118
-status: todo
+status: doing
 priority: High
 tags: [testing, docker, fixtures, vault, migration, trust]
 ---
