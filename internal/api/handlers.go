@@ -68,6 +68,7 @@ func (s *Server) handleHealthz(w http.ResponseWriter, r *http.Request) {
 		ConfigPath:         strings.TrimSpace(s.config.ConfigPath),
 		BinaryPath:         strings.TrimSpace(s.config.BinaryPath),
 		Version:            strings.TrimSpace(s.config.Version),
+		Posture:            strings.TrimSpace(s.config.BootPosture),
 	}
 
 	w.Header().Set("Content-Type", "application/json")

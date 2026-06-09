@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"testing"
@@ -37,7 +38,7 @@ func startManagementServer(t *testing.T, fv VaultManager) (*http.Client, func())
 	}
 	t.Cleanup(func() { _ = os.RemoveAll(sockDir) })
 	socket := filepath.Join(sockDir, "v.sock")
-	cfg := Config{ManagementSocket: socket, Vault: fv}
+	cfg := Config{ManagementSocket: socket, Vault: fv, BootPosture: "management-only"}
 	q := queue.New(db)
 	cs := state.NewContextStore(db)
 	hub := events.NewHub(10)
@@ -129,6 +130,28 @@ func TestManagementPostureServesVaultWithAdminToken(t *testing.T) {
 	}
 }
 
+// TestManagementHealthzReportsPosture: /healthz on the management socket carries
+// the live posture, so a probe can tell pre-activation from a fully-serving
+// gateway (#130 anti-strand).
+func TestManagementHealthzReportsPosture(t *testing.T) {
+	fv := &fakeVault{adminToken: "admin-secret"}
+	client, cleanup := startManagementServer(t, fv)
+	defer cleanup()
+
+	resp, err := client.Get("http://unix/healthz")
+	if err != nil {
+		t.Fatalf("GET /healthz: %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	var body HealthzResponse
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		t.Fatalf("decode healthz: %v", err)
+	}
+	if body.Posture != "management-only" {
+		t.Fatalf("healthz posture = %q, want management-only", body.Posture)
+	}
+}
+
 // TestManagementPostureRejectsWithoutAdminToken: the surface is authenticated —
 // never an unauthenticated local surface (ADR invariant 2).
 func TestManagementPostureRejectsWithoutAdminToken(t *testing.T) {
@@ -143,6 +166,33 @@ func TestManagementPostureRejectsWithoutAdminToken(t *testing.T) {
 	}
 	if len(fv.calls) != 0 {
 		t.Fatalf("unauthenticated request reached the vault: %+v", fv.calls)
+	}
+}
+
+// TestGatewayHealthzReportsPosture: the gateway posture reports itself in /healthz
+// via the same handler, so the live signal is symmetric across both surfaces.
+func TestGatewayHealthzReportsPosture(t *testing.T) {
+	db, err := storage.OpenSQLite(context.Background(), ":memory:")
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	q := queue.New(db)
+	cs := state.NewContextStore(db)
+	hub := events.NewHub(10)
+	srv := New(Config{BootPosture: "gateway"}, q, &mockRegistry{}, &mockRouter{}, &mockWaiter{}, cs, state.NewAdmitter(q, state.DefaultMaxContextBytes), nil, hub, slog.Default())
+
+	rec := httptest.NewRecorder()
+	srv.handleHealthz(rec, httptest.NewRequest(http.MethodGet, "/healthz", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("healthz status = %d, want 200", rec.Code)
+	}
+	var body HealthzResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode healthz: %v", err)
+	}
+	if body.Posture != "gateway" {
+		t.Fatalf("healthz posture = %q, want gateway", body.Posture)
 	}
 }
 

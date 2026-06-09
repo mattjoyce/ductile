@@ -788,6 +788,7 @@ func buildRuntime(cfg *config.Config, configPath string, configSource string, re
 			RelayReceiver:    relayReceiver,
 			AllowedOrigins:   cfg.API.AllowedOrigins,
 			ManagementSocket: managementSocketPath(cfg),
+			BootPosture:      bootPosture.String(),
 		}
 		// Expose the vault management API only when a vault owner exists. Assign
 		// the interface field solely for a non-nil owner: a typed-nil *vault.Vault

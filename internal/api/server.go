@@ -103,6 +103,11 @@ type Config struct {
 	// ladder ADR — a same-host filesystem boundary, never the public network
 	// interface. Unused in the gateway posture (Start serves TCP).
 	ManagementSocket string
+	// BootPosture is the gateway boot posture this server is running in
+	// ("gateway" or "management-only"), surfaced live in /healthz so an operator
+	// or AI can tell an intentional pre-activation posture from a stuck daemon
+	// (#130 anti-strand). Empty for callers that do not set it.
+	BootPosture string
 	// AllowedOrigins lists the origins that may receive credentialed CORS
 	// headers. An empty list disables cross-origin credential sharing entirely.
 	AllowedOrigins []string

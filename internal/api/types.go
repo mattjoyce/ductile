@@ -134,6 +134,10 @@ type HealthzResponse struct {
 	ConfigPath         string `json:"config_path,omitempty"`
 	BinaryPath         string `json:"binary_path,omitempty"`
 	Version            string `json:"version,omitempty"`
+	// Posture is the gateway boot posture ("gateway" or "management-only"). It
+	// lets a health probe distinguish a fully-serving gateway from the
+	// vault-operable / ductile-closed bootstrap posture (#130).
+	Posture string `json:"posture,omitempty"`
 }
 
 // PluginListResponse is returned by GET /plugins.
