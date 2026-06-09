@@ -157,6 +157,29 @@ above (static files you author and re-seal), the Vault is a *running store* — 
 are created, rolled, and revoked through its API and delivered to plugins at dispatch
 time. It is the home for secrets that have a lifecycle.
 
+### Credential ladder
+
+Three credentials, three planes, each strictly scoped — and each **issues the one below it**. This is
+the spine of the whole vault story (full rationale: [ADR: Vault credential ladder](adr/vault-credential-ladder.md)).
+
+| Credential          | Verb                  | Plane                  | Cannot                            |
+|---------------------|-----------------------|------------------------|-----------------------------------|
+| **vault key** (age) | **open** the vault    | offline, root of trust | — (it is the floor)               |
+| **admin token**     | **operate** the vault | online `/vault/*`      | open the vault; operate ductile   |
+| **api token**       | **operate** ductile   | online gateway         | operate the vault; open the vault |
+
+```
+vault key  ──mints──▶  admin token  ──mints──▶  api token
+ (genesis, offline)   (vault init / rotate)     (vault set, online)
+```
+
+Isolation runs upward-blocking only: an api token can't reach the vault, an admin token can't reach the
+key — but the key subsumes all (`api ⊂ admin-reachable-state ⊂ key`). The **admin token is mint-only**:
+its single writer is `RotateAdminToken` (age-key, daemon stopped), the value is always machine-minted,
+and `set` is refused on every plane. **api tokens** are ordinary secrets — settable to a chosen value via
+`vault set`. Bootstrap is just the ladder: genesis (key) mints the admin token, which operates the vault
+to mint the api token (see [DEPLOYMENT.md § 11](DEPLOYMENT.md)).
+
 ### Mental model
 
 - **Principal** — a registered deliver-to identity: a `plugin`, a `consumer`, or the
