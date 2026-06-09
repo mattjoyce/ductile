@@ -77,11 +77,46 @@ because the template doesn't work. Corrected order: **first make ONE fixture gen
 extract `fixture_vault_init`/`fixture_grant_token` into `scripts/test-docker-lib`, THEN port
 `webhook-ingress` (api token + webhook secret + tokens.yaml retirement).** This re-scopes step 1.
 
-### THE BLOCKER to resolve first (bootstrap chicken-and-egg) — now carded as [[128-vault-native-bootstrap-no-offline-seed]]
+## TRACER GREEN 2026-06-09 — `vault-secret-delivery` migrated, runs locally (macOS native)
+First fixture is genuinely vault-native via the ladder, end-to-end green through `./scripts/test-docker
+vault-secret-delivery` (runner needs no Docker — native build + run.sh): genesis → **management posture**
+(mint the api token over the unix socket, public listener proven NOT open) → `config lock` + `plugin
+lock` → **gateway** → register/grant → dispatch → secret delivered over stdin → reserved-read refusal +
+audit. `config/api.yaml` is now the bootstrap state (NO literal token); `run.sh` injects a SHORT
+`management_socket` and walks the ladder.
+
+**Caught a real prod bug:** `deepMergeConfig` dropped `api.management_socket` (+ `allowed_origins`) from
+multi-file configs (field-by-field merge never updated when #129 added the field) — fixed + regression
+test (commit `cb1f114`). The fixture is the only thing that exercised the include merge.
+
+### Next (this card): extract `fixture_vault_init`/`fixture_grant_token` into `scripts/test-docker-lib`
+Now that ONE caller exists (Brooks×Beck), lift the ladder boilerplate (keygen+genesis, management-boot,
+mint-over-socket, lock+gateway-boot) into helpers; then port `webhook-ingress`; then the
+name-a-unique-risk-or-delete pass over the rest (Dell for linux/amd64 + #116 CI).
+
+## UNBLOCKED 2026-06-09 — #128 resolved via the credential ladder (#129/#130/#131)
+
+The bootstrap chicken-and-egg is solved. The from-scratch path is the **two-posture ladder** (no offline
+seed, no phantom `vault import`): boot **management posture** (`api.enabled`, ZERO `api.auth.tokens`,
+vault present) → it serves `/vault/*` on a local unix socket (`api.management_socket`) with NO public
+listener → mint the api token over the socket with the admin token → reference its `secret_ref` in config
+→ reload/restart → gateway. See `docs/adr/vault-credential-ladder.md` and `DEPLOYMENT.md §11`.
+
+**The flagged projection-mechanic unknown is ANSWERED** (`internal/config/vault_secrets.go` →
+`activeVaultSecrets`/`pluginScopedSecret`): a secret lands in load-time `cfg.ResolvedSecrets` iff it is
+**active AND not plugin-scoped**, where plugin-scoped = has ≥1 grant and ALL grantees are `KindPlugin`.
+So `vault set` with **NO `--principal`** (or a non-plugin grantee) → load-visible (resolves
+`api.auth.tokens[].secret_ref` / `webhooks[].secret_ref`); `vault set --principal <plugin>` → NOT
+load-visible (delivered via Compose at spawn). Proven at runtime by
+`cmd/ductile/management_posture_activation_test.go`. The Dell is no longer needed to PROVE the mechanic;
+it remains the linux/amd64 + #116 CI host.
+
+### OLD blocker analysis (kept for history) — RESOLVED by the ladder above
+### THE BLOCKER (bootstrap chicken-and-egg) — was carded as [[128-vault-native-bootstrap-no-offline-seed]]
 **Root cause confirmed: the offline seed command the deploy docs prescribe (`vault import`) does NOT
-exist in the binary** (`Unknown vault action: import`), so the cycle below is currently unbreakable.
+exist in the binary** (`Unknown vault action: import`), so the cycle below was unbreakable.
 The full analysis + the three fix options live in [[128-vault-native-bootstrap-no-offline-seed]];
-**#118 is blocked on #128.**
+**#118 WAS blocked on #128 — now unblocked (ladder shipped).**
 
 `ductile vault set` **requires `--api-url`** — vault writes go through the running daemon (sole-writer
 arch, `cmd/ductile/vault.go:466`). But an **API bearer token must already be in the vault at BOOT**

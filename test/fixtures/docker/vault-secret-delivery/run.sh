@@ -1,14 +1,15 @@
 #!/usr/bin/env bash
-# vault-secret-delivery — black-box acceptance for the vault stack.
+# vault-secret-delivery — black-box acceptance for the vault stack, VAULT-NATIVE.
 #
-# Proves the spawn-time secret path end to end against a real running gateway:
-#   keygen -> genesis -> config lock + plugin lock (keyed attestation) -> boot ->
-#   register principal -> grant secret -> dispatch -> secret delivered over stdin.
+# Walks the credential ladder from genesis (no literal tokens, no phantom import):
+#   keygen + genesis -> boot MANAGEMENT posture -> mint the api token over the admin
+#   unix socket -> reference it in config -> config lock + plugin lock -> boot GATEWAY
+#   -> register principal + grant secret -> dispatch -> secret delivered over stdin.
 # Also asserts the local read surface: `vault get` returns a normal secret but
-# REFUSES the reserved admin token (card #42), and both reads are audited.
+# REFUSES the reserved admin token (#42), and both reads are audited.
 #
-# All genesis/lock artifacts (age key, vault blob, .checksums, state) are created
-# in a throwaway mktemp copy of the config so the committed fixture stays pristine.
+# All genesis/lock artifacts (age key, vault blob, .checksums, state) are created in
+# a throwaway mktemp copy of the config so the committed fixture stays pristine.
 set -euo pipefail
 
 ROOT_DIR="${ROOT_DIR:?}"
@@ -20,6 +21,10 @@ fixture_init
 
 BIN="$ROOT_DIR/ductile"
 API="http://127.0.0.1:18181"
+API_TOKEN_VALUE="vsd-api-admin-token"            # operator-chosen api bearer (minted into the vault)
+# Short absolute socket path — unix sun_path is capped near 104 bytes, so it must
+# NOT live under the long macOS mktemp dir (/private/var/folders/...).
+SOCK="/tmp/dtl-vsd-$$.sock"
 SCENARIO_LOG="$ARTIFACT_DIR/scenario.log"
 exec > >(tee "$SCENARIO_LOG") 2>&1
 
@@ -34,22 +39,63 @@ cp -R "$FIXTURE_DIR/config/." "$CONFIG_DIR/"
 chmod +x "$CONFIG_DIR/plugins/secret-probe/run.sh"
 mkdir -p "$CONFIG_DIR/state"
 
-cleanup() {
+stop_daemon() {
   if [[ -n "$PID" ]] && kill -0 "$PID" 2>/dev/null; then
     kill "$PID" 2>/dev/null || true
     wait "$PID" 2>/dev/null || true
   fi
+  PID=""
+}
+
+cleanup() {
+  stop_daemon
+  rm -f "$SOCK"
   fixture_capture_tree "$CONFIG_DIR" config
   rm -rf "$WORK"
 }
 trap cleanup EXIT
 
+# --- genesis -----------------------------------------------------------------
 fixture_log "genesis: keygen + vault init"
 "$BIN" secrets keygen -out "$CONFIG_DIR/age.key" >/dev/null 2>>"$ARTIFACT_DIR/genesis.log"
 chmod 600 "$CONFIG_DIR/age.key"
 ADMIN="$("$BIN" vault init --vault "$CONFIG_DIR/vault.age" --key "$CONFIG_DIR/age.key" 2>>"$ARTIFACT_DIR/genesis.log")"
 [[ -n "$ADMIN" ]] || fixture_fail "vault init produced no admin token"
 export DUCTILE_VAULT_TOKEN="$ADMIN"
+
+# --- management posture: mint the api token over the admin socket -------------
+# Inject the short management socket into the COPIED api.yaml (committed file is the
+# bootstrap state with NO tokens, so this boot is vault-operable / ductile-closed).
+printf '  management_socket: "%s"\n' "$SOCK" >> "$CONFIG_DIR/api.yaml"
+
+fixture_log "boot management posture (no api token yet)"
+"$BIN" system start --config "$CONFIG_DIR" >"$ARTIFACT_DIR/ductile-mgmt.log" 2>&1 &
+PID=$!
+ready=0
+for _ in $(seq 1 60); do
+  if curl -fsS --unix-socket "$SOCK" http://unix/healthz >"$ARTIFACT_DIR/healthz-mgmt.json" 2>/dev/null; then
+    ready=1; break
+  fi
+  sleep 0.25
+done
+[[ "$ready" -eq 1 ]] || fixture_fail "management socket did not become ready"
+posture="$(jq -r '.posture // empty' "$ARTIFACT_DIR/healthz-mgmt.json")"
+[[ "$posture" == "management-only" ]] || fixture_fail "expected management-only posture, got '$posture'"
+# The public gateway listener MUST NOT be open in this posture.
+! curl -fsS "$API/healthz" >/dev/null 2>&1 || fixture_fail "public gateway listener is open in management posture"
+
+fixture_log "mint api token over the admin socket (no principal -> load-visible)"
+printf '%s' "$API_TOKEN_VALUE" | "$BIN" vault set --api-url "unix://$SOCK" \
+  --name ductile-api-admin --pattern manual
+stop_daemon
+
+# --- activation: reference the api token, seal, boot the gateway --------------
+cat >> "$CONFIG_DIR/api.yaml" <<EOF
+  auth:
+    tokens:
+      - secret_ref: ductile-api-admin
+        scopes: ["*"]
+EOF
 
 fixture_log "attestation: config lock + plugin lock secret-probe"
 "$BIN" config lock --config "$CONFIG_DIR" >>"$ARTIFACT_DIR/lock.log" 2>&1
@@ -64,8 +110,13 @@ for _ in $(seq 1 60); do
   sleep 0.25
 done
 [[ "$ready" -eq 1 ]] || fixture_fail "health endpoint did not become ready"
+posture="$(jq -r '.posture // empty' "$ARTIFACT_DIR/healthz.json")"
+[[ "$posture" == "gateway" ]] || fixture_fail "expected gateway posture, got '$posture'"
 grep -q "compose-time attestation on" "$ARTIFACT_DIR/ductile.log" \
   || fixture_fail "expected compose-time attestation to be enabled at boot"
+
+# The minted api token now authenticates the public API for the rest of the run.
+export DUCTILE_API_KEY="$API_TOKEN_VALUE"
 
 fixture_log "register principal + grant secret my-secret=hunter2"
 "$BIN" vault register-principal --api-url "$API" --name secret-probe --kind plugin
@@ -110,4 +161,4 @@ echo "$AUDIT" >"$ARTIFACT_DIR/vault-audit.txt"
 echo "$AUDIT" | grep -q "register" || fixture_fail "audit missing register fact"
 echo "$AUDIT" | grep -q "denied"   || fixture_fail "audit missing read/denied fact for the reserved read"
 
-fixture_log "success — secret delivered over stdin; reserved read refused + audited"
+fixture_log "success — vault-native ladder: api token minted in management posture, secret delivered over stdin, reserved read refused + audited"

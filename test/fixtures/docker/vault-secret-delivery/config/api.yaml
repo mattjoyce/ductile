@@ -1,7 +1,8 @@
+# From-scratch bootstrap state: API enabled, NO api.auth.tokens yet. The daemon
+# boots the vault-operable / ductile-closed (management) posture; run.sh mints the
+# api token over the admin socket, then appends the auth block + restarts as the
+# gateway. management_socket is injected by run.sh (a short absolute path — unix
+# sun_path is capped near 104 bytes, so it can't live under the long mktemp dir).
 api:
   enabled: true
   listen: "127.0.0.1:18181"
-  auth:
-    tokens:
-      - token: "test-admin-token"
-        scopes: ["*"]
