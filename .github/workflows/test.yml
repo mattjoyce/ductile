@@ -56,11 +56,12 @@ jobs:
       - name: Build ductile binary
         run: make build
 
-      - name: Run Docker-backed staged tests
-        run: |
-          ./scripts/test-docker api-e2e
-          ./scripts/test-docker scheduler-recovery
-          ./scripts/test-docker webhook-ingress
+      # Green-only gate (#116): no fixture argument — the runner enumerates
+      # test/fixtures/docker/, so the gate IS the curated tier. A fixture joins
+      # the gate by landing green in that directory; a red fixture fails the job
+      # loudly (no skip, no `|| true`), with artifacts uploaded below.
+      - name: Run system-tier fixtures (green-only gate)
+        run: ./scripts/test-docker
 
       - name: Upload Docker test artifacts
         if: failure()
