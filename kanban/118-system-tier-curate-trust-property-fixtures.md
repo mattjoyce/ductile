@@ -115,14 +115,22 @@ file_handler, file_watch, folder_watch, fetch-plugin.
 /config/view redaction + snapshot fingerprint + secret-only-rotation restart — only the api token moves
 to the vault; the redacted secrets are inline plugin-config by design).
 
-**HELD for a call (not deleted):** reload-lifecycle (live hot reload — #130 covers the posture transition
-in-process but not a running-daemon API reload) and sync-terminal-route (sync response over a held
-connection may be live-only; routing tree is covered). Confirm before delete/keep.
+**Held fixtures RESOLVED 2026-06-09:**
+- **reload-lifecycle → KEPT + migrated** (vault-native): proves the LIVE hot reload (two `/system/reload`
+  cycles, daemon keeps serving) — the running-daemon reload path #130's in-process buildRuntime-swap
+  doesn't cover, and the path the ladder activation depends on.
+- **sync-terminal-route → DELETED**: sync response covered in-process by
+  `TestSynchronousPipelineSkippedEntryResponseVsDB` + `TestDispatcher_WaitForJobTree`.
 
-**To CREATE (live-only keepers with no fixture yet):** boot-refuses-bad-config (#119 fail-closed) and
-plugin-crash-leaves-deterministic-state (kill a subprocess mid-job → terminal + state-dir).
+**CREATED:** `boot-refuses-bad-config` (vault-free) — the LIVE fail-closed property: a real `system start`
+refuses a literal api token (#94) AND a credential-less enabled API (#119), non-zero exit, never a
+half-boot.
 
-Then Dell linux/amd64 confirm of the survivors → feeds #116 green-gate.
+### FINAL docker tier: 18 → 6, all green vault-native / fail-closed
+vault-secret-delivery, webhook-ingress, sys_exec, config-view-redaction, reload-lifecycle,
+boot-refuses-bad-config. **STILL TO CREATE:** plugin-crash-leaves-deterministic-state (kill a subprocess
+mid-job → terminal state + state-dir) — deferred to a fresh session (needs a purpose-built crashing
+plugin). With that, #118 is done and the green set feeds #116.
 
 ## UNBLOCKED 2026-06-09 — #128 resolved via the credential ladder (#129/#130/#131)
 

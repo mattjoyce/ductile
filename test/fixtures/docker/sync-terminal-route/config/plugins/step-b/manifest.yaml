@@ -1,9 +1,0 @@
-manifest_spec: ductile.plugin
-manifest_version: 1
-name: step-b
-version: 0.1.0
-protocol: 2
-entrypoint: run.sh
-commands:
-  - name: handle
-    type: write
