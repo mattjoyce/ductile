@@ -523,8 +523,9 @@ covers only the deploy-specific theory.
 
 ### Order at a glance
 
-backup → `vault_audit` migration → age key + genesis → config reconcile →
-import `tokens.yaml` → **`config lock` + `plugin lock --all`** → cutover → verify.
+backup → `vault_audit` migration → age key + genesis → reconcile config.yaml →
+boot vault-operable posture + mint secrets over the admin socket →
+**`config lock` + `plugin lock --all`** → cutover (reload activates the gateway) → verify.
 
 **The two steps operators miss — both fail loud, both cost a crash-loop:**
 
@@ -575,9 +576,27 @@ chmod 600 ~/.config/secrets/ductile/genesis.out # capture the token from here; i
 #      service.plugin_env_passthrough: [ ... ]   # only env names a plugin actually reads
 "$NEW" config check --config "$CFG"             # MUST be clean — resolve every "ignored config key"
 
-# 5. Migrate existing tokens.yaml secrets into the vault and prove parity.
-#    Use an ABSOLUTE --tokens path. tokens.yaml stays as a coexistence shim.
-"$NEW" vault import --config "$CFG" --tokens "$CFG/tokens.yaml"   # add --resolve-env only to freeze ${ENV}
+# 5. Load secrets INTO the vault. There is no offline bulk import — the daemon is the
+#    sole writer, so secrets enter THROUGH it. With NO api token in config yet, the
+#    staged binary boots the vault-operable / ductile-closed posture: it serves /vault/*
+#    on a local unix socket WITHOUT opening the public gateway. See the credential ladder
+#    in docs/adr/vault-credential-ladder.md.
+SOCK="$CFG/vault-admin.sock"                     # api.management_socket (defaults beside the state DB)
+ADMIN=...                                         # the admin token printed by genesis in step 3
+
+"$NEW" system start --config "$CFG" &            # serves management-only; stop it (kill %1) when done
+"$NEW" system status --config "$CFG"             # expect: boot_posture: management-only (live)
+
+# Mint the API bearer token (operator-chosen value; read from stdin, never argv):
+printf '%s' "$API_TOKEN" | "$NEW" vault set --api-url "unix://$SOCK" --token "$ADMIN" \
+  --name core-api-token --pattern manual
+# Migrate each existing tokens.yaml secret the same way — one vault set per secret:
+#   printf '%s' "$VAL" | "$NEW" vault set --api-url "unix://$SOCK" --token "$ADMIN" --name <s> --principal <p>
+
+kill %1                                          # stop the management-posture daemon
+
+# Reference the api token in config so the NEXT boot resolves it and ACTIVATES the gateway:
+#   api.auth.tokens: [ { secret_ref: core-api-token, scopes: [ "*" ] } ]
 
 # 6. Seal BOTH: config files AND plugin attestation. Attestation is keyed by the vault
 #    nonce, so genesis (step 3) must already be done.
@@ -593,7 +612,7 @@ systemctl --user start ductile-local
 # 8. Verify.
 journalctl --user -u ductile-local -n 40        # expect "compose-time attestation on"; no integrity/admission failure
 curl -s localhost:8081/healthz                  # status ok; plugins_loaded == your pre-deploy baseline
-ductile system vault-audit --config "$CFG"      # genesis + imports recorded
+ductile system vault-audit --config "$CFG"      # genesis + secret sets recorded
 ```
 
 ### Spawn-hygiene check before cutover (do not skip)

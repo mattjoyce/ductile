@@ -213,16 +213,20 @@ That splits the CLI into two classes (see `ductile vault --help`):
   `purge-principal`, `roll-principal`, `register-principal`. These hold no age key and
   decrypt nothing; they POST to the daemon's authenticated management API with the
   vault admin token (`--token` or `DUCTILE_VAULT_TOKEN`). They can run any time.
-- **Local, key-touching ops** — `init`, `import`, `rotate-key`, `rotate-admin-token`.
+- **Local, key-touching ops** — `init`, `rotate-key`, `rotate-admin-token`.
   These read the age key directly and operate on the blob, so the daemon must be
-  **stopped** (they refuse via the PID lock if it is running).
+  **stopped** (they refuse via the PID lock if it is running). There is no offline
+  bulk `import`: the daemon is the sole writer, so secrets enter the vault through
+  it — `vault set` over the management API (`--api-url`, incl. `unix://` in the
+  vault-operable bootstrap posture).
 
 ### Genesis and lifecycle
 
 > **Deploying onto a real instance?** This section is the lifecycle model. The full,
-> ordered first-time deploy procedure — backup, `vault_audit` migration, genesis, config
-> reconcile, import, `config lock` **and** `plugin lock --all`, cutover, verify — is the
-> how-to in [DEPLOYMENT.md § 11](DEPLOYMENT.md).
+> ordered first-time deploy procedure — backup, `vault_audit` migration, genesis, reconcile
+> config.yaml, mint secrets over the admin socket (vault-operable posture), `config lock`
+> **and** `plugin lock --all`, cutover, verify — is the how-to in
+> [DEPLOYMENT.md § 11](DEPLOYMENT.md).
 
 ```bash
 # 1. Genesis: create a new vault. Seeds the core principal, the fingerprint nonce,

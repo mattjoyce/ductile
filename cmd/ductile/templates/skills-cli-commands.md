@@ -42,9 +42,8 @@ Format: `<command> tier=<READ|WRITE> mut=<0|1> out=<human|json> [flags="<...>"] 
 - secrets.rotate tier=WRITE mut=1 out=human flags="--key <path> --recipient <age1...> [...] [--recipients-file <path>] --file <path>" d="Re-encrypt a config bundle under a new recipient set (in place, atomic)."
 
 ### Vault (daemon-owned dynamic secret store)
-> Keyless API clients POST to the running daemon (the sole writer) with the vault admin token (--token or DUCTILE_VAULT_TOKEN). Local key-touching ops (init/import/rotate-key) read the age key and require the daemon to be STOPPED.
+> Keyless API clients POST to the running daemon (the sole writer) with the vault admin token (--token or DUCTILE_VAULT_TOKEN); --api-url accepts unix://<sock> to reach the vault-operable bootstrap posture. Local key-touching ops (init/rotate-key/rotate-admin-token) read the age key and require the daemon to be STOPPED.
 - vault.init tier=WRITE mut=1 out=human flags="--vault <path> --key <path>" d="Genesis: create a new vault (core principal, nonce, admin token). Local, key-touching; daemon stopped."
-- vault.import tier=WRITE mut=1 out=human flags="--vault <path> --key <path> --tokens <path> [--resolve-env]" d="Migrate tokens.yaml entries into the vault. Local, key-touching; daemon stopped."
 - vault.rotate-key tier=WRITE mut=1 out=human flags="[--config <dir>]" d="Rotate the vault's age identity (mint, re-encrypt, retire old). Local, key-touching; daemon stopped."
 - vault.register-principal tier=WRITE mut=1 out=human flags="--name <n> --kind plugin|consumer|gateway [--api-url <url>] [--token <t>]" d="Register a deliver-to principal."
 - vault.set tier=WRITE mut=1 out=human flags="--name <n> [--pattern manual|auto] [--principal <csv>] [--api-url <url>] [--token <t>]" d="Set a secret; value read from stdin, never argv."

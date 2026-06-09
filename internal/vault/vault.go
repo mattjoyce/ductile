@@ -152,11 +152,16 @@ type ImportFailure struct {
 
 // SetManualBatch upserts a batch of manual-pattern secrets (operator-supplied
 // values, no grants) as ONE guarded critical section followed by a single Save,
-// so a `vault import` is atomic with respect to concurrent readers and writes
-// the blob exactly once. Per-entry validation failures are returned (name +
-// reason) without aborting the batch; a Save failure rolls the whole batch back
-// to the last persisted state. now stamps each upsert. It is the guarded
-// replacement for reaching the live model through Store().
+// so a batch load is atomic with respect to concurrent readers and writes the
+// blob exactly once. Per-entry validation failures are returned (name + reason)
+// without aborting the batch; a Save failure rolls the whole batch back to the
+// last persisted state. now stamps each upsert. It is the guarded replacement
+// for reaching the live model through Store().
+//
+// NOTE: this primitive currently has no caller — it was built for the never-wired
+// offline `vault import` command (#128). The implemented bootstrap mints secrets
+// online over the management API (credential-ladder ADR); retained as the basis
+// for a future recovery-import tool, whose fate is the #128 offline-seed decision.
 func (v *Vault) SetManualBatch(entries []ManualSecret, now time.Time) ([]ImportFailure, error) {
 	var failures []ImportFailure
 	err := v.mutate(func(s *Store) error {
