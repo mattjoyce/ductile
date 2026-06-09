@@ -571,17 +571,23 @@ chmod 600 ~/.config/secrets/ductile/genesis.out # capture the token from here; i
 
 # 4. Reconcile config.yaml, then validate. Set:
 #      secrets.age_key_file: <path to $KEY>
+#      api.management_socket: $CFG/vault-admin.sock   # EXPLICIT — the built-in default
+#                           # lives beside the STATE DB (state/ or data/), not $CFG (#141)
 #      service.admission: { verify_integrity_on_boot: true, fail_on_drift: true,
 #                           validate_config_on_boot: true, require_api_auth: true }
 #      service.plugin_env_passthrough: [ ... ]   # only env names a plugin actually reads
-"$NEW" config check --config "$CFG"             # MUST be clean — resolve every "ignored config key"
+"$NEW" config check --config "$CFG"             # MUST be clean — resolve every "ignored config key".
+                                                 # Zero api tokens + genesis vault IS clean: the
+                                                 # doctor shares the daemon's bootstrap verdict (#133)
 
 # 5. Load secrets INTO the vault. There is no offline bulk import — the daemon is the
 #    sole writer, so secrets enter THROUGH it. With NO api token in config yet, the
 #    staged binary boots the vault-operable / ductile-closed posture: it serves /vault/*
 #    on a local unix socket WITHOUT opening the public gateway. See the credential ladder
 #    in docs/adr/vault-credential-ladder.md.
-SOCK="$CFG/vault-admin.sock"                     # api.management_socket (defaults beside the state DB)
+SOCK="$CFG/vault-admin.sock"                     # MUST match api.management_socket from step 4 —
+                                                 # without that key the daemon serves the socket
+                                                 # beside the state DB and this dial refuses (#141)
 ADMIN=...                                         # the admin token printed by genesis in step 3
 
 "$NEW" system start --config "$CFG" &            # serves management-only; stop it (kill %1) when done

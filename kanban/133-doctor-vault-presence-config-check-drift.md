@@ -1,6 +1,6 @@
 ---
 id: 133
-status: backlog
+status: done
 priority: High
 tags: [doctor, config, vault, posture, bootstrap, cli]
 ---
@@ -35,3 +35,14 @@ three lines earlier. Fix the "vault-blind callers stay strict" rationale comment
 ## Done when
 `config check` on a genesis-vault, zero-token config exits 0 (matching the daemon's admission
 verdict) and the DEPLOYMENT.md from-scratch recipe runs as written.
+
+## Narrative
+- 2026-06-10: Fixed as prescribed: `runConfigCheck` (config.go) and `validateConfigAtPath`
+  (config_manage.go — the path behind config/plugin set, restore, init, and /system/doctor) now load
+  via `config.LoadWithVault` and chain `.WithVaultPresent(owner != nil)`; the stale "vault-blind
+  callers stay strict" comments in doctor.go updated. TDD: red test reproduced the exact rejection,
+  green after the two call-site edits; a second test pins the strictness floor (vault-LESS zero-token
+  config still refuses — that rejection fires in the loader itself). Empirically re-ran the card's
+  repro with the real binary: genesis + zero-token → `config check` exits 0 "Configuration valid.";
+  vault deleted → exit 1. The truly-keyless seam (blob on disk, no age key) remains [[135]]'s scope.
+  Recipe breakage pair fixed with [[141]]. (by @assistant)
