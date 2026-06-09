@@ -6,6 +6,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -56,16 +57,61 @@ func (s *Server) StartManagement(ctx context.Context) error {
 	if len(socket) >= 104 {
 		return fmt.Errorf("management socket path is too long (%d bytes, max 103): %q", len(socket), socket)
 	}
-	if err := os.Remove(socket); err != nil && !os.IsNotExist(err) {
-		return fmt.Errorf("remove stale management socket %q: %w", socket, err)
+	// Never blindly remove the configured path — a typo'd api.management_socket
+	// pointing at a real file (state DB, config, vault blob) would be deleted at
+	// daemon privilege. Only an actual socket counts as "stale" (#137).
+	if fi, lerr := os.Lstat(socket); lerr == nil {
+		if fi.Mode()&os.ModeSocket == 0 {
+			return fmt.Errorf("management socket path %q exists and is not a socket (mode %s) — refusing to remove it; fix api.management_socket", socket, fi.Mode())
+		}
+		if err := os.Remove(socket); err != nil {
+			return fmt.Errorf("remove stale management socket %q: %w", socket, err)
+		}
+	} else if !os.IsNotExist(lerr) {
+		return fmt.Errorf("stat management socket path %q: %w", socket, lerr)
 	}
-	ln, err := net.Listen("unix", socket)
+
+	// Parent directory: created 0700 when absent, verified when present — never
+	// assumed. A group/other-writable parent without the sticky bit lets anyone
+	// swap the socket out from under the daemon; sticky world-writable dirs
+	// (/tmp) are fine because the bind-chmod-rename below keeps the socket
+	// itself owner-only at every observable moment (#137).
+	parent := filepath.Dir(socket)
+	if err := os.MkdirAll(parent, 0o700); err != nil {
+		return fmt.Errorf("create management socket directory %q: %w", parent, err)
+	}
+	pfi, err := os.Stat(parent)
+	if err != nil {
+		return fmt.Errorf("stat management socket directory %q: %w", parent, err)
+	}
+	if pfi.Mode().Perm()&0o022 != 0 && pfi.Mode()&os.ModeSticky == 0 {
+		return fmt.Errorf("management socket directory %q is group/other-writable (mode %s) without the sticky bit — tighten it (0700)", parent, pfi.Mode())
+	}
+
+	// Bind-chmod-rename: bind inside a private 0700 temp dir, chmod 0600, then
+	// rename into place — the socket is never observable at the configured path
+	// with perms wider than 0600, and it is accepting only after it is locked
+	// down (#137 perms window; net.Listen creates umask-derived modes).
+	bindDir, err := os.MkdirTemp(parent, ".d")
+	if err != nil {
+		return fmt.Errorf("create private bind dir in %q: %w", parent, err)
+	}
+	defer func() { _ = os.RemoveAll(bindDir) }()
+	tmpSock := filepath.Join(bindDir, "s")
+	if len(tmpSock) >= 104 {
+		return fmt.Errorf("management socket bind path is too long (%d bytes, max 103): configure a shorter api.management_socket", len(tmpSock))
+	}
+	ln, err := net.Listen("unix", tmpSock)
 	if err != nil {
 		return fmt.Errorf("listen on management socket %q: %w", socket, err)
 	}
-	if err := os.Chmod(socket, 0o600); err != nil {
+	if err := os.Chmod(tmpSock, 0o600); err != nil {
 		_ = ln.Close()
 		return fmt.Errorf("chmod management socket %q: %w", socket, err)
+	}
+	if err := os.Rename(tmpSock, socket); err != nil {
+		_ = ln.Close()
+		return fmt.Errorf("move management socket into place at %q: %w", socket, err)
 	}
 
 	s.server = &http.Server{

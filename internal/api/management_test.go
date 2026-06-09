@@ -4,11 +4,13 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strings"
 	"path/filepath"
 	"testing"
 	"time"
@@ -211,6 +213,77 @@ func TestManagementPostureDoesNotServeGatewayPlane(t *testing.T) {
 		_ = resp.Body.Close()
 		if resp.StatusCode != http.StatusNotFound {
 			t.Errorf("gateway route %s reachable in management posture: status = %d, want 404", path, resp.StatusCode)
+		}
+	}
+}
+
+// #137: a typo'd api.management_socket pointing at a real file (state DB,
+// config, vault blob) must REFUSE boot — never silently delete the file at
+// daemon privilege. The stale-remove rationale only holds for actual sockets.
+func TestStartManagementRefusesNonSocketPath(t *testing.T) {
+	sockDir, err := os.MkdirTemp("/tmp", "dtl")
+	if err != nil {
+		t.Fatalf("mkdir socket dir: %v", err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(sockDir) })
+	socket := filepath.Join(sockDir, "v.sock")
+	if err := os.WriteFile(socket, []byte("precious bytes"), 0o644); err != nil {
+		t.Fatalf("write decoy file: %v", err)
+	}
+
+	db, err := storage.OpenSQLite(context.Background(), ":memory:")
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	cfg := Config{ManagementSocket: socket, Vault: &fakeVault{adminToken: "admin-secret"}, BootPosture: "management-only"}
+	q := queue.New(db)
+	srv := New(cfg, q, &mockRegistry{}, &mockRouter{}, &mockWaiter{}, state.NewContextStore(db), state.NewAdmitter(q, state.DefaultMaxContextBytes), nil, events.NewHub(10), slog.Default())
+
+	// Bounded context: the broken behavior is to delete the file, bind, and
+	// SERVE — without a deadline the red state hangs instead of failing.
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	startErr := srv.StartManagement(ctx)
+	if startErr == nil || errors.Is(startErr, context.DeadlineExceeded) {
+		t.Fatalf("StartManagement must refuse when the socket path is a regular file, got: %v", startErr)
+	}
+	if !strings.Contains(startErr.Error(), "not a socket") {
+		t.Fatalf("want a typed not-a-socket refusal, got: %v", startErr)
+	}
+	got, err := os.ReadFile(socket)
+	if err != nil || string(got) != "precious bytes" {
+		t.Fatalf("the non-socket file must survive untouched, got (%q, %v)", got, err)
+	}
+}
+
+// #137: at the configured path the socket only ever appears owner-only — it is
+// bound in a private dir, chmod'd 0600, then renamed into place.
+func TestStartManagementSocketIsOwnerOnly(t *testing.T) {
+	fv := &fakeVault{adminToken: "admin-secret"}
+	client, cleanup := startManagementServer(t, fv)
+	defer cleanup()
+
+	resp, err := client.Get("http://unix/healthz")
+	if err != nil {
+		t.Fatalf("GET /healthz: %v", err)
+	}
+	_ = resp.Body.Close()
+
+	matches, err := filepath.Glob("/tmp/dtl*/v.sock")
+	if err != nil || len(matches) == 0 {
+		t.Fatalf("locate management socket: %v (matches %v)", err, matches)
+	}
+	for _, m := range matches {
+		fi, err := os.Lstat(m)
+		if err != nil {
+			continue // another test's dir torn down concurrently
+		}
+		if fi.Mode()&os.ModeSocket == 0 {
+			t.Errorf("%s is not a socket (mode %s)", m, fi.Mode())
+		}
+		if perm := fi.Mode().Perm(); perm != 0o600 {
+			t.Errorf("%s perms = %o, want 0600", m, perm)
 		}
 	}
 }
