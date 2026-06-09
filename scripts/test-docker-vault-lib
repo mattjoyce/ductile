@@ -51,11 +51,12 @@ fixture_bootstrap_vault() {
   posture="$(jq -r '.posture // empty' "$ARTIFACT_DIR/healthz-mgmt.json")"
   [[ "$posture" == "management-only" ]] || fixture_fail "expected management-only posture, got '$posture'"
   # The public gateway listener MUST NOT be open in this posture (parse listen from api.yaml).
+  # A failed parse must FAIL the fixture, not silently skip this assertion —
+  # the closed listener is the management posture's defining property (#142).
   local listen
   listen="$(awk '/^[[:space:]]*listen:/ {gsub(/[",]/,"",$2); print $2; exit}' "$cfg/api.yaml")"
-  if [[ -n "$listen" ]]; then
-    ! curl -fsS "http://$listen/healthz" >/dev/null 2>&1 || fixture_fail "public gateway listener is open in management posture"
-  fi
+  [[ -n "$listen" ]] || fixture_fail "could not parse api listen address from api.yaml"
+  ! curl -fsS "http://$listen/healthz" >/dev/null 2>&1 || fixture_fail "public gateway listener is open in management posture"
 
   fixture_log "mint api token $api_name over the admin socket (load-visible)"
   printf '%s' "$api_value" | "$BIN" vault set --api-url "unix://$sock" --name "$api_name" --pattern manual

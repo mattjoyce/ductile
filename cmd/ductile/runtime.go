@@ -788,7 +788,7 @@ func buildRuntime(cfg *config.Config, configPath string, configSource string, re
 			RelayReceiver:    relayReceiver,
 			AllowedOrigins:   cfg.API.AllowedOrigins,
 			ManagementSocket: managementSocketPath(cfg),
-			BootPosture:      bootPosture.String(),
+			BootPosture:      healthzPostureFor(cfg, bootPosture),
 		}
 		// Expose the vault management API only when a vault owner exists. Assign
 		// the interface field solely for a non-nil owner: a typed-nil *vault.Vault
@@ -865,6 +865,17 @@ func managementSocketPath(cfg *config.Config) string {
 		return cfg.API.ManagementSocket
 	}
 	return filepath.Join(filepath.Dir(cfg.State.Path), "vault-admin.sock")
+}
+
+// healthzPostureFor returns the posture string /healthz reports. With
+// api.enabled=false the API server block can still run (relay configured), and
+// "closed" answered FROM a live listener would be the one spot reported posture
+// and the live listener set disagree — suppress the field instead (#142).
+func healthzPostureFor(cfg *config.Config, posture config.BootPosture) string {
+	if cfg == nil || !cfg.API.Enabled {
+		return ""
+	}
+	return posture.String()
 }
 
 func runStart(args []string) int {
