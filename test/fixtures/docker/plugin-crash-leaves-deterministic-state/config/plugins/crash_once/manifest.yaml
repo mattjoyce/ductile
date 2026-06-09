@@ -1,0 +1,19 @@
+# Fixture-only plugin: crashes deterministically mid-job. Never deploy.
+manifest_spec: ductile.plugin
+manifest_version: 1
+name: crash_once
+version: 0.1.0
+protocol: 2
+entrypoint: run.py
+description: "Write a started-marker, then SIGKILL self mid-job (crash-path fixture plugin)."
+commands:
+  - name: handle
+    type: write
+    description: "Write the started-marker, then die by uncatchable SIGKILL — never responds."
+  - name: health
+    type: read
+    description: "Report healthy (the crash is reserved for real jobs)."
+config_keys:
+  required: []
+  optional:
+    - marker_file

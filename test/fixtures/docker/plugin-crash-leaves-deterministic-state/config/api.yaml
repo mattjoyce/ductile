@@ -1,0 +1,5 @@
+# Bootstrap state: API enabled, NO api.auth.tokens yet (run.sh mints the api token
+# in the management posture, then appends the auth block before the gateway boot).
+api:
+  enabled: true
+  listen: "127.0.0.1:18681"
