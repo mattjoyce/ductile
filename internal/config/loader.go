@@ -516,8 +516,14 @@ func deepMergeConfig(dst, src *Config) error {
 	if src.API.Listen != "" {
 		dst.API.Listen = src.API.Listen
 	}
+	if src.API.ManagementSocket != "" {
+		dst.API.ManagementSocket = src.API.ManagementSocket
+	}
 	if len(src.API.Auth.Tokens) > 0 {
 		dst.API.Auth.Tokens = append(dst.API.Auth.Tokens, src.API.Auth.Tokens...)
+	}
+	if len(src.API.AllowedOrigins) > 0 {
+		dst.API.AllowedOrigins = append(dst.API.AllowedOrigins, src.API.AllowedOrigins...)
 	}
 
 	// Merge plugin_roots

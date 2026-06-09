@@ -1250,6 +1250,32 @@ plugins:
 	}
 }
 
+// TestDeepMergeConfigAPIFields guards the deepMergeConfig API merge: an api: block
+// from an INCLUDED file must carry every field through, not just the few the merge
+// once hand-listed. management_socket (#129) and allowed_origins were silently
+// dropped from multi-file configs — single-file loads never exercised the merge.
+func TestDeepMergeConfigAPIFields(t *testing.T) {
+	dst := &Config{}
+	src := &Config{API: APIConfig{
+		Enabled:          true,
+		Listen:           "127.0.0.1:18181",
+		ManagementSocket: "/tmp/ductile-mgmt.sock",
+		AllowedOrigins:   []string{"https://dash.example"},
+	}}
+	if err := deepMergeConfig(dst, src); err != nil {
+		t.Fatalf("deepMergeConfig: %v", err)
+	}
+	if !dst.API.Enabled || dst.API.Listen != "127.0.0.1:18181" {
+		t.Errorf("api enabled/listen not merged: %+v", dst.API)
+	}
+	if dst.API.ManagementSocket != "/tmp/ductile-mgmt.sock" {
+		t.Errorf("API.ManagementSocket = %q, want it carried through the merge", dst.API.ManagementSocket)
+	}
+	if len(dst.API.AllowedOrigins) != 1 || dst.API.AllowedOrigins[0] != "https://dash.example" {
+		t.Errorf("API.AllowedOrigins = %v, want it carried through the merge", dst.API.AllowedOrigins)
+	}
+}
+
 func TestLoadIncludeDirectory(t *testing.T) {
 	tmpDir := t.TempDir()
 	includeDir := filepath.Join(tmpDir, "includes")
