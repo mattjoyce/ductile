@@ -66,7 +66,8 @@ type Doctor struct {
 	// vaultPresent reports whether a vault owner is loaded. It relaxes the
 	// api-tokens rule for the from-scratch bootstrap posture (#129): an enabled
 	// gateway with no api token is legitimate when a vault exists to mint one.
-	// Defaults false (strict) for vault-blind callers like `config check`.
+	// Defaults false (strict); callers that load via LoadWithVault chain
+	// WithVaultPresent so their verdict matches the daemon's admission (#133).
 	vaultPresent bool
 }
 
@@ -76,8 +77,10 @@ func New(cfg *config.Config, registry *plugin.Registry) *Doctor {
 }
 
 // WithVaultPresent records whether a vault owner is loaded, relaxing the
-// api-tokens rule for the bootstrap posture (#129). The boot-admission caller
-// sets this from its resolved owner; vault-blind callers leave it false (strict).
+// api-tokens rule for the bootstrap posture (#129). Boot admission, `config
+// check`, and validateConfigAtPath all set this from the owner LoadWithVault
+// resolved — one verdict across daemon and CLI (#133). Only a truly keyless
+// caller leaves it false (strict; that seam is #135).
 func (d *Doctor) WithVaultPresent(present bool) *Doctor {
 	d.vaultPresent = present
 	return d
