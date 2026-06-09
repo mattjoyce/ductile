@@ -97,6 +97,12 @@ type Config struct {
 	// nil disables audit emission (ops still succeed — audit is observability,
 	// not a precondition). Runtime wires the state.Store.
 	VaultAuditor VaultAuditor
+	// ManagementSocket is the filesystem path of the unix-domain socket the
+	// vault-operable / ductile-closed posture serves the /vault/* surface on
+	// (StartManagement). It is the LOCAL transport mandated by the credential-
+	// ladder ADR — a same-host filesystem boundary, never the public network
+	// interface. Unused in the gateway posture (Start serves TCP).
+	ManagementSocket string
 	// AllowedOrigins lists the origins that may receive credentialed CORS
 	// headers. An empty list disables cross-origin credential sharing entirely.
 	AllowedOrigins []string
@@ -294,20 +300,30 @@ func (s *Server) setupRoutes() *chi.Mux {
 	// Vault management — gated by the vault's OWN resident admin token, not the
 	// config API tokens above (a separate group, separate authenticator). The
 	// daemon is the sole writer; value-dump and genesis stay local, never here.
-	if s.vault != nil {
-		r.Group(func(r chi.Router) {
-			r.Use(s.authenticateVaultAdmin)
-			r.Post("/vault/principal", s.handleVaultRegisterPrincipal)
-			r.Post("/vault/secret", s.handleVaultSet)
-			r.Post("/vault/secret/roll", s.handleVaultRoll)
-			r.Post("/vault/secret/revoke", s.handleVaultRevoke)
-			r.Post("/vault/principal/revoke", s.handleVaultRevokePrincipal)
-			r.Post("/vault/principal/purge", s.handleVaultPurgePrincipal)
-			r.Post("/vault/principal/roll", s.handleVaultRollPrincipal)
-		})
-	}
+	s.mountVaultRoutes(r)
 
 	return r
+}
+
+// mountVaultRoutes mounts the admin-token-gated /vault/* management group. It is
+// the SINGLE definition of the vault management surface, shared by the gateway
+// router (setupRoutes) and the management-only router (setupManagementRoutes),
+// so the two postures can never expose a divergent set of vault routes. A nil
+// vault mounts nothing (no vault loaded / keyless).
+func (s *Server) mountVaultRoutes(r chi.Router) {
+	if s.vault == nil {
+		return
+	}
+	r.Group(func(r chi.Router) {
+		r.Use(s.authenticateVaultAdmin)
+		r.Post("/vault/principal", s.handleVaultRegisterPrincipal)
+		r.Post("/vault/secret", s.handleVaultSet)
+		r.Post("/vault/secret/roll", s.handleVaultRoll)
+		r.Post("/vault/secret/revoke", s.handleVaultRevoke)
+		r.Post("/vault/principal/revoke", s.handleVaultRevokePrincipal)
+		r.Post("/vault/principal/purge", s.handleVaultPurgePrincipal)
+		r.Post("/vault/principal/roll", s.handleVaultRollPrincipal)
+	})
 }
 
 // corsMiddleware returns a middleware that sets CORS headers for requests whose
