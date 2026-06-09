@@ -44,6 +44,18 @@ func (p BootPosture) String() string {
 	}
 }
 
+// APIEnabledWithoutToken reports the structural condition behind #94/#119: the
+// gateway API is enabled but no bearer token is configured. On its own that is a
+// misconfiguration — an enabled gateway with no credential — EXCEPT in the
+// from-scratch bootstrap posture, where a vault is present to mint the token
+// (DecideBootPosture then returns PostureManagementOnly). hasVault carries that
+// single exception, so the rule lives in ONE place and the three layers that
+// enforce it (config load-validation, doctor, runtime admission) cannot drift.
+// Returns true when the config should be rejected.
+func APIEnabledWithoutToken(cfg *Config, hasVault bool) bool {
+	return cfg != nil && cfg.API.Enabled && len(cfg.API.Auth.Tokens) == 0 && !hasVault
+}
+
 // DecideBootPosture decides which posture the GATEWAY plane boots into, from the
 // resolved config and whether a vault owner is present to operate. It is pure:
 // no I/O, no secret resolution. It decides only from the COUNT of configured api

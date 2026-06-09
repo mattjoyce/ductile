@@ -1185,7 +1185,10 @@ func TestValidate(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			err := validate(tt.cfg)
+			// hasVault=false: these cases exercise non-bootstrap validation, so the
+			// api-enabled-needs-token rule applies as before (the vault-present
+			// bootstrap exception is covered in boot_posture_test.go).
+			err := validate(tt.cfg, false)
 			if (err != nil) != tt.wantErr {
 				t.Errorf("validate() error = %v, wantErr %v", err, tt.wantErr)
 			}

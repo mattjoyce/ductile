@@ -63,11 +63,24 @@ type Doctor struct {
 	registry          *plugin.Registry
 	hookPipelines     []HookPipeline
 	stopwatchSnapshot *StopwatchSnapshot
+	// vaultPresent reports whether a vault owner is loaded. It relaxes the
+	// api-tokens rule for the from-scratch bootstrap posture (#129): an enabled
+	// gateway with no api token is legitimate when a vault exists to mint one.
+	// Defaults false (strict) for vault-blind callers like `config check`.
+	vaultPresent bool
 }
 
 // New creates a Doctor from a loaded config and plugin registry.
 func New(cfg *config.Config, registry *plugin.Registry) *Doctor {
 	return &Doctor{cfg: cfg, registry: registry}
+}
+
+// WithVaultPresent records whether a vault owner is loaded, relaxing the
+// api-tokens rule for the bootstrap posture (#129). The boot-admission caller
+// sets this from its resolved owner; vault-blind callers leave it false (strict).
+func (d *Doctor) WithVaultPresent(present bool) *Doctor {
+	d.vaultPresent = present
+	return d
 }
 
 // AddHookPipelines registers compiled hook pipelines for cycle analysis.
@@ -246,8 +259,8 @@ func (d *Doctor) validateAPIConfig(r *Result) {
 	if d.cfg.API.Listen == "" {
 		d.addError(r, "api", "api.listen", "api.listen is required when API is enabled")
 	}
-	if len(d.cfg.API.Auth.Tokens) == 0 {
-		d.addError(r, "api", "api.auth.tokens", "api.auth.tokens must be configured when API is enabled")
+	if config.APIEnabledWithoutToken(d.cfg, d.vaultPresent) {
+		d.addError(r, "api", "api.auth.tokens", "api.auth.tokens must be configured when API is enabled (or genesis a vault to bootstrap one — credential-ladder ADR)")
 	}
 }
 
