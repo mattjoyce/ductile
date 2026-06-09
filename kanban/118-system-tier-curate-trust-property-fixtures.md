@@ -1,6 +1,6 @@
 ---
 id: 118
-status: doing
+status: done
 priority: High
 tags: [testing, docker, fixtures, vault, migration, trust]
 ---
@@ -131,6 +131,27 @@ vault-secret-delivery, webhook-ingress, sys_exec, config-view-redaction, reload-
 boot-refuses-bad-config. **STILL TO CREATE:** plugin-crash-leaves-deterministic-state (kill a subprocess
 mid-job → terminal state + state-dir) — deferred to a fresh session (needs a purpose-built crashing
 plugin). With that, #118 is done and the green set feeds #116.
+
+## DONE 2026-06-10 — `plugin-crash-leaves-deterministic-state` created; tier complete at 7
+
+Last keeper CREATED (not migrated): a fixture-only `crash_once` python plugin writes+fsyncs a
+started-marker (proves the crash is MID-job) then SIGKILLs itself — uncatchable, no stdout response.
+Asserts: job lands terminal `failed` (job_log), daemon keeps serving `/healthz` AND keeps dispatching
+(a second trigger round-trips to terminal `failed` too), zero non-terminal `job_queue` rows at the end.
+Vault-native via the ladder helpers; `retry: {max_attempts: 1}` because the default (4 × 30s backoff,
+config/types.go:891) would grind the fixture for minutes. Dispatcher semantics confirmed in code:
+SIGKILL'd child → `*exec.ExitError` via Wait() (immediate, no reaper poll) → failOrRetry → `failed`.
+
+**Assertion proven to bite (mutation test):** flipped the expected status to `succeeded` → fixture
+FAILed and `./scripts/test-docker` exited 1; reverted. Full tier green: all 7 fixtures pass locally
+(macOS). `test/fixtures/docker/README.md` rewritten — it still listed 8 deleted fixtures; now documents
+the curated 7 with each one's live-only property + tier conventions. Green set ready for [[116]].
+
+## Narrative
+- 2026-06-10: Closed the card by creating the last keeper. The interesting find en route: default
+  retry policy is 4 attempts × 30s backoff — fine for production, pathological for a crash fixture;
+  single-attempt override is the documented escape hatch. Tier is now 18 → 7, every fixture names a
+  property only a live gateway can prove. (by @assistant)
 
 ## UNBLOCKED 2026-06-09 — #128 resolved via the credential ladder (#129/#130/#131)
 
