@@ -7,6 +7,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"os"
 	"strings"
@@ -393,7 +394,7 @@ func auditVaultRotateAdminToken(cfg *config.Config) {
 // VALUE is read from stdin, never argv, so it cannot leak via /proc.
 func runVaultSet(args []string) int {
 	fs := flag.NewFlagSet("vault set", flag.ContinueOnError)
-	apiURL := fs.String("api-url", "", "Daemon API base URL (e.g. http://127.0.0.1:8080)")
+	apiURL := fs.String("api-url", "", "Daemon API base URL (http://127.0.0.1:8080, or unix:///path/to/vault-admin.sock for the bootstrap management posture)")
 	token := fs.String("token", "", "Vault admin token (or set DUCTILE_VAULT_TOKEN)")
 	name := fs.String("name", "", "Secret name")
 	// Empty default: the daemon defaults pattern to manual on CREATE and leaves it
@@ -474,7 +475,11 @@ func vaultAPIPost(apiURL, token, path string, body any) ([]byte, error) {
 		return nil, err
 	}
 
-	endpoint := strings.TrimRight(apiURL, "/") + path
+	client, base, err := vaultHTTPClient(apiURL)
+	if err != nil {
+		return nil, err
+	}
+	endpoint := base + path
 	req, err := http.NewRequest(http.MethodPost, endpoint, bytes.NewReader(raw))
 	if err != nil {
 		return nil, err
@@ -482,7 +487,7 @@ func vaultAPIPost(apiURL, token, path string, body any) ([]byte, error) {
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("Content-Type", "application/json")
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := client.Do(req)
 	if err != nil {
 		return nil, err
 	}
@@ -493,6 +498,28 @@ func vaultAPIPost(apiURL, token, path string, body any) ([]byte, error) {
 		return nil, fmt.Errorf("%s failed (%d): %s", path, resp.StatusCode, strings.TrimSpace(string(respBody)))
 	}
 	return respBody, nil
+}
+
+// vaultHTTPClient builds the HTTP client and base URL for a vault management
+// call. A unix://<path> api-url targets the management-posture socket (the local
+// transport of the credential-ladder ADR): it dials that socket and the request
+// host is an ignored placeholder. Any other api-url is a normal TCP base URL.
+func vaultHTTPClient(apiURL string) (*http.Client, string, error) {
+	if socket, ok := strings.CutPrefix(apiURL, "unix://"); ok {
+		socket = strings.TrimSpace(socket)
+		if socket == "" {
+			return nil, "", fmt.Errorf("unix:// requires a socket path (e.g. unix:///run/ductile/vault-admin.sock)")
+		}
+		client := &http.Client{
+			Transport: &http.Transport{
+				DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
+					return (&net.Dialer{}).DialContext(ctx, "unix", socket)
+				},
+			},
+		}
+		return client, "http://unix", nil
+	}
+	return http.DefaultClient, strings.TrimRight(apiURL, "/"), nil
 }
 
 // resolveVaultToken prefers the flag, then the DUCTILE_VAULT_TOKEN env var.
