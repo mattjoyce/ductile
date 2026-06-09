@@ -83,6 +83,7 @@ plugin_roots:
   - plugins
 service:
   allow_symlinks: true
+  unconfined: true
   admission:
     require_api_auth: true
 state:

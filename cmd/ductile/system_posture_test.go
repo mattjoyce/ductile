@@ -34,6 +34,7 @@ plugin_roots:
   - plugins
 service:
   allow_symlinks: true
+  unconfined: true
 state:
   path: ` + filepath.Join(tmp, "state.db") + `
 api:
