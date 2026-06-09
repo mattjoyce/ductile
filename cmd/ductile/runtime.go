@@ -442,9 +442,24 @@ func buildRuntime(cfg *config.Config, configPath string, configSource string, re
 	}
 	admission := cfg.Service.AdmissionPolicy()
 
+	// Resolve the vault owner ONCE, before any admission consumer — the doctor
+	// gate, integrity verify, and the posture decision must all see the same
+	// vault presence. The reload-restore branch passes no opts.vaultOwner; the
+	// fallback load HERE (not after admission) keeps an armed management-posture
+	// box restorable after a failed reload instead of stranding it (#134).
+	vaultOwner := opts.vaultOwner
+	if vaultOwner == nil {
+		fallbackOwner, vErr := config.LoadVault(resolveConfigDir(configPath), cfg)
+		if vErr != nil {
+			logger.Error("failed to load vault", "error", vErr)
+			return nil, fmt.Errorf("vault: %w", vErr)
+		}
+		vaultOwner = fallbackOwner
+	}
+
 	if admission.VerifyIntegrityOnBoot {
 		logger.Info("admission: verifying config integrity at boot", "fail_on_drift", admission.FailOnDrift)
-		if err := verifyReloadIntegrity(configPath, admission.FailOnDrift, opts.vaultOwner); err != nil {
+		if err := verifyReloadIntegrity(configPath, admission.FailOnDrift, vaultOwner); err != nil {
 			logger.Error("integrity check failed (admission.verify_integrity_on_boot)", "error", err)
 			return nil, fmt.Errorf("integrity check failed: %w", err)
 		}
@@ -452,9 +467,9 @@ func buildRuntime(cfg *config.Config, configPath string, configSource string, re
 
 	if admission.ValidateConfigOnBoot {
 		// Vault-aware: a from-scratch vault gateway with no api token yet is a
-		// legitimate bootstrap posture (#129), not a config error — the boot owner
-		// is opts.vaultOwner (reused from LoadWithVault).
-		doc := doctor.New(cfg, registry).WithVaultPresent(opts.vaultOwner != nil)
+		// legitimate bootstrap posture (#129), not a config error — vaultOwner
+		// is the single resolution above (#134).
+		doc := doctor.New(cfg, registry).WithVaultPresent(vaultOwner != nil)
 		report := doc.Validate()
 		if !report.Valid {
 			logger.Error("configuration validation failed (admission.validate_config_on_boot)")
@@ -605,18 +620,9 @@ func buildRuntime(cfg *config.Config, configPath string, configSource string, re
 	// compose-time gate is off for vault-less deployments (and we avoid a typed-nil
 	// interface that would defeat the nil check in composePluginSecrets).
 	var pluginVerifier dispatch.PluginVerifier
-	// Reuse the owner the load-time graft already decrypted (passed via opts on the
-	// daemon start path) rather than decrypting the blob a second time (#43
-	// redundant decrypt; epic #48 slice 2). A nil opts owner — reload, restore, or
-	// no vault — falls back to a fresh load, preserving prior behaviour exactly.
-	vaultOwner := opts.vaultOwner
-	if vaultOwner == nil {
-		vaultOwner, err = config.LoadVault(configDir, cfg)
-		if err != nil {
-			logger.Error("failed to load vault", "error", err)
-			return nil, fmt.Errorf("vault: %w", err)
-		}
-	}
+	// vaultOwner was resolved exactly once, above the admission gates (#134 —
+	// reusing the load-time decrypt when opts carried it, #43). Wire the
+	// compose-time surfaces from that single value.
 	if vaultOwner != nil {
 		secretComposer = vaultOwner
 		// §3.3: re-verify a principal's live bytes against its recorded keyed
