@@ -39,6 +39,16 @@ func LoadRaw(configPath string) (*Config, error) {
 	return cfg, err
 }
 
+// LoadLenient reads configuration with NO scope verification and NO validation —
+// for best-effort observability callers (the keyless `system status` posture
+// probe, #135) that need only structural fields (listen address, management
+// socket path) even when the strict load refuses. Never use it to admit,
+// boot, or mutate a config.
+func LoadLenient(configPath string) (*Config, error) {
+	cfg, _, err := load(configPath, false, false, false)
+	return cfg, err
+}
+
 // LoadWithVault reads configuration AND returns the vault owner decrypted during
 // the load-time projection, so the daemon can reuse that single decryption as its
 // live owner instead of decrypting the blob a second time at runtime

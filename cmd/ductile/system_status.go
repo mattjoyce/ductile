@@ -125,6 +125,13 @@ func collectSystemStatus(configPath string) systemStatusReport {
 			},
 		)
 		report.Healthy = false
+		// The posture probe needs nothing from the vault — only the management
+		// socket path and listen address. A keyless operator on a credentialed
+		// host (#112) must still see the live #130 anti-strand signal even
+		// though the strict load refuses for them (#135).
+		if lenient, lerr := config.LoadLenient(resolvedConfigPath); lerr == nil {
+			report.Checks = append(report.Checks, checkBootPosture(lenient))
+		}
 		return report
 	}
 
