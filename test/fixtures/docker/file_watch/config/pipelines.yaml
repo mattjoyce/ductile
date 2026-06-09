@@ -1,6 +1,0 @@
-pipelines:
-  - name: file-watch-pipeline
-    on: file.changed
-    steps:
-      - id: notify
-        uses: echo

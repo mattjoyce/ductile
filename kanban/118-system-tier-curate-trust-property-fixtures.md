@@ -100,9 +100,29 @@ config can't reference an unminted secret_ref — same rule as the api token).
 **Second prod fix it surfaced:** the management posture was still starting the **webhook server** (a
 public plane in a "closed" posture) — guarded on posture (commit `46e4de8`).
 
-### Next: the name-a-unique-risk-or-delete pass (do WITH Matt — deletions)
-~16 remaining fixtures. Per-fixture: "proves X, which nothing else proves" or DELETE (most routing/state
-belongs in the in-process suite #117). Then Dell linux/amd64 confirm → feeds #116 green-gate.
+### CURATION DONE 2026-06-09 (reviewed with Matt): 18 → 6
+Verified each delete's property is proven in-process BEFORE removing (Feathers). **Deleted 12 redundant
+scenario fixtures** — routing/predicate logic covered in `internal/router/*` (the `if:` engine tests,
+`FromPlugin*`, hook dispatch, `ConditionalSwitchBypassesFalseStep`, dedupe/fanout in queue+dispatcher):
+conditional-with-route, context-aware-trigger-if, pipeline-level-if, from-plugin-scoping,
+hook-route-compilation, fanout-dedupe-scope, scheduler-recovery (=#117 crash-recovery), api-e2e,
+file_handler, file_watch, folder_watch, fetch-plugin.
+> Lesson: a grep-keyword false alarm ("from_plugin"/"dedupe" → 0 hits) almost dropped covered fixtures;
+> reading the actual test names (`FromPlugin`, `DedupeKey`) confirmed coverage. Verify, don't assert.
+
+**Kept + migrated to the vault-native ladder:** vault-secret-delivery ✓, webhook-ingress ✓, sys_exec ✓
+(polyglot subprocess round-trip). **Remaining keeper to migrate:** config-view-redaction (3-part:
+/config/view redaction + snapshot fingerprint + secret-only-rotation restart — only the api token moves
+to the vault; the redacted secrets are inline plugin-config by design).
+
+**HELD for a call (not deleted):** reload-lifecycle (live hot reload — #130 covers the posture transition
+in-process but not a running-daemon API reload) and sync-terminal-route (sync response over a held
+connection may be live-only; routing tree is covered). Confirm before delete/keep.
+
+**To CREATE (live-only keepers with no fixture yet):** boot-refuses-bad-config (#119 fail-closed) and
+plugin-crash-leaves-deterministic-state (kill a subprocess mid-job → terminal + state-dir).
+
+Then Dell linux/amd64 confirm of the survivors → feeds #116 green-gate.
 
 ## UNBLOCKED 2026-06-09 — #128 resolved via the credential ladder (#129/#130/#131)
 
