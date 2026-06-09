@@ -519,6 +519,12 @@ func deepMergeConfig(dst, src *Config) error {
 	if src.API.ManagementSocket != "" {
 		dst.API.ManagementSocket = src.API.ManagementSocket
 	}
+	if src.API.MaxConcurrentSync != 0 {
+		dst.API.MaxConcurrentSync = src.API.MaxConcurrentSync
+	}
+	if src.API.MaxSyncTimeout != 0 {
+		dst.API.MaxSyncTimeout = src.API.MaxSyncTimeout
+	}
 	if len(src.API.Auth.Tokens) > 0 {
 		dst.API.Auth.Tokens = append(dst.API.Auth.Tokens, src.API.Auth.Tokens...)
 	}
