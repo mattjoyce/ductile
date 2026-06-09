@@ -167,6 +167,7 @@ func load(configPath string, verifyScopes bool, validateConfig bool, applyPlugin
 				config:     cfg,
 				tokens:     cfg.ResolvedSecrets,
 				vaultBlind: vaultBlind(configDir, cfg, kr),
+				bootstrap:  DecideBootPosture(cfg, owner != nil) == PostureManagementOnly,
 			}
 			if err := validator.ValidateCrossReferences(); err != nil {
 				return nil, nil, fmt.Errorf("configuration validation failed: %w", err)
