@@ -2,8 +2,8 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/mattjoyce/ductile/schemas/config.schema.json",
   "title": "Ductile Configuration",
-  "description": "The single schema for ductile configuration — whole config files AND include fragments. The root is deliberately LENIENT: no top-level key is required, so a single-section include file (e.g. just `plugins:` or `webhooks:`) validates on its own, and split sub-objects (webhooks.listen in one file, webhooks.endpoints in another) each validate alone. Every key that IS present is still checked for type, shape, and no-unknown-keys (additionalProperties:false everywhere). Completeness and cross-field rules (e.g. a config must have service/state/plugin_roots; plugins.<name>.parallelism <= service.max_workers) are NOT the JSON Schema's job — they are enforced by the Go loader/doctor at boot. For the strict 'this is a complete, merged config' contract, validate against #/$defs/WholeConfig (config validate --whole).",
-  "type": "object",
+  "description": "The single schema for ductile configuration — whole config files AND include fragments. The root is deliberately LENIENT: no top-level key is required, so a single-section include file (e.g. just `plugins:` or `webhooks:`) validates on its own, and split sub-objects (webhooks.listen in one file, webhooks.endpoints in another) each validate alone. A null root is also valid: an include file that is all comments parses as YAML null and the loader treats it as empty. Every key that IS present is still checked for type, shape, and no-unknown-keys (additionalProperties:false everywhere). Completeness and cross-field rules (e.g. a config must have service/state/plugin_roots; plugins.<name>.parallelism <= service.max_workers) are NOT the JSON Schema's job — they are enforced by the Go loader/doctor at boot. For the strict 'this is a complete, merged config' contract, validate against #/$defs/WholeConfig (config validate --whole).",
+  "type": ["object", "null"],
   "properties": {
     "include": {
       "type": "array",
@@ -36,13 +36,8 @@
     },
     "tcc_paths": {
       "type": "array",
-      "description": "macOS-only: paths stat()-ed on cold start to surface TCC permission popups synchronously.",
+      "description": "macOS-only: absolute paths stat()-ed on cold start to surface TCC permission popups synchronously.",
       "items": { "type": "string", "minLength": 1 }
-    },
-    "tcc_paths": {
-      "type": "array",
-      "description": "macOS-only: List of absolute paths to stat() on cold start to surface TCC popups synchronously.",
-      "items": { "type": "string" }
     },
     "plugins": {
       "type": "object",
@@ -285,6 +280,11 @@
           "type": "string",
           "description": "Listen address (host:port).",
           "default": "127.0.0.1:8080"
+        },
+        "management_socket": {
+          "type": "string",
+          "description": "Unix socket path serving /vault/* in the management posture (keep under ~104 bytes). Default: vault-admin.sock beside the state DB.",
+          "minLength": 1
         },
         "auth": {
           "$ref": "#/$defs/APIAuthConfig"
