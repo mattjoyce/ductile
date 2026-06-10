@@ -1,6 +1,6 @@
 ---
 id: 118
-status: todo
+status: done
 priority: High
 tags: [testing, docker, fixtures, vault, migration, trust]
 ---
@@ -77,11 +77,105 @@ because the template doesn't work. Corrected order: **first make ONE fixture gen
 extract `fixture_vault_init`/`fixture_grant_token` into `scripts/test-docker-lib`, THEN port
 `webhook-ingress` (api token + webhook secret + tokens.yaml retirement).** This re-scopes step 1.
 
-### THE BLOCKER to resolve first (bootstrap chicken-and-egg) — now carded as [[128-vault-native-bootstrap-no-offline-seed]]
+## TRACER GREEN 2026-06-09 — `vault-secret-delivery` migrated, runs locally (macOS native)
+First fixture is genuinely vault-native via the ladder, end-to-end green through `./scripts/test-docker
+vault-secret-delivery` (runner needs no Docker — native build + run.sh): genesis → **management posture**
+(mint the api token over the unix socket, public listener proven NOT open) → `config lock` + `plugin
+lock` → **gateway** → register/grant → dispatch → secret delivered over stdin → reserved-read refusal +
+audit. `config/api.yaml` is now the bootstrap state (NO literal token); `run.sh` injects a SHORT
+`management_socket` and walks the ladder.
+
+**Caught a real prod bug:** `deepMergeConfig` dropped `api.management_socket` (+ `allowed_origins`) from
+multi-file configs (field-by-field merge never updated when #129 added the field) — fixed + regression
+test (commit `cb1f114`). The fixture is the only thing that exercised the include merge.
+
+### SECOND FIXTURE GREEN + helpers extracted 2026-06-09
+`scripts/test-docker-vault-lib` now holds `fixture_vault_init` + `fixture_bootstrap_vault` (genesis +
+management-boot + mint-load-visible-secrets + append-token); both `vault-secret-delivery` and
+`webhook-ingress` use them. **`webhook-ingress` migrated + green locally**: api token AND
+`github_webhook_secret` minted via the ladder, `tokens.yaml` RETIRED (deleted), valid 202 / invalid 403
+/ job enqueued. Bootstrap excludes `webhooks.yaml` from the include and run.sh adds it post-mint (a
+config can't reference an unminted secret_ref — same rule as the api token).
+
+**Second prod fix it surfaced:** the management posture was still starting the **webhook server** (a
+public plane in a "closed" posture) — guarded on posture (commit `46e4de8`).
+
+### CURATION DONE 2026-06-09 (reviewed with Matt): 18 → 6
+Verified each delete's property is proven in-process BEFORE removing (Feathers). **Deleted 12 redundant
+scenario fixtures** — routing/predicate logic covered in `internal/router/*` (the `if:` engine tests,
+`FromPlugin*`, hook dispatch, `ConditionalSwitchBypassesFalseStep`, dedupe/fanout in queue+dispatcher):
+conditional-with-route, context-aware-trigger-if, pipeline-level-if, from-plugin-scoping,
+hook-route-compilation, fanout-dedupe-scope, scheduler-recovery (=#117 crash-recovery), api-e2e,
+file_handler, file_watch, folder_watch, fetch-plugin.
+> Lesson: a grep-keyword false alarm ("from_plugin"/"dedupe" → 0 hits) almost dropped covered fixtures;
+> reading the actual test names (`FromPlugin`, `DedupeKey`) confirmed coverage. Verify, don't assert.
+
+**Kept + migrated to the vault-native ladder:** vault-secret-delivery ✓, webhook-ingress ✓, sys_exec ✓
+(polyglot subprocess round-trip). **Remaining keeper to migrate:** config-view-redaction (3-part:
+/config/view redaction + snapshot fingerprint + secret-only-rotation restart — only the api token moves
+to the vault; the redacted secrets are inline plugin-config by design).
+
+**Held fixtures RESOLVED 2026-06-09:**
+- **reload-lifecycle → KEPT + migrated** (vault-native): proves the LIVE hot reload (two `/system/reload`
+  cycles, daemon keeps serving) — the running-daemon reload path #130's in-process buildRuntime-swap
+  doesn't cover, and the path the ladder activation depends on.
+- **sync-terminal-route → DELETED**: sync response covered in-process by
+  `TestSynchronousPipelineSkippedEntryResponseVsDB` + `TestDispatcher_WaitForJobTree`.
+
+**CREATED:** `boot-refuses-bad-config` (vault-free) — the LIVE fail-closed property: a real `system start`
+refuses a literal api token (#94) AND a credential-less enabled API (#119), non-zero exit, never a
+half-boot.
+
+### FINAL docker tier: 18 → 6, all green vault-native / fail-closed
+vault-secret-delivery, webhook-ingress, sys_exec, config-view-redaction, reload-lifecycle,
+boot-refuses-bad-config. **STILL TO CREATE:** plugin-crash-leaves-deterministic-state (kill a subprocess
+mid-job → terminal state + state-dir) — deferred to a fresh session (needs a purpose-built crashing
+plugin). With that, #118 is done and the green set feeds #116.
+
+## DONE 2026-06-10 — `plugin-crash-leaves-deterministic-state` created; tier complete at 7
+
+Last keeper CREATED (not migrated): a fixture-only `crash_once` python plugin writes+fsyncs a
+started-marker (proves the crash is MID-job) then SIGKILLs itself — uncatchable, no stdout response.
+Asserts: job lands terminal `failed` (job_log), daemon keeps serving `/healthz` AND keeps dispatching
+(a second trigger round-trips to terminal `failed` too), zero non-terminal `job_queue` rows at the end.
+Vault-native via the ladder helpers; `retry: {max_attempts: 1}` because the default (4 × 30s backoff,
+config/types.go:891) would grind the fixture for minutes. Dispatcher semantics confirmed in code:
+SIGKILL'd child → `*exec.ExitError` via Wait() (immediate, no reaper poll) → failOrRetry → `failed`.
+
+**Assertion proven to bite (mutation test):** flipped the expected status to `succeeded` → fixture
+FAILed and `./scripts/test-docker` exited 1; reverted. Full tier green: all 7 fixtures pass locally
+(macOS). `test/fixtures/docker/README.md` rewritten — it still listed 8 deleted fixtures; now documents
+the curated 7 with each one's live-only property + tier conventions. Green set ready for [[116]].
+
+## Narrative
+- 2026-06-10: Closed the card by creating the last keeper. The interesting find en route: default
+  retry policy is 4 attempts × 30s backoff — fine for production, pathological for a crash fixture;
+  single-attempt override is the documented escape hatch. Tier is now 18 → 7, every fixture names a
+  property only a live gateway can prove. (by @assistant)
+
+## UNBLOCKED 2026-06-09 — #128 resolved via the credential ladder (#129/#130/#131)
+
+The bootstrap chicken-and-egg is solved. The from-scratch path is the **two-posture ladder** (no offline
+seed, no phantom `vault import`): boot **management posture** (`api.enabled`, ZERO `api.auth.tokens`,
+vault present) → it serves `/vault/*` on a local unix socket (`api.management_socket`) with NO public
+listener → mint the api token over the socket with the admin token → reference its `secret_ref` in config
+→ reload/restart → gateway. See `docs/adr/vault-credential-ladder.md` and `DEPLOYMENT.md §11`.
+
+**The flagged projection-mechanic unknown is ANSWERED** (`internal/config/vault_secrets.go` →
+`activeVaultSecrets`/`pluginScopedSecret`): a secret lands in load-time `cfg.ResolvedSecrets` iff it is
+**active AND not plugin-scoped**, where plugin-scoped = has ≥1 grant and ALL grantees are `KindPlugin`.
+So `vault set` with **NO `--principal`** (or a non-plugin grantee) → load-visible (resolves
+`api.auth.tokens[].secret_ref` / `webhooks[].secret_ref`); `vault set --principal <plugin>` → NOT
+load-visible (delivered via Compose at spawn). Proven at runtime by
+`cmd/ductile/management_posture_activation_test.go`. The Dell is no longer needed to PROVE the mechanic;
+it remains the linux/amd64 + #116 CI host.
+
+### OLD blocker analysis (kept for history) — RESOLVED by the ladder above
+### THE BLOCKER (bootstrap chicken-and-egg) — was carded as [[128-vault-native-bootstrap-no-offline-seed]]
 **Root cause confirmed: the offline seed command the deploy docs prescribe (`vault import`) does NOT
-exist in the binary** (`Unknown vault action: import`), so the cycle below is currently unbreakable.
+exist in the binary** (`Unknown vault action: import`), so the cycle below was unbreakable.
 The full analysis + the three fix options live in [[128-vault-native-bootstrap-no-offline-seed]];
-**#118 is blocked on #128.**
+**#118 WAS blocked on #128 — now unblocked (ladder shipped).**
 
 `ductile vault set` **requires `--api-url`** — vault writes go through the running daemon (sole-writer
 arch, `cmd/ductile/vault.go:466`). But an **API bearer token must already be in the vault at BOOT**

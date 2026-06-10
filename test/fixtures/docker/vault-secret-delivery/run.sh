@@ -1,14 +1,15 @@
 #!/usr/bin/env bash
-# vault-secret-delivery — black-box acceptance for the vault stack.
+# vault-secret-delivery — black-box acceptance for the vault stack, VAULT-NATIVE.
 #
-# Proves the spawn-time secret path end to end against a real running gateway:
-#   keygen -> genesis -> config lock + plugin lock (keyed attestation) -> boot ->
-#   register principal -> grant secret -> dispatch -> secret delivered over stdin.
+# Walks the credential ladder from genesis (no literal tokens, no phantom import):
+#   keygen + genesis -> boot MANAGEMENT posture -> mint the api token over the admin
+#   unix socket -> reference it in config -> config lock + plugin lock -> boot GATEWAY
+#   -> register principal + grant secret -> dispatch -> secret delivered over stdin.
 # Also asserts the local read surface: `vault get` returns a normal secret but
-# REFUSES the reserved admin token (card #42), and both reads are audited.
+# REFUSES the reserved admin token (#42), and both reads are audited.
 #
-# All genesis/lock artifacts (age key, vault blob, .checksums, state) are created
-# in a throwaway mktemp copy of the config so the committed fixture stays pristine.
+# All genesis/lock artifacts (age key, vault blob, .checksums, state) are created in
+# a throwaway mktemp copy of the config so the committed fixture stays pristine.
 set -euo pipefail
 
 ROOT_DIR="${ROOT_DIR:?}"
@@ -16,10 +17,16 @@ FIXTURE_NAME="${FIXTURE_NAME:?}"
 ARTIFACT_ROOT="${ARTIFACT_ROOT:?}"
 # shellcheck source=/dev/null
 source "$ROOT_DIR/scripts/test-docker-lib"
+# shellcheck source=/dev/null
+source "$ROOT_DIR/scripts/test-docker-vault-lib"
 fixture_init
 
 BIN="$ROOT_DIR/ductile"
 API="http://127.0.0.1:18181"
+API_TOKEN_VALUE="vsd-api-admin-token"            # operator-chosen api bearer (minted into the vault)
+# Short absolute socket path — unix sun_path is capped near 104 bytes, so it must
+# NOT live under the long macOS mktemp dir (/private/var/folders/...).
+SOCK="/tmp/dtl-vsd-$$.sock"
 SCENARIO_LOG="$ARTIFACT_DIR/scenario.log"
 exec > >(tee "$SCENARIO_LOG") 2>&1
 
@@ -34,23 +41,30 @@ cp -R "$FIXTURE_DIR/config/." "$CONFIG_DIR/"
 chmod +x "$CONFIG_DIR/plugins/secret-probe/run.sh"
 mkdir -p "$CONFIG_DIR/state"
 
-cleanup() {
+stop_daemon() {
   if [[ -n "$PID" ]] && kill -0 "$PID" 2>/dev/null; then
     kill "$PID" 2>/dev/null || true
     wait "$PID" 2>/dev/null || true
   fi
+  PID=""
+}
+
+cleanup() {
+  stop_daemon
+  rm -f "$SOCK"
   fixture_capture_tree "$CONFIG_DIR" config
   rm -rf "$WORK"
 }
 trap cleanup EXIT
 
+# --- genesis + bootstrap the api token via the management posture ------------
 fixture_log "genesis: keygen + vault init"
-"$BIN" secrets keygen -out "$CONFIG_DIR/age.key" >/dev/null 2>>"$ARTIFACT_DIR/genesis.log"
-chmod 600 "$CONFIG_DIR/age.key"
-ADMIN="$("$BIN" vault init --vault "$CONFIG_DIR/vault.age" --key "$CONFIG_DIR/age.key" 2>>"$ARTIFACT_DIR/genesis.log")"
-[[ -n "$ADMIN" ]] || fixture_fail "vault init produced no admin token"
-export DUCTILE_VAULT_TOKEN="$ADMIN"
+fixture_vault_init "$CONFIG_DIR" >/dev/null
+# Boots management posture, mints the api token over the unix socket (proving the
+# public listener stays closed), and appends its secret_ref to api.yaml.
+fixture_bootstrap_vault "$CONFIG_DIR" "$SOCK" ductile-api-admin "$API_TOKEN_VALUE"
 
+# --- activation: seal the final config, boot the gateway ---------------------
 fixture_log "attestation: config lock + plugin lock secret-probe"
 "$BIN" config lock --config "$CONFIG_DIR" >>"$ARTIFACT_DIR/lock.log" 2>&1
 "$BIN" plugin lock secret-probe --config "$CONFIG_DIR" >>"$ARTIFACT_DIR/lock.log" 2>&1
@@ -64,8 +78,13 @@ for _ in $(seq 1 60); do
   sleep 0.25
 done
 [[ "$ready" -eq 1 ]] || fixture_fail "health endpoint did not become ready"
+posture="$(jq -r '.posture // empty' "$ARTIFACT_DIR/healthz.json")"
+[[ "$posture" == "gateway" ]] || fixture_fail "expected gateway posture, got '$posture'"
 grep -q "compose-time attestation on" "$ARTIFACT_DIR/ductile.log" \
   || fixture_fail "expected compose-time attestation to be enabled at boot"
+
+# The minted api token now authenticates the public API for the rest of the run.
+export DUCTILE_API_KEY="$API_TOKEN_VALUE"
 
 fixture_log "register principal + grant secret my-secret=hunter2"
 "$BIN" vault register-principal --api-url "$API" --name secret-probe --kind plugin
@@ -110,4 +129,4 @@ echo "$AUDIT" >"$ARTIFACT_DIR/vault-audit.txt"
 echo "$AUDIT" | grep -q "register" || fixture_fail "audit missing register fact"
 echo "$AUDIT" | grep -q "denied"   || fixture_fail "audit missing read/denied fact for the reserved read"
 
-fixture_log "success — secret delivered over stdin; reserved read refused + audited"
+fixture_log "success — vault-native ladder: api token minted in management posture, secret delivered over stdin, reserved read refused + audited"

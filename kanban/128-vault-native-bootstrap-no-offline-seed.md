@@ -1,6 +1,6 @@
 ---
 id: 128
-status: doing
+status: done
 priority: High
 tags: [vault, bootstrap, regression, docs-drift, api, blocker]
 ---
@@ -79,3 +79,37 @@ Then [[118]] can migrate fixtures against a real template and [[116]] can gate t
   backstopped by `ErrVaultModifiedExternally` if misused against a live daemon. A bulk `vault import`
   (many secrets at once) was also left out — seed each `secret_ref` per-secret; revisit if migration
   ergonomics demand it.
+
+## DESIGN REVISITED — 2026-06-09 (re-scoped; PR #128 still OPEN, not merged)
+A design grilling session re-derived the bootstrap from first principles and produced
+[[../docs/adr/vault-credential-ladder]] (`docs/adr/vault-credential-ladder.md`). The chosen model is the
+**credential ladder** (vault key → admin token → api token, each issues the one below) with a
+**two-posture bootstrap**: the daemon comes up *vault-operable / ductile-closed* (admin-token-gated, on a
+**local** transport), the admin token mints the api token, then `reload` activates the gateway plane.
+- **Offline `vault set --vault --key` (Option A, on `feat/128-vault-offline-seed`) is NOT the chosen
+  bootstrap mechanism.** The api token is *issued by the admin token*, not offline-seeded. The offline
+  setter may survive as a recovery tool or be dropped — decide during implementation.
+- **Re-scope of "Do":** implement the *vault-operable boot posture* (admin-token surface available on a
+  loopback/unix-socket transport even when `api.auth.tokens` is unresolved) + the activate-on-reload
+  transition. Hard invariant: the **public** gateway listener keeps its #94/#119 fail-closed gate — the
+  posture is reached by *not yet serving the gateway plane*, never by opening the public listener naked.
+- **Card-header correction:** the 2026-06-09 progress note above says "DONE — merged." That is wrong —
+  PR #128 is **OPEN** (`gh pr view 128` → state: OPEN). Leave it open pending the re-scope.
+
+### Implementation children (the re-scoped work)
+- [[129-vault-operable-boot-posture]] — the boot posture + local transport decision (the core fix).
+- [[130-activate-on-reload-observable-posture]] — activation on reload + observable posture.
+- [[131-from-scratch-bootstrap-acceptance-test]] — the end-to-end test + docs reconcile (#128's "Done when").
+
+## Narrative
+- 2026-06-10: CLOSED OUT. The done-when ("a documented, tested, from-scratch sequence brings up a
+  vault-native gateway with the API enabled") is satisfied — by the credential ladder
+  ([[129-vault-operable-boot-posture]]/[[130]]/[[131]], docs/adr/vault-credential-ladder.md), not by
+  this card's Option A. Matt decided to close PR #128 (feat/128-vault-offline-seed) WITHOUT merging:
+  the ladder covers bootstrap AND recovery (lose the api token → remove the auth block → the daemon
+  boots management posture and re-mints over the socket), so an offline write path would be a second
+  vault writer with nothing left to do, and its docs would contradict the §11 runbook the ladder
+  rewrote — the same drift failure mode this card was opened to kill. The orphaned
+  internal/vault.SetManualBatch (+ ManualSecret/ImportFailure, built for the never-wired `vault
+  import`) is deleted; the offline-seed implementation survives in the closed branch's history if a
+  genuine need ever returns. (by @assistant)

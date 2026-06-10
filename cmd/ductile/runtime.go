@@ -442,16 +442,34 @@ func buildRuntime(cfg *config.Config, configPath string, configSource string, re
 	}
 	admission := cfg.Service.AdmissionPolicy()
 
+	// Resolve the vault owner ONCE, before any admission consumer — the doctor
+	// gate, integrity verify, and the posture decision must all see the same
+	// vault presence. The reload-restore branch passes no opts.vaultOwner; the
+	// fallback load HERE (not after admission) keeps an armed management-posture
+	// box restorable after a failed reload instead of stranding it (#134).
+	vaultOwner := opts.vaultOwner
+	if vaultOwner == nil {
+		fallbackOwner, vErr := config.LoadVault(resolveConfigDir(configPath), cfg)
+		if vErr != nil {
+			logger.Error("failed to load vault", "error", vErr)
+			return nil, fmt.Errorf("vault: %w", vErr)
+		}
+		vaultOwner = fallbackOwner
+	}
+
 	if admission.VerifyIntegrityOnBoot {
 		logger.Info("admission: verifying config integrity at boot", "fail_on_drift", admission.FailOnDrift)
-		if err := verifyReloadIntegrity(configPath, admission.FailOnDrift, opts.vaultOwner); err != nil {
+		if err := verifyReloadIntegrity(configPath, admission.FailOnDrift, vaultOwner); err != nil {
 			logger.Error("integrity check failed (admission.verify_integrity_on_boot)", "error", err)
 			return nil, fmt.Errorf("integrity check failed: %w", err)
 		}
 	}
 
 	if admission.ValidateConfigOnBoot {
-		doc := doctor.New(cfg, registry)
+		// Vault-aware: a from-scratch vault gateway with no api token yet is a
+		// legitimate bootstrap posture (#129), not a config error — vaultOwner
+		// is the single resolution above (#134).
+		doc := doctor.New(cfg, registry).WithVaultPresent(vaultOwner != nil)
 		report := doc.Validate()
 		if !report.Valid {
 			logger.Error("configuration validation failed (admission.validate_config_on_boot)")
@@ -480,10 +498,9 @@ func buildRuntime(cfg *config.Config, configPath string, configSource string, re
 		}
 	}
 
-	if admission.RequireAPIAuth && cfg.API.Enabled && len(cfg.API.Auth.Tokens) == 0 {
-		logger.Error("no API tokens configured (admission.require_api_auth requires at least one token when API is enabled)")
-		return nil, fmt.Errorf("no API tokens configured")
-	}
+	// The RequireAPIAuth zero-token guard is enforced below, after the vault
+	// owner is resolved — a from-scratch vault gateway with no api token yet is a
+	// legitimate bootstrap (management) posture, not a misconfiguration (#129).
 
 	logger.Info("ductile starting", "version", version, "config", configPath)
 
@@ -603,18 +620,9 @@ func buildRuntime(cfg *config.Config, configPath string, configSource string, re
 	// compose-time gate is off for vault-less deployments (and we avoid a typed-nil
 	// interface that would defeat the nil check in composePluginSecrets).
 	var pluginVerifier dispatch.PluginVerifier
-	// Reuse the owner the load-time graft already decrypted (passed via opts on the
-	// daemon start path) rather than decrypting the blob a second time (#43
-	// redundant decrypt; epic #48 slice 2). A nil opts owner — reload, restore, or
-	// no vault — falls back to a fresh load, preserving prior behaviour exactly.
-	vaultOwner := opts.vaultOwner
-	if vaultOwner == nil {
-		vaultOwner, err = config.LoadVault(configDir, cfg)
-		if err != nil {
-			logger.Error("failed to load vault", "error", err)
-			return nil, fmt.Errorf("vault: %w", err)
-		}
-	}
+	// vaultOwner was resolved exactly once, above the admission gates (#134 —
+	// reusing the load-time decrypt when opts carried it, #43). Wire the
+	// compose-time surfaces from that single value.
 	if vaultOwner != nil {
 		secretComposer = vaultOwner
 		// §3.3: re-verify a principal's live bytes against its recorded keyed
@@ -622,6 +630,18 @@ func buildRuntime(cfg *config.Config, configPath string, configSource string, re
 		// same loaded vault that holds the secrets.
 		pluginVerifier = newPluginIdentityVerifier(registry, configDir, vaultOwner, logger)
 		logger.Info("vault secret delivery enabled (compose-time attestation on)")
+	}
+
+	// Decide the gateway boot posture now that the vault owner is known. The
+	// management posture (vault-operable / ductile-closed) is reached only when a
+	// vault owner exists to operate and no api token is configured yet — see
+	// docs/adr/vault-credential-ladder.md §4. The fail-closed RequireAPIAuth guard
+	// (relocated from the top of buildRuntime) still refuses a from-scratch gateway
+	// that has NO vault to bootstrap from.
+	bootPosture := config.DecideBootPosture(cfg, vaultOwner != nil)
+	if admission.RequireAPIAuth && cfg.API.Enabled && len(cfg.API.Auth.Tokens) == 0 && bootPosture != config.PostureManagementOnly {
+		logger.Error("no API tokens configured (admission.require_api_auth requires at least one token when API is enabled, and no vault is present to bootstrap one)")
+		return nil, fmt.Errorf("no API tokens configured")
 	}
 
 	// Privsep boot gate (#86): the capability to drop privilege and a configured
@@ -710,17 +730,26 @@ func buildRuntime(cfg *config.Config, configPath string, configSource string, re
 	// pipelines (e.g. job-failure-notify → discord_notify) are triggered.
 	sched.SetRecoveryHook(disp.FireRecoveryHook)
 
-	if err := sched.Start(rt.ctx); err != nil && err != context.Canceled {
-		return nil, fmt.Errorf("scheduler: %w", err)
-	}
-
-	rt.wg.Add(1)
-	go func() {
-		defer rt.wg.Done()
-		if err := disp.Start(rt.ctx); err != nil && err != context.Canceled {
-			rt.errCh <- fmt.Errorf("dispatcher: %w", err)
+	// Trigger planes are part of "ductile operable", not "vault operable": in
+	// the management posture the scheduler and dispatcher stay DOWN, exactly
+	// like the public listener and webhook planes — no pipeline fires and no
+	// vault secret is composed/delivered until the gateway activates (#136,
+	// decided 2026-06-10: gate, not document-as-open).
+	if bootPosture != config.PostureManagementOnly {
+		if err := sched.Start(rt.ctx); err != nil && err != context.Canceled {
+			return nil, fmt.Errorf("scheduler: %w", err)
 		}
-	}()
+
+		rt.wg.Add(1)
+		go func() {
+			defer rt.wg.Done()
+			if err := disp.Start(rt.ctx); err != nil && err != context.Canceled {
+				rt.errCh <- fmt.Errorf("dispatcher: %w", err)
+			}
+		}()
+	} else {
+		logger.Warn("management posture: scheduler and dispatcher gated — no pipelines fire until the gateway activates")
+	}
 
 	if cfg.API.Enabled || relayReceiver != nil {
 		// Resolve secret_ref-backed bearer tokens against the vault projection
@@ -729,17 +758,25 @@ func buildRuntime(cfg *config.Config, configPath string, configSource string, re
 		// aborts, and on reload the previous runtime is restored (the API never
 		// opens — or stays open on its old config — authenticating against an
 		// empty credential). buildRuntime is the named supervisor (card #94).
-		resolvedTokens, err := config.ResolveAPITokens(cfg)
-		if err != nil {
-			logger.Error("API token resolution failed", "error", err)
-			return nil, fmt.Errorf("api tokens: %w", err)
-		}
-		tokens := make([]auth.TokenConfig, 0, len(resolvedTokens))
-		for _, t := range resolvedTokens {
-			tokens = append(tokens, auth.TokenConfig{
-				Token:  t.Token,
-				Scopes: t.Scopes,
-			})
+		//
+		// The management posture has no api token to resolve by definition (zero
+		// configured tokens), so resolution is skipped — but the fail-closed gate
+		// above is NOT weakened: it fires whenever tokens ARE configured but do
+		// not resolve, which is a gateway-posture condition, never management.
+		var tokens []auth.TokenConfig
+		if bootPosture != config.PostureManagementOnly {
+			resolvedTokens, err := config.ResolveAPITokens(cfg)
+			if err != nil {
+				logger.Error("API token resolution failed", "error", err)
+				return nil, fmt.Errorf("api tokens: %w", err)
+			}
+			tokens = make([]auth.TokenConfig, 0, len(resolvedTokens))
+			for _, t := range resolvedTokens {
+				tokens = append(tokens, auth.TokenConfig{
+					Token:  t.Token,
+					Scopes: t.Scopes,
+				})
+			}
 		}
 		binaryPath := ""
 		if execPath, err := os.Executable(); err == nil {
@@ -763,8 +800,10 @@ func buildRuntime(cfg *config.Config, configPath string, configSource string, re
 			SelfcheckFunc: func(_ context.Context) (api.SystemCheckReport, error) {
 				return selfcheckReportForAPI(configPath), nil
 			},
-			RelayReceiver:  relayReceiver,
-			AllowedOrigins: cfg.API.AllowedOrigins,
+			RelayReceiver:    relayReceiver,
+			AllowedOrigins:   cfg.API.AllowedOrigins,
+			ManagementSocket: managementSocketPath(cfg),
+			BootPosture:      healthzPostureFor(cfg, bootPosture),
 		}
 		// Expose the vault management API only when a vault owner exists. Assign
 		// the interface field solely for a non-nil owner: a typed-nil *vault.Vault
@@ -777,17 +816,52 @@ func buildRuntime(cfg *config.Config, configPath string, configSource string, re
 		}
 		apiServer := api.New(apiConfig, q, registry, routerEngine, disp, contextStore, admitter, st, hub, log.WithComponent("api"))
 		rt.apiServer = apiServer
+		// Gateway posture: reserve the TCP listener NOW, synchronously. An
+		// activation reload whose bind fails must fail the reload here (so the
+		// restore path runs) — not answer "ok" and die later on errCh (#140).
+		if bootPosture != config.PostureManagementOnly {
+			if err := apiServer.Bind(); err != nil {
+				return nil, fmt.Errorf("api: %w", err)
+			}
+		}
 		rt.wg.Add(1)
 		go func() {
 			defer rt.wg.Done()
-			if err := apiServer.Start(rt.ctx); err != nil && err != context.Canceled {
-				rt.errCh <- fmt.Errorf("api: %w", err)
+			// The management posture serves /vault/* on the local socket only and
+			// never opens the public gateway listener (ADR §5 invariant). The
+			// gateway posture serves the public listener after fail-closed token
+			// resolution succeeds above.
+			var serveErr error
+			if bootPosture == config.PostureManagementOnly {
+				serveErr = apiServer.StartManagement(rt.ctx)
+			} else {
+				serveErr = apiServer.Start(rt.ctx)
+			}
+			if serveErr != nil && serveErr != context.Canceled {
+				rt.errCh <- fmt.Errorf("api: %w", serveErr)
 			}
 		}()
-		logger.Info("HTTP ingress server enabled", "listen", cfg.API.Listen, "api_enabled", cfg.API.Enabled, "relay_enabled", relayReceiver != nil)
+		if bootPosture == config.PostureManagementOnly {
+			// Anti-strand (#130): this is an intentional, named posture, not a
+			// wedged half-boot. Log it loudly so an operator/AI can tell "waiting
+			// for an api token" apart from "stuck."
+			logger.Warn("booting in vault-operable / ductile-closed posture: no api token resolved yet — serving /vault/* on the local management socket only, public gateway listener NOT open. Mint an api token via the admin token over the socket, then `system reload` to activate the gateway.",
+				"posture", bootPosture.String(), "management_socket", managementSocketPath(cfg))
+		} else {
+			logger.Info("HTTP ingress server enabled", "listen", cfg.API.Listen, "api_enabled", cfg.API.Enabled, "relay_enabled", relayReceiver != nil, "posture", bootPosture.String())
+		}
 	}
 
-	if cfg.Webhooks != nil && len(cfg.Webhooks.Endpoints) > 0 {
+	// The webhook plane is part of "ductile operable", not "vault operable" — in the
+	// management posture it stays closed (ductile closed), exactly like the public
+	// gateway listener AND the scheduler/dispatcher trigger planes gated above
+	// (#136): every plane that could fire a pipeline is down until activation.
+	// Skipping it here also avoids the SERVE half of the from-scratch webhook
+	// deadlock: a webhook secret_ref cannot resolve until it is minted, but
+	// minting needs the daemon up. (The LOAD half — config.Load hard-erroring on
+	// the unminted secret_ref before the posture decision — is relaxed under the
+	// same bootstrap condition in the validator, #138.)
+	if bootPosture != config.PostureManagementOnly && cfg.Webhooks != nil && len(cfg.Webhooks.Endpoints) > 0 {
 		webhookConfig, err := webhook.FromGlobalConfig(cfg.Webhooks, cfg.ResolvedSecrets, cfg.Plugins)
 		if err != nil {
 			logger.Error("failed to configure webhooks", "error", err)
@@ -807,6 +881,28 @@ func buildRuntime(cfg *config.Config, configPath string, configSource string, re
 	}
 
 	return rt, nil
+}
+
+// managementSocketPath resolves the unix-domain socket the vault-operable
+// bootstrap posture serves /vault/* on. An explicit api.management_socket wins;
+// otherwise it defaults to a path beside the state DB (already a protected
+// directory). Keep it short — unix sun_path is capped near 104 bytes.
+func managementSocketPath(cfg *config.Config) string {
+	if cfg.API.ManagementSocket != "" {
+		return cfg.API.ManagementSocket
+	}
+	return filepath.Join(filepath.Dir(cfg.State.Path), "vault-admin.sock")
+}
+
+// healthzPostureFor returns the posture string /healthz reports. With
+// api.enabled=false the API server block can still run (relay configured), and
+// "closed" answered FROM a live listener would be the one spot reported posture
+// and the live listener set disagree — suppress the field instead (#142).
+func healthzPostureFor(cfg *config.Config, posture config.BootPosture) string {
+	if cfg == nil || !cfg.API.Enabled {
+		return ""
+	}
+	return posture.String()
 }
 
 func runStart(args []string) int {

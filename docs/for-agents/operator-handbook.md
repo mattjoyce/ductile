@@ -124,10 +124,13 @@ The vault delivers secrets to attested plugins. Two op classes (full model: `doc
 ```bash
 # Local, key-touching — daemon STOPPED (hold the age key; PID-lock guarded):
 ductile vault init   --vault vault.age --key age.key      # genesis: core principal + nonce + one-time admin token
-ductile vault import --config <dir> --tokens tokens.yaml  # migrate legacy tokens.yaml into the vault
 ductile vault rotate-key --config <dir>                   # rotate the at-rest age key
+ductile vault rotate-admin-token --config <dir>           # mint a fresh admin token in place
 
-# Keyless API clients — daemon RUNNING (admin token: --token / DUCTILE_VAULT_TOKEN):
+# Keyless API clients — daemon RUNNING (admin token: --token / DUCTILE_VAULT_TOKEN).
+# From scratch (no api token yet) the daemon boots the vault-operable / ductile-closed
+# posture and serves /vault/* on a local unix socket — target it with --api-url unix://<sock>;
+# mint the api token there, then add its secret_ref to config and reload (credential-ladder ADR).
 ductile vault register-principal --name <p> --kind plugin|consumer|gateway
 ductile vault set    --name <s> --principal <p>           # value from stdin (--pattern manual|auto)
 ductile vault roll   --name <s>                           # supersede value

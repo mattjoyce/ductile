@@ -664,7 +664,11 @@ func runConfigCheck(args []string) int {
 		configPath = discovered
 	}
 
-	cfg, err := config.Load(configPath)
+	// LoadWithVault: reuse the owner the load already decrypted so this verdict
+	// matches the daemon's boot admission — `config check` must accept the
+	// genesis-vault, zero-token bootstrap config the daemon boots into the
+	// management posture (#129, #133), as DEPLOYMENT.md §11 runs it.
+	cfg, owner, err := config.LoadWithVault(configPath)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Config load error: %v\n", err)
 		return 1
@@ -676,7 +680,7 @@ func runConfigCheck(args []string) int {
 		return 1
 	}
 
-	doc := doctor.New(cfg, registry)
+	doc := doctor.New(cfg, registry).WithVaultPresent(owner != nil)
 
 	// Feed doctor a stopwatch snapshot when the state DB is reachable.
 	// Failure to open is non-fatal -- the check is advisory and missing

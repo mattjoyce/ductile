@@ -16,6 +16,13 @@ type ConfigValidator struct {
 	// error — authoritative resolution is the daemon's, which holds the key
 	// (ADR §3.5.1; resolves the whole-store-encryption vs static-validate fork).
 	vaultBlind bool
+	// bootstrap is true in the from-scratch bootstrap condition (api enabled,
+	// zero api tokens, vault present — DecideBootPosture's own predicate, #138).
+	// An unminted secret_ref then warns instead of hard-erroring: the management
+	// posture this config boots into exists precisely to mint it. The moment an
+	// api token is configured (gateway activation) the condition is false and
+	// resolution is strict again.
+	bootstrap bool
 }
 
 // checkSecretRef verifies a secret_ref resolves. Missing is a hard error in the
@@ -28,6 +35,11 @@ func (v *ConfigValidator) checkSecretRef(ref, where string) error {
 	if v.vaultBlind {
 		slog.Warn("secret_ref not resolvable without the vault key; assuming it is vault-resident "+
 			"(validate with the key or via the daemon to confirm)", "secret_ref", ref, "at", where)
+		return nil
+	}
+	if v.bootstrap {
+		slog.Warn("secret_ref not minted yet — the management posture this config boots into exists to mint it: "+
+			"boot, mint over the management socket, then reload to activate (#138)", "secret_ref", ref, "at", where)
 		return nil
 	}
 	return fmt.Errorf("%s: secret_ref %q not found in the vault", where, ref)

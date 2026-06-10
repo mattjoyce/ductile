@@ -39,6 +39,16 @@ func LoadRaw(configPath string) (*Config, error) {
 	return cfg, err
 }
 
+// LoadLenient reads configuration with NO scope verification and NO validation —
+// for best-effort observability callers (the keyless `system status` posture
+// probe, #135) that need only structural fields (listen address, management
+// socket path) even when the strict load refuses. Never use it to admit,
+// boot, or mutate a config.
+func LoadLenient(configPath string) (*Config, error) {
+	cfg, _, err := load(configPath, false, false, false)
+	return cfg, err
+}
+
 // LoadWithVault reads configuration AND returns the vault owner decrypted during
 // the load-time projection, so the daemon can reuse that single decryption as its
 // live owner instead of decrypting the blob a second time at runtime
@@ -157,14 +167,17 @@ func load(configPath string, verifyScopes bool, validateConfig bool, applyPlugin
 				config:     cfg,
 				tokens:     cfg.ResolvedSecrets,
 				vaultBlind: vaultBlind(configDir, cfg, kr),
+				bootstrap:  DecideBootPosture(cfg, owner != nil) == PostureManagementOnly,
 			}
 			if err := validator.ValidateCrossReferences(); err != nil {
 				return nil, nil, fmt.Errorf("configuration validation failed: %w", err)
 			}
 		}
 
-		// Standard validation
-		if err := validate(cfg); err != nil {
+		// Standard validation. owner is already resolved above (projectVaultSecrets),
+		// so the api-tokens rule sees accurate vault presence — a from-scratch vault
+		// gateway with no api token yet is a legitimate bootstrap, not an error (#129).
+		if err := validate(cfg, owner != nil); err != nil {
 			return nil, nil, fmt.Errorf("invalid configuration: %w", err)
 		}
 	}
@@ -514,8 +527,20 @@ func deepMergeConfig(dst, src *Config) error {
 	if src.API.Listen != "" {
 		dst.API.Listen = src.API.Listen
 	}
+	if src.API.ManagementSocket != "" {
+		dst.API.ManagementSocket = src.API.ManagementSocket
+	}
+	if src.API.MaxConcurrentSync != 0 {
+		dst.API.MaxConcurrentSync = src.API.MaxConcurrentSync
+	}
+	if src.API.MaxSyncTimeout != 0 {
+		dst.API.MaxSyncTimeout = src.API.MaxSyncTimeout
+	}
 	if len(src.API.Auth.Tokens) > 0 {
 		dst.API.Auth.Tokens = append(dst.API.Auth.Tokens, src.API.Auth.Tokens...)
+	}
+	if len(src.API.AllowedOrigins) > 0 {
+		dst.API.AllowedOrigins = append(dst.API.AllowedOrigins, src.API.AllowedOrigins...)
 	}
 
 	// Merge plugin_roots
@@ -732,7 +757,11 @@ const MinTickInterval = 100 * time.Millisecond
 const RecommendedTickInterval = 1 * time.Second
 
 // validate performs basic validation on the configuration.
-func validate(cfg *Config) error {
+// validate checks structural config validity. hasVault reports whether a vault
+// owner is present (loaded by the time this runs in the load flow), so the
+// api-tokens rule can recognise the from-scratch bootstrap posture — an enabled
+// gateway with no api token is legitimate ONLY when a vault exists to mint one.
+func validate(cfg *Config, hasVault bool) error {
 	// Service validation
 	if cfg.Service.TickInterval <= 0 {
 		return fmt.Errorf("service.tick_interval must be positive")
@@ -765,11 +794,13 @@ func validate(cfg *Config) error {
 		return fmt.Errorf("plugin_roots is required")
 	}
 
-	// API auth validation
+	// API auth validation. The single APIEnabledWithoutToken predicate owns the
+	// #94/#119 rule (shared with doctor + runtime admission). Zero tokens is
+	// rejected ONLY when no vault is present to bootstrap one.
+	if APIEnabledWithoutToken(cfg, hasVault) {
+		return fmt.Errorf("api.auth.tokens must be configured when API is enabled (or genesis a vault to bootstrap one — credential-ladder ADR)")
+	}
 	if cfg.API.Enabled {
-		if len(cfg.API.Auth.Tokens) == 0 {
-			return fmt.Errorf("api.auth.tokens must be configured when API is enabled")
-		}
 		for i, tok := range cfg.API.Auth.Tokens {
 			// API bearer tokens are secrets and are vault-only (#94, ADR §8.5).
 			// A literal token value — including a ${ENV} reference — is rejected:

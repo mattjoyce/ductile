@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"time"
 
@@ -97,6 +98,17 @@ type Config struct {
 	// nil disables audit emission (ops still succeed — audit is observability,
 	// not a precondition). Runtime wires the state.Store.
 	VaultAuditor VaultAuditor
+	// ManagementSocket is the filesystem path of the unix-domain socket the
+	// vault-operable / ductile-closed posture serves the /vault/* surface on
+	// (StartManagement). It is the LOCAL transport mandated by the credential-
+	// ladder ADR — a same-host filesystem boundary, never the public network
+	// interface. Unused in the gateway posture (Start serves TCP).
+	ManagementSocket string
+	// BootPosture is the gateway boot posture this server is running in
+	// ("gateway" or "management-only"), surfaced live in /healthz so an operator
+	// or AI can tell an intentional pre-activation posture from a stuck daemon
+	// (#130 anti-strand). Empty for callers that do not set it.
+	BootPosture string
 	// AllowedOrigins lists the origins that may receive credentialed CORS
 	// headers. An empty list disables cross-origin credential sharing entirely.
 	AllowedOrigins []string
@@ -119,6 +131,9 @@ type Server struct {
 	syncSemaphore chan struct{}
 	reloadFunc    func(context.Context) (ReloadResponse, error)
 	serveDone     chan struct{}
+	// listener is the gateway TCP listener when Bind() reserved it ahead of
+	// Start (the activation-reload path, #140). nil means Start binds itself.
+	listener      net.Listener
 	relayReceiver *relay.Receiver
 	vault         VaultManager
 	auditor       VaultAuditor
@@ -163,6 +178,21 @@ func New(config Config, queue JobQueuer, registry PluginRegistry, router Pipelin
 	}
 }
 
+// Bind reserves the gateway TCP listener synchronously. The activation reload
+// calls this inside buildRuntime so a bind failure FAILS the reload (and the
+// restore path runs) instead of surfacing on errCh after the reload already
+// answered "ok" (#140). On failure serveDone is closed so WaitServeStopped
+// returns immediately rather than burning its deadline.
+func (s *Server) Bind() error {
+	ln, err := net.Listen("tcp", s.config.Listen)
+	if err != nil {
+		close(s.serveDone)
+		return fmt.Errorf("listen on %s: %w", s.config.Listen, err)
+	}
+	s.listener = ln
+	return nil
+}
+
 // Start starts the HTTP server (blocking)
 func (s *Server) Start(ctx context.Context) error {
 	router := s.setupRoutes()
@@ -177,11 +207,24 @@ func (s *Server) Start(ctx context.Context) error {
 
 	s.logger.Info("API server starting", "listen", s.config.Listen)
 
+	// Bind synchronously when Bind() has not already reserved the listener —
+	// a bind error returns from Start itself, never from inside the serve
+	// goroutine (#140).
+	ln := s.listener
+	if ln == nil {
+		var err error
+		ln, err = net.Listen("tcp", s.config.Listen)
+		if err != nil {
+			close(s.serveDone)
+			return fmt.Errorf("listen on %s: %w", s.config.Listen, err)
+		}
+	}
+
 	// Run server in a goroutine
 	errCh := make(chan error, 1)
 	go func() {
 		defer close(s.serveDone)
-		if err := s.server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		if err := s.server.Serve(ln); err != nil && err != http.ErrServerClosed {
 			errCh <- err
 		}
 	}()
@@ -294,20 +337,30 @@ func (s *Server) setupRoutes() *chi.Mux {
 	// Vault management — gated by the vault's OWN resident admin token, not the
 	// config API tokens above (a separate group, separate authenticator). The
 	// daemon is the sole writer; value-dump and genesis stay local, never here.
-	if s.vault != nil {
-		r.Group(func(r chi.Router) {
-			r.Use(s.authenticateVaultAdmin)
-			r.Post("/vault/principal", s.handleVaultRegisterPrincipal)
-			r.Post("/vault/secret", s.handleVaultSet)
-			r.Post("/vault/secret/roll", s.handleVaultRoll)
-			r.Post("/vault/secret/revoke", s.handleVaultRevoke)
-			r.Post("/vault/principal/revoke", s.handleVaultRevokePrincipal)
-			r.Post("/vault/principal/purge", s.handleVaultPurgePrincipal)
-			r.Post("/vault/principal/roll", s.handleVaultRollPrincipal)
-		})
-	}
+	s.mountVaultRoutes(r)
 
 	return r
+}
+
+// mountVaultRoutes mounts the admin-token-gated /vault/* management group. It is
+// the SINGLE definition of the vault management surface, shared by the gateway
+// router (setupRoutes) and the management-only router (setupManagementRoutes),
+// so the two postures can never expose a divergent set of vault routes. A nil
+// vault mounts nothing (no vault loaded / keyless).
+func (s *Server) mountVaultRoutes(r chi.Router) {
+	if s.vault == nil {
+		return
+	}
+	r.Group(func(r chi.Router) {
+		r.Use(s.authenticateVaultAdmin)
+		r.Post("/vault/principal", s.handleVaultRegisterPrincipal)
+		r.Post("/vault/secret", s.handleVaultSet)
+		r.Post("/vault/secret/roll", s.handleVaultRoll)
+		r.Post("/vault/secret/revoke", s.handleVaultRevoke)
+		r.Post("/vault/principal/revoke", s.handleVaultRevokePrincipal)
+		r.Post("/vault/principal/purge", s.handleVaultPurgePrincipal)
+		r.Post("/vault/principal/roll", s.handleVaultRollPrincipal)
+	})
 }
 
 // corsMiddleware returns a middleware that sets CORS headers for requests whose

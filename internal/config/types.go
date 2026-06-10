@@ -160,6 +160,11 @@ type APIConfig struct {
 	// AllowedOrigins lists origins that may receive credentialed CORS headers.
 	// Empty (the default) disables cross-origin credential sharing entirely.
 	AllowedOrigins []string `yaml:"allowed_origins,omitempty"`
+	// ManagementSocket is the unix-domain socket path the vault-operable /
+	// ductile-closed bootstrap posture serves /vault/* on (the local management
+	// transport of the credential-ladder ADR). Empty defaults to a path beside
+	// the state DB. Keep it short — unix sun_path is capped near 104 bytes.
+	ManagementSocket string `yaml:"management_socket,omitempty"`
 }
 
 // APIAuthConfig defines API authentication settings.

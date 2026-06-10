@@ -1,6 +1,12 @@
 package api
 
 import (
+	"context"
+	"log/slog"
+	"net"
+	"time"
+
+	"github.com/mattjoyce/ductile/internal/events"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -121,5 +127,27 @@ func assertHeader(t *testing.T, resp *httptest.ResponseRecorder, key, want strin
 	t.Helper()
 	if got := resp.Header().Get(key); got != want {
 		t.Fatalf("%s = %q, want %q", key, got, want)
+	}
+}
+
+// #140: a gateway bind failure must be synchronous — the activation reload
+// calls Bind inside buildRuntime, so a taken port fails the reload (restore
+// path) instead of surfacing on errCh after the reload answered "ok".
+func TestBindFailsFastOnOccupiedPort(t *testing.T) {
+	occupier, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("occupy port: %v", err)
+	}
+	defer func() { _ = occupier.Close() }()
+
+	srv := New(Config{Listen: occupier.Addr().String()}, nil, &mockRegistry{}, &mockRouter{}, &mockWaiter{}, nil, nil, nil, events.NewHub(10), slog.Default())
+	if err := srv.Bind(); err == nil {
+		t.Fatal("Bind must fail synchronously on an occupied port")
+	}
+	// serveDone must be closed so WaitServeStopped does not burn its deadline.
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+	if err := srv.WaitServeStopped(ctx); err != nil {
+		t.Fatalf("WaitServeStopped after failed Bind must return immediately, got %v", err)
 	}
 }

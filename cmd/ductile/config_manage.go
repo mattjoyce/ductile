@@ -73,7 +73,11 @@ func resolveConfigTarget(configPath, configDir string) (string, string, error) {
 }
 
 func validateConfigAtPath(configPath string) (*doctor.Result, int, error) {
-	cfg, err := config.Load(configPath)
+	// LoadWithVault: the load already decrypts the vault for the secret
+	// projection; reusing its owner keeps this verdict identical to the
+	// daemon's boot admission — a genesis-vault, zero-token bootstrap config
+	// is valid here exactly when it boots the management posture (#129, #133).
+	cfg, owner, err := config.LoadWithVault(configPath)
 	if err != nil {
 		return nil, 1, err
 	}
@@ -97,7 +101,7 @@ func validateConfigAtPath(configPath string) (*doctor.Result, int, error) {
 		return nil, 1, err
 	}
 	hooks := collectHookProjection(cfg)
-	result := doctor.New(cfg, registry).AddHookPipelines(hooks).Validate()
+	result := doctor.New(cfg, registry).WithVaultPresent(owner != nil).AddHookPipelines(hooks).Validate()
 	if !result.Valid {
 		return result, 1, nil
 	}

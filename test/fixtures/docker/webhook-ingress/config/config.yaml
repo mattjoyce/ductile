@@ -1,15 +1,22 @@
 log_level: info
 service:
   strict_mode: false
+  # Hygiene-only: this fixture isn't testing privsep, so opt out of the uid-drop
+  # boot gate (#86) for a deterministic boot on root/CAP_SETUID hosts (CI container).
+  unconfined: true
 state:
   path: "./state/ductile.db"
 plugin_roots:
   - "./plugins"
+secrets:
+  age_key_file: "age.key"
+  vault_file: "vault.age"
 webhooks:
   listen: "127.0.0.1:18091"
+# webhooks.yaml is added to this include list by run.sh AFTER the webhook secret is
+# minted — a from-scratch config cannot reference a vault secret_ref that does not
+# exist yet (same rule as the api token; see the credential-ladder ADR).
 include:
   - api.yaml
   - plugins.yaml
   - pipelines.yaml
-  - webhooks.yaml
-  - tokens.yaml

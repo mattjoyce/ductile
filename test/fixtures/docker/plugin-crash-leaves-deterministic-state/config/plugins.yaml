@@ -1,0 +1,9 @@
+plugins:
+  crash_once:
+    enabled: true
+    # Single attempt: the default (4 attempts, 30s backoff) would grind the
+    # fixture for minutes; one crash must land the job terminal immediately.
+    retry:
+      max_attempts: 1
+    config:
+      marker_file: "./state/crash-started.marker"

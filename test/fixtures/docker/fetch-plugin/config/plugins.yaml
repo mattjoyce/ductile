@@ -1,5 +1,0 @@
-plugins:
-  fetch:
-    enabled: true
-    config:
-      output_format: markdown

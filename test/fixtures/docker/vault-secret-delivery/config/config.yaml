@@ -1,5 +1,10 @@
 service:
   strict_mode: false
+  # Run plugins at the gateway uid (hygiene-only). On a host where the gateway can
+  # drop uid (root/CAP_SETUID, e.g. CI in a container) the privsep boot gate (#86)
+  # otherwise refuses to start without an accounts table; this fixture is not
+  # testing privsep, so it opts out explicitly for a deterministic boot.
+  unconfined: true
 state:
   path: "./state/ductile.db"
 plugin_roots:

@@ -1,0 +1,6 @@
+pipelines:
+  - name: crash-pipeline
+    on: crash.trigger
+    steps:
+      - id: crash_step
+        uses: crash_once

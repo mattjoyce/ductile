@@ -157,6 +157,29 @@ above (static files you author and re-seal), the Vault is a *running store* — 
 are created, rolled, and revoked through its API and delivered to plugins at dispatch
 time. It is the home for secrets that have a lifecycle.
 
+### Credential ladder
+
+Three credentials, three planes, each strictly scoped — and each **issues the one below it**. This is
+the spine of the whole vault story (full rationale: [ADR: Vault credential ladder](adr/vault-credential-ladder.md)).
+
+| Credential          | Verb                  | Plane                  | Cannot                            |
+|---------------------|-----------------------|------------------------|-----------------------------------|
+| **vault key** (age) | **open** the vault    | offline, root of trust | — (it is the floor)               |
+| **admin token**     | **operate** the vault | online `/vault/*`      | open the vault; operate ductile   |
+| **api token**       | **operate** ductile   | online gateway         | operate the vault; open the vault |
+
+```
+vault key  ──mints──▶  admin token  ──mints──▶  api token
+ (genesis, offline)   (vault init / rotate)     (vault set, online)
+```
+
+Isolation runs upward-blocking only: an api token can't reach the vault, an admin token can't reach the
+key — but the key subsumes all (`api ⊂ admin-reachable-state ⊂ key`). The **admin token is mint-only**:
+its single writer is `RotateAdminToken` (age-key, daemon stopped), the value is always machine-minted,
+and `set` is refused on every plane. **api tokens** are ordinary secrets — settable to a chosen value via
+`vault set`. Bootstrap is just the ladder: genesis (key) mints the admin token, which operates the vault
+to mint the api token (see [DEPLOYMENT.md § 11](DEPLOYMENT.md)).
+
 ### Mental model
 
 - **Principal** — a registered deliver-to identity: a `plugin`, a `consumer`, or the
@@ -190,16 +213,20 @@ That splits the CLI into two classes (see `ductile vault --help`):
   `purge-principal`, `roll-principal`, `register-principal`. These hold no age key and
   decrypt nothing; they POST to the daemon's authenticated management API with the
   vault admin token (`--token` or `DUCTILE_VAULT_TOKEN`). They can run any time.
-- **Local, key-touching ops** — `init`, `import`, `rotate-key`, `rotate-admin-token`.
+- **Local, key-touching ops** — `init`, `rotate-key`, `rotate-admin-token`.
   These read the age key directly and operate on the blob, so the daemon must be
-  **stopped** (they refuse via the PID lock if it is running).
+  **stopped** (they refuse via the PID lock if it is running). There is no offline
+  bulk `import`: the daemon is the sole writer, so secrets enter the vault through
+  it — `vault set` over the management API (`--api-url`, incl. `unix://` in the
+  vault-operable bootstrap posture).
 
 ### Genesis and lifecycle
 
 > **Deploying onto a real instance?** This section is the lifecycle model. The full,
-> ordered first-time deploy procedure — backup, `vault_audit` migration, genesis, config
-> reconcile, import, `config lock` **and** `plugin lock --all`, cutover, verify — is the
-> how-to in [DEPLOYMENT.md § 11](DEPLOYMENT.md).
+> ordered first-time deploy procedure — backup, `vault_audit` migration, genesis, reconcile
+> config.yaml, mint secrets over the admin socket (vault-operable posture), `config lock`
+> **and** `plugin lock --all`, cutover, verify — is the how-to in
+> [DEPLOYMENT.md § 11](DEPLOYMENT.md).
 
 ```bash
 # 1. Genesis: create a new vault. Seeds the core principal, the fingerprint nonce,

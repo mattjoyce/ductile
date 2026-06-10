@@ -1185,7 +1185,10 @@ func TestValidate(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			err := validate(tt.cfg)
+			// hasVault=false: these cases exercise non-bootstrap validation, so the
+			// api-enabled-needs-token rule applies as before (the vault-present
+			// bootstrap exception is covered in boot_posture_test.go).
+			err := validate(tt.cfg, false)
 			if (err != nil) != tt.wantErr {
 				t.Errorf("validate() error = %v, wantErr %v", err, tt.wantErr)
 			}
@@ -1244,6 +1247,44 @@ plugins:
 	}
 	if _, ok := cfg.Plugins["echo"]; !ok {
 		t.Error("echo plugin not loaded from included file")
+	}
+}
+
+// TestDeepMergeConfigAPIFields guards the deepMergeConfig API merge: an api: block
+// from an INCLUDED file must carry every field through, not just the few the merge
+// once hand-listed. management_socket (#129) and allowed_origins were silently
+// dropped from multi-file configs — single-file loads never exercised the merge.
+func TestDeepMergeConfigAPIFields(t *testing.T) {
+	dst := &Config{}
+	src := &Config{API: APIConfig{
+		Enabled:           true,
+		Listen:            "127.0.0.1:18181",
+		Auth:              APIAuthConfig{Tokens: []APIToken{{SecretRef: "api-admin"}}},
+		MaxConcurrentSync: 7,
+		MaxSyncTimeout:    42 * time.Second,
+		AllowedOrigins:    []string{"https://dash.example"},
+		ManagementSocket:  "/tmp/ductile-mgmt.sock",
+	}}
+	if err := deepMergeConfig(dst, src); err != nil {
+		t.Fatalf("deepMergeConfig: %v", err)
+	}
+	if !dst.API.Enabled || dst.API.Listen != "127.0.0.1:18181" {
+		t.Errorf("api enabled/listen not merged: %+v", dst.API)
+	}
+	if len(dst.API.Auth.Tokens) != 1 || dst.API.Auth.Tokens[0].SecretRef != "api-admin" {
+		t.Errorf("API.Auth.Tokens = %+v, want the secret_ref carried through the merge", dst.API.Auth.Tokens)
+	}
+	if dst.API.MaxConcurrentSync != 7 {
+		t.Errorf("API.MaxConcurrentSync = %d, want it carried through the merge", dst.API.MaxConcurrentSync)
+	}
+	if dst.API.MaxSyncTimeout != 42*time.Second {
+		t.Errorf("API.MaxSyncTimeout = %v, want it carried through the merge", dst.API.MaxSyncTimeout)
+	}
+	if len(dst.API.AllowedOrigins) != 1 || dst.API.AllowedOrigins[0] != "https://dash.example" {
+		t.Errorf("API.AllowedOrigins = %v, want it carried through the merge", dst.API.AllowedOrigins)
+	}
+	if dst.API.ManagementSocket != "/tmp/ductile-mgmt.sock" {
+		t.Errorf("API.ManagementSocket = %q, want it carried through the merge", dst.API.ManagementSocket)
 	}
 }
 

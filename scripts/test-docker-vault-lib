@@ -1,0 +1,81 @@
+#!/usr/bin/env bash
+# Vault-native fixture helpers — the credential-ladder boilerplate shared by docker
+# fixtures that boot a from-scratch vault gateway (no literal tokens, no offline
+# seed). Source AFTER test-docker-lib. Requires: $BIN (path to the ductile binary),
+# $ARTIFACT_DIR, and `jq`/`curl`. Fixtures use the shared $PID convention so their
+# EXIT trap (kill $PID) also covers the management daemon if a helper fails.
+set -euo pipefail
+
+# fixture_vault_init <config_dir>
+#   Genesis: age keygen + `vault init` in <config_dir> (default age.key/vault.age
+#   resolution). Exports DUCTILE_VAULT_TOKEN (the admin token, printed once) and
+#   also echoes it. Daemon must be stopped — this is a local key-touching op.
+fixture_vault_init() {
+  local cfg="$1"
+  "$BIN" secrets keygen -out "$cfg/age.key" >/dev/null 2>>"$ARTIFACT_DIR/genesis.log"
+  chmod 600 "$cfg/age.key"
+  local admin
+  admin="$("$BIN" vault init --vault "$cfg/vault.age" --key "$cfg/age.key" 2>>"$ARTIFACT_DIR/genesis.log")"
+  [[ -n "$admin" ]] || fixture_fail "vault init produced no admin token"
+  export DUCTILE_VAULT_TOKEN="$admin"
+  printf '%s' "$admin"
+}
+
+# fixture_bootstrap_vault <config_dir> <socket> <api_name> <api_value> [name=value ...]
+#   Walks the bootstrap rung of the ladder: boots the vault-operable / ductile-closed
+#   (management) posture from a token-less api.yaml, asserts the posture is live AND
+#   the public gateway listener is NOT open, mints the api token plus any extra
+#   load-visible secrets (no --principal, so the load-time projection resolves them),
+#   stops the management daemon, and appends the api token's secret_ref to api.yaml so
+#   the NEXT boot activates the gateway. Drives the shared $PID for crash safety.
+fixture_bootstrap_vault() {
+  local cfg="$1" sock="$2" api_name="$3" api_value="$4"
+  shift 4
+
+  printf '  management_socket: "%s"\n' "$sock" >> "$cfg/api.yaml"
+
+  fixture_log "boot management posture (no api token yet)"
+  "$BIN" system start --config "$cfg" >"$ARTIFACT_DIR/ductile-mgmt.log" 2>&1 &
+  PID=$!
+
+  local ready=0 i
+  for i in $(seq 1 60); do
+    if curl -fsS --unix-socket "$sock" http://unix/healthz >"$ARTIFACT_DIR/healthz-mgmt.json" 2>/dev/null; then
+      ready=1
+      break
+    fi
+    sleep 0.25
+  done
+  [[ "$ready" -eq 1 ]] || fixture_fail "management socket did not become ready"
+  local posture
+  posture="$(jq -r '.posture // empty' "$ARTIFACT_DIR/healthz-mgmt.json")"
+  [[ "$posture" == "management-only" ]] || fixture_fail "expected management-only posture, got '$posture'"
+  # The public gateway listener MUST NOT be open in this posture (parse listen from api.yaml).
+  # A failed parse must FAIL the fixture, not silently skip this assertion —
+  # the closed listener is the management posture's defining property (#142).
+  local listen
+  listen="$(awk '/^[[:space:]]*listen:/ {gsub(/[",]/,"",$2); print $2; exit}' "$cfg/api.yaml")"
+  [[ -n "$listen" ]] || fixture_fail "could not parse api listen address from api.yaml"
+  ! curl -fsS "http://$listen/healthz" >/dev/null 2>&1 || fixture_fail "public gateway listener is open in management posture"
+
+  fixture_log "mint api token $api_name over the admin socket (load-visible)"
+  printf '%s' "$api_value" | "$BIN" vault set --api-url "unix://$sock" --name "$api_name" --pattern manual
+  local kv
+  for kv in "$@"; do
+    fixture_log "mint load-visible secret ${kv%%=*}"
+    printf '%s' "${kv#*=}" | "$BIN" vault set --api-url "unix://$sock" --name "${kv%%=*}" --pattern manual
+  done
+
+  if [[ -n "${PID:-}" ]] && kill -0 "$PID" 2>/dev/null; then
+    kill "$PID" 2>/dev/null || true
+    wait "$PID" 2>/dev/null || true
+  fi
+  PID=""
+
+  cat >> "$cfg/api.yaml" <<EOF
+  auth:
+    tokens:
+      - secret_ref: $api_name
+        scopes: ["*"]
+EOF
+}
