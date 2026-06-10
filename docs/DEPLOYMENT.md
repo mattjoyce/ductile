@@ -263,7 +263,7 @@ the `0600` root-owned age key — exactly as intended.
 **macOS (launchd): enforce is Linux-proven, macOS-pending (T12).** Privilege-dropping
 enforce mode is proven only on a privileged **Linux** host so far; the launchd equivalent
 and the live rollout are still open — see [[95-privsep-launchd-and-live-rollout]] (and
-[MACOS_INSTALLATION.md](MACOS_INSTALLATION.md) for the install shape). Until then a Mac runs
+[BOOTSTRAP.md](BOOTSTRAP.md) plus `deploy/install-macos.sh` for the install shape). Until then a Mac runs
 **hygiene-only / `unconfined`** (no `accounts:` map, no drop capability under launchd), which
 the boot gate permits quietly. Do not assume a Mac gateway is confined.
 
