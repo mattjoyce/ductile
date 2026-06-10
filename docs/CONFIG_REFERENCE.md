@@ -168,6 +168,10 @@ plugin_roots:
 api:
   enabled: true
   listen: 127.0.0.1:8080
+  management_socket: /tmp/ductile-admin.sock  # Unix socket serving /vault/* in the
+                                          # management posture (BOOTSTRAP.md). Keep it
+                                          # under ~104 bytes. Default when omitted:
+                                          # vault-admin.sock beside the state DB.
   allowed_origins:                        # List of allowed CORS origins (empty by default)
     - http://localhost:3000
     - https://my-dashboard.example

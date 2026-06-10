@@ -31,15 +31,19 @@ recovery path.
 CFG=~/.config/ductile          # your config directory
 BIN=ductile                    # the installed binary (see platform sections)
 
-# 1. Config WITHOUT any token. Required pieces:
+# 1. Config WITHOUT any token. The repo's config/ folder is a working copy of
+#    exactly this state (cp -R config "$CFG"). Required pieces:
 #      secrets:
 #        age_key_file: age.key
 #        vault_file: vault.age
+#      plugin_roots:
+#        - plugins        # must list at least one EXISTING dir; relative paths
+#                         # resolve against $CFG and "~" is never expanded
 #      api:
 #        enabled: true
 #        listen: "127.0.0.1:8081"
-#        management_socket: /tmp/ductile-admin.sock   # EXPLICIT, short path —
-#                       # the default lives beside the state DB, not in $CFG
+#        management_socket: /tmp/ductile-admin.sock   # set it explicitly to a short
+#                       # path — the default lives beside the state DB, not in $CFG
 #    Do NOT add api.auth.tokens yet. Webhooks may reference secret_refs that do
 #    not exist yet — during bootstrap that is a warning, not an error.
 
@@ -48,8 +52,10 @@ BIN=ductile                    # the installed binary (see platform sections)
 $BIN secrets keygen --out "$CFG/age.key"
 $BIN vault init --vault "$CFG/vault.age" --key "$CFG/age.key"
 
-# 3. Validate. Zero tokens + a genesis vault IS clean — the doctor reaches the
-#    same verdict the daemon does.
+# 3. Seal, then validate. Lock comes first because scope files (webhooks.yaml)
+#    are checksum-verified even by `config check`. Zero tokens + a genesis vault
+#    IS clean — the doctor reaches the same verdict the daemon does.
+$BIN config lock --config "$CFG"
 $BIN config check --config "$CFG"
 
 # 4. First boot: the management posture.
@@ -67,8 +73,9 @@ printf '%s' "$API_TOKEN" | $BIN vault set --api-url "unix:///tmp/ductile-admin.s
 #            - secret_ref: core-api-token
 #              scopes: ["*"]
 
-# 7. Seal config and plugins (attestation is keyed by the vault nonce, so this
-#    must come after genesis).
+# 7. Seal config and plugins, in this order: `config lock` first (it writes the
+#    .checksums file that `plugin lock` extends), and both after genesis
+#    (attestation is keyed by the vault nonce).
 $BIN config lock --config "$CFG"
 $BIN plugin lock --all --config "$CFG"        # prints a confirm code
 $BIN plugin lock --all <code> --config "$CFG"

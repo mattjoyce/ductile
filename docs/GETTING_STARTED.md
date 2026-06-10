@@ -6,7 +6,7 @@ Welcome to **Ductile**, an automation runtime AI agents can run, debug, and buil
 
 ## 1. Installation
 
-Ductile is written in Go and requires version **1.25.4** or newer.
+Ductile is written in Go and requires version **1.25.0** or newer (see `go.mod`).
 
 1.  **Clone the repository:**
     ```bash
@@ -40,13 +40,14 @@ This repo ships example files in `config/` — copy that folder to your config d
 
 ```bash
 cp -R ./config ~/.config/ductile
+cp -R ./plugins/echo ~/.config/ductile/plugins/   # put echo in the config's plugin root
 ```
 
 ```yaml
 # ~/.config/ductile/config.yaml excerpt
 plugin_roots:
-  - "~/.config/ductile/plugins"
-  - "./plugins"
+  # Relative entries resolve against the config directory; "~" is never expanded.
+  - "plugins"
 
 include:
   - api.yaml
@@ -73,18 +74,17 @@ You can mount additional plugin volumes and add them to `plugin_roots` in priori
 
 ```yaml
 plugin_roots:
-  - "~/.config/ductile/plugins"
-  - "./plugins"
-  - "/opt/ductile/plugins-private"
+  - "plugins"                          # relative to the config directory
+  - "/opt/ductile/plugins-private"     # absolute roots work anywhere
 ```
 
 Container example:
 ```bash
 docker run --rm \
   -v "$PWD/config:/config" \
-  -v "$PWD/plugins:/app/plugins" \
+  -v "$PWD/plugins:/config/plugins" \
   -v "/srv/ductile-private-plugins:/opt/ductile/plugins-private:ro" \
-  ductile:latest ./ductile system start --config-dir /config
+  ductile:latest ./ductile system start --config /config
 ```
 
 ### Step 3: Start the Gateway
@@ -95,7 +95,7 @@ Run the service in the foreground (defaults to `~/.config/ductile`):
 
 Or explicitly point to a config directory:
 ```bash
-./ductile system start --config-dir ~/.config/ductile
+./ductile system start --config ~/.config/ductile
 ```
 
 You will see logs indicating the scheduler has started. After 5 minutes (or however you configured it), you'll see the echo job execute and complete.
@@ -119,9 +119,11 @@ Then start the gateway and grant a plugin its secret. The full lifecycle (regist
 Ductile is designed to be operated by both humans and LLMs. All commands follow a strict **NOUN ACTION** hierarchy:
 
 -   **Hierarchy:** `ductile job inspect`, `ductile config lock`, `ductile system status`.
--   **Verbosity:** Use `-v` or `--verbose` for detailed logic traces.
--   **Safety:** Use `--dry-run` for any mutation to preview changes.
--   **Machine-Readability:** Use `--json` to get structured data for scripts or agents.
+-   **Verbosity:** `-v` / `--verbose` gives detailed logic traces where a command supports it.
+-   **Safety:** mutating config commands accept `--dry-run` to preview changes.
+-   **Machine-Readability:** read commands accept `--json` for structured output.
+
+Check `ductile <noun> <action> --help` for the flags a specific command takes.
 
 ---
 

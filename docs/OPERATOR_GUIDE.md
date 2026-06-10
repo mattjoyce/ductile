@@ -98,9 +98,11 @@ It is a **local, key-touching** operation and the daemon must be **stopped**
 (it refuses while the daemon holds the PID lock). Stop the service, rotate, start:
 
 ```bash
-ductile system stop
+# Stop the daemon via its service manager (there is no `system stop` command):
+#   systemd: systemctl --user stop ductile-local
+#   launchd: launchctl bootout gui/$UID/<label>    (foreground runs: Ctrl-C)
 ductile vault rotate-key --config /path/to/config
-ductile system start
+ductile system start                                 # or restart via the service manager
 ```
 
 The rotation is atomic and crash-safe (a dual-recipient bridge keeps the on-disk

@@ -215,7 +215,9 @@ That splits the CLI into two classes (see `ductile vault --help`):
   vault admin token (`--token` or `DUCTILE_VAULT_TOKEN`). They can run any time.
 - **Local, key-touching ops** — `init`, `rotate-key`, `rotate-admin-token`.
   These read the age key directly and operate on the blob, so the daemon must be
-  **stopped** (they refuse via the PID lock if it is running). There is no offline
+  **stopped**: `rotate-key` and `rotate-admin-token` refuse via the PID lock if it
+  is running; `init` runs before any daemon exists and instead refuses to overwrite
+  an existing vault. There is no offline
   bulk `import`: the daemon is the sole writer, so secrets enter the vault through
   it — `vault set` over the management API (`--api-url`, incl. `unix://` in the
   vault-operable bootstrap posture).
@@ -264,9 +266,11 @@ printed **once** at `vault init` and authenticates every `/vault/*` write. If it
 exposed (captured from `genesis.out`, leaked to a client log), roll it **in place** with:
 
 ```bash
-ductile system stop                                  # key-touching: daemon must be down
+# Stop the daemon via its service manager (there is no `system stop` command):
+#   systemd: systemctl --user stop ductile-local
+#   launchd: launchctl bootout gui/$UID/<label>    (foreground runs: Ctrl-C)
 ductile vault rotate-admin-token --config "$CFG"     # mints + prints the NEW token once
-ductile system start
+ductile system start                                 # or restart via the service manager
 ```
 
 It mints a fresh CSPRNG token, persists the blob, and prints the new value once to

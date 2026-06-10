@@ -95,30 +95,33 @@ include:
   - webhooks.yaml
 ```
 
-> **macOS gotcha:** Unlike the Linux deployment, `~` in `plugin_roots` and `state.path`
-> is resolved relative to the config directory, not `$HOME`. Use absolute paths for both.
+> **Gotcha (all platforms):** `~` in `plugin_roots` and `state.path` is resolved
+> relative to the config directory, not `$HOME`. Use absolute paths, or paths
+> relative to the config dir.
 
 ### api.yaml
 
-Generate a token first:
-```bash
-openssl rand -hex 32
-```
+API bearer tokens are **vault-only** — a literal `token:` value is rejected at
+load (#94). Boot with no tokens (the management posture), mint the token over
+the management socket per [BOOTSTRAP.md](BOOTSTRAP.md) steps 4–6, then
+reference it:
 
 ```yaml
 api:
   enabled: true
   listen: "127.0.0.1:8082"   # Use 8082 if 8081 is taken by another ductile instance
-  auth:
-    tokens:
-      - token: "PASTE_YOUR_TOKEN_HERE"
-        scopes: ["*"]
+  management_socket: /tmp/ductile-admin.sock
+  # AFTER minting (BOOTSTRAP.md step 5):
+  # auth:
+  #   tokens:
+  #     - secret_ref: core-api-token
+  #       scopes: ["*"]
 ```
 
-Store the token in your shell environment:
+Store the minted value for API clients in your shell environment:
 ```bash
 # ~/.zshrc
-export DUCTILE_LOCAL_TOKEN=<your-token>
+export DUCTILE_LOCAL_TOKEN=<the minted value>
 ```
 
 ### plugins.yaml

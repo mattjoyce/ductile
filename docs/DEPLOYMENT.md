@@ -77,25 +77,35 @@ load).
 
 ### config/api.yaml
 
+API bearer tokens are **vault-only**: a literal `token:` value in config is
+rejected at load (#94, credential-ladder ADR §8.5). The config references a
+vault secret by name; the bootstrap walk that mints it is
+[BOOTSTRAP.md](BOOTSTRAP.md) steps 4–6.
+
 ```yaml
 api:
   enabled: true
-  listen: "localhost:8081"
-  auth:
-    tokens:
-      - token: <your-token>
-        scopes: ["*"]
+  listen: "127.0.0.1:8081"
+  management_socket: /tmp/ductile-admin.sock  # serves /vault/* while bootstrapping
+  # No tokens yet = the bootstrap (management-only) posture when a vault exists.
+  # AFTER minting, reference the secret and restart to activate the gateway:
+  #  auth:
+  #    tokens:
+  #      - secret_ref: core-api-token
+  #        scopes: ["*"]
 ```
 
-Generate a token:
+Generate a value and mint it into the vault over the management socket:
 ```bash
-openssl rand -hex 32
+API_TOKEN=$(openssl rand -hex 32)
+printf '%s' "$API_TOKEN" | ductile vault set --api-url "unix:///tmp/ductile-admin.sock" \
+  --token "$ADMIN_TOKEN" --name core-api-token --pattern manual
 ```
 
-Store the token in your shell environment:
+Store the same value for API *clients* (the gateway itself never reads this):
 ```bash
 # ~/.zshrc
-export DUCTILE_LOCAL_TOKEN=<your-token>
+export DUCTILE_LOCAL_TOKEN=<the minted value>
 ```
 
 ### config/plugins.yaml
@@ -262,7 +272,7 @@ the `0600` root-owned age key — exactly as intended.
 
 **macOS (launchd): enforce is Linux-proven, macOS-pending (T12).** Privilege-dropping
 enforce mode is proven only on a privileged **Linux** host so far; the launchd equivalent
-and the live rollout are still open — see [[95-privsep-launchd-and-live-rollout]] (and
+and the live rollout are still open — see `kanban/95-privsep-launchd-and-live-rollout.md` (and
 [BOOTSTRAP.md](BOOTSTRAP.md) plus `deploy/install-macos.sh` for the install shape). Until then a Mac runs
 **hygiene-only / `unconfined`** (no `accounts:` map, no drop capability under launchd), which
 the boot gate permits quietly. Do not assume a Mac gateway is confined.
