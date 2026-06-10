@@ -208,7 +208,7 @@ tcc_paths:
     database:
       path: ./data/state.db
     ```
-*   **Path Resolution**: Relative paths (like `./data/state.db`) are resolved against the directory containing `config.yaml`.
+*   **Path Resolution**: Relative paths (like `./data/state.db`) are resolved against the directory containing `config.yaml`. A leading `~` or `~/` expands to the user's home directory in all path fields (`state.path`, `plugin_roots`, `secrets.*`, `api.management_socket`, `tcc_paths`, `environment_vars.include`); the `~user` form is not supported.
 *   **Deduplication Durations**: `dedupe_ttl` matches terminal rows in `job_queue`, so `job_queue_retention` must be at least as long as `dedupe_ttl`. The defaults are both 24h.
 
 > **Note:** the core does not provision per-job filesystem workspaces;

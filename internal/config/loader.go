@@ -106,6 +106,9 @@ func load(configPath string, verifyScopes bool, validateConfig bool, applyPlugin
 
 	// If the root config names a key file and we didn't already resolve one
 	// (no env var, no default present), honour it for the encrypted includes.
+	// Expand a leading "~" now — the full expandTildePaths pass runs only
+	// after the include merge, which is too late for encrypted includes.
+	cfg.Secrets.AgeKeyFile = expandTilde(cfg.Secrets.AgeKeyFile)
 	if kr.Empty() && cfg.Secrets.AgeKeyFile != "" {
 		kr, err = resolveKeyring(configDir, cfg)
 		if err != nil {
@@ -137,6 +140,10 @@ func load(configPath string, verifyScopes bool, validateConfig bool, applyPlugin
 			includedPaths = append(includedPaths, path)
 		}
 	}
+
+	// Expand "~" in path fields before defaults and resolution, so relative
+	// joins below never see a literal tilde.
+	expandTildePaths(cfg)
 
 	// Apply config defaults before validation
 	cfg = applyConfigDefaults(cfg)
@@ -393,7 +400,9 @@ func loadEnvIncludes(path string, data []byte, kr *secrets.Keyring) error {
 
 	baseDir := filepath.Dir(path)
 	for i, includePath := range envCfg.EnvironmentVars.Include {
-		resolved := interpolateEnv(includePath)
+		// Env includes are read during parse, before the post-merge
+		// expandTildePaths pass — expand here as well.
+		resolved := expandTilde(interpolateEnv(includePath))
 		if !filepath.IsAbs(resolved) {
 			resolved = filepath.Join(baseDir, resolved)
 		}

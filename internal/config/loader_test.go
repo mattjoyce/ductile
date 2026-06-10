@@ -7,6 +7,8 @@ import (
 	"runtime"
 	"testing"
 	"time"
+
+	"github.com/mattjoyce/ductile/internal/secrets"
 )
 
 func TestLoad(t *testing.T) {
@@ -2136,5 +2138,127 @@ plugins:
 	}
 	if _, ok := cfg.Plugins["echo"]; !ok {
 		t.Error("echo plugin not loaded in legacy mode")
+	}
+}
+
+// Tilde expansion (#143 doc-audit follow-up): a leading "~/" or bare "~" in a
+// path field expands to the user's home directory at load. "~user" forms are
+// left untouched. Behavior is observable through Load alone.
+func TestLoadExpandsTildeInStatePath(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	dir := t.TempDir()
+	cfg := `
+service:
+  name: test
+state:
+  path: ~/ductile-tilde-test/state.db
+plugin_roots:
+  - ./plugins
+`
+	if err := os.WriteFile(filepath.Join(dir, "config.yaml"), []byte(cfg), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := Load(filepath.Join(dir, "config.yaml"))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	want := filepath.Join(home, "ductile-tilde-test", "state.db")
+	if loaded.State.Path != want {
+		t.Errorf("state.path: want %q, got %q", want, loaded.State.Path)
+	}
+}
+
+func TestLoadExpandsTildeInPluginRootsAndPathFields(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	dir := t.TempDir()
+
+	// The configured age key and env include must exist at their EXPANDED
+	// locations — being found there is itself the assertion that expansion
+	// runs before the loader's existence checks.
+	tildeDir := filepath.Join(home, "ductile-tilde-test")
+	if err := os.MkdirAll(tildeDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	id, err := secrets.GenerateIdentity()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(tildeDir, "age.key"), []byte(id.String()+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(home, ".env.ductile"), []byte("DUCTILE_TILDE_TEST_FOO=bar\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := `
+service:
+  name: test
+state:
+  path: ./test.db
+plugin_roots:
+  - ~/ductile-tilde-test/plugins
+  - ./plugins
+  - ~otheruser/plugins
+secrets:
+  age_key_file: ~/ductile-tilde-test/age.key
+  vault_file: ~/ductile-tilde-test/vault.age
+api:
+  enabled: false
+  listen: "127.0.0.1:8081"
+  management_socket: ~/ductile-tilde-test/admin.sock
+tcc_paths:
+  - ~/Documents
+environment_vars:
+  include:
+    - ~/.env.ductile
+`
+	if err := os.WriteFile(filepath.Join(dir, "config.yaml"), []byte(cfg), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := Load(filepath.Join(dir, "config.yaml"))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	tilde := filepath.Join(home, "ductile-tilde-test")
+	if got := loaded.PluginRoots[0]; got != filepath.Join(tilde, "plugins") {
+		t.Errorf("plugin_roots[0]: got %q", got)
+	}
+	if got := loaded.PluginRoots[2]; got != "~otheruser/plugins" {
+		t.Errorf("~user form must stay untouched, got %q", got)
+	}
+	if got := loaded.Secrets.AgeKeyFile; got != filepath.Join(tilde, "age.key") {
+		t.Errorf("age_key_file: got %q", got)
+	}
+	if got := loaded.Secrets.VaultFile; got != filepath.Join(tilde, "vault.age") {
+		t.Errorf("vault_file: got %q", got)
+	}
+	if got := loaded.API.ManagementSocket; got != filepath.Join(tilde, "admin.sock") {
+		t.Errorf("management_socket: got %q", got)
+	}
+	if got := loaded.TCCPaths[0]; got != filepath.Join(home, "Documents") {
+		t.Errorf("tcc_paths[0]: got %q", got)
+	}
+	if got := loaded.EnvironmentVars.Include[0]; got != filepath.Join(home, ".env.ductile") {
+		t.Errorf("environment_vars.include[0]: got %q", got)
+	}
+}
+
+func TestExpandTildeForms(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	cases := map[string]string{
+		"~":          home,
+		"~/x":        filepath.Join(home, "x"),
+		"~user/x":    "~user/x",
+		"/abs/~/x":   "/abs/~/x",
+		"relative/~": "relative/~",
+		"":           "",
+	}
+	for in, want := range cases {
+		if got := expandTilde(in); got != want {
+			t.Errorf("expandTilde(%q): want %q, got %q", in, want, got)
+		}
 	}
 }

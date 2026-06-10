@@ -46,7 +46,7 @@ cp -R ./plugins/echo ~/.config/ductile/plugins/   # put echo in the config's plu
 ```yaml
 # ~/.config/ductile/config.yaml excerpt
 plugin_roots:
-  # Relative entries resolve against the config directory; "~" is never expanded.
+  # Relative entries resolve against the config directory; "~" expands to home.
   - "plugins"
 
 include:

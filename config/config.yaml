@@ -17,7 +17,7 @@ service:
 
 state:
   # Keep state alongside the other ductile config files. Relative paths
-  # resolve against THIS directory; "~" is never expanded by the loader.
+  # resolve against THIS directory; a leading "~" expands to your home.
   path: "ductile.db"
 
 secrets:
@@ -29,8 +29,8 @@ secrets:
   vault_file: "vault.age"
 
 plugin_roots:
-  # Relative entries resolve against THIS config directory; "~" is never
-  # expanded — use an absolute path to point anywhere else. The plugins/
+  # Relative entries resolve against THIS config directory; a leading "~"
+  # expands to your home; absolute paths work anywhere. The plugins/
   # folder shipped alongside this file is the default (empty) root.
   - "plugins"
 

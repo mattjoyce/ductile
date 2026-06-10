@@ -73,20 +73,16 @@ mkdir -p ~/.config/ductile
 ### config.yaml
 
 ```yaml
-log_level: info
-
 service:
-  strict_mode: false
+  log_level: info   # service-scoped — a top-level log_level is ignored
 
 state:
-  # Use an absolute path — tilde expansion in this field resolves relative
-  # to the config directory, not $HOME, on some ductile versions.
-  path: "/Users/YOUR_USERNAME/.config/ductile/ductile.db"
+  # "~" expands to $HOME; relative paths resolve against the config dir.
+  path: "~/.config/ductile/ductile.db"
 
 plugin_roots:
-  # Absolute path to the built-in plugins in the cloned source repo.
-  # Tilde is NOT expanded here — use full paths.
-  - "/Users/YOUR_USERNAME/Projects/ductile/plugins"
+  # Path to the built-in plugins in the cloned source repo ("~" expands to $HOME).
+  - "~/Projects/ductile/plugins"
 
 include:
   - api.yaml
@@ -95,9 +91,9 @@ include:
   - webhooks.yaml
 ```
 
-> **Gotcha (all platforms):** `~` in `plugin_roots` and `state.path` is resolved
-> relative to the config directory, not `$HOME`. Use absolute paths, or paths
-> relative to the config dir.
+> **Path rules (all platforms):** a leading `~` expands to `$HOME`; relative
+> paths resolve against the config directory; absolute paths work anywhere.
+> (The `~user` form is not supported.)
 
 ### api.yaml
 

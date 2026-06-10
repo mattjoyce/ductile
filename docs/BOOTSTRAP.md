@@ -38,7 +38,7 @@ BIN=ductile                    # the installed binary (see platform sections)
 #        vault_file: vault.age
 #      plugin_roots:
 #        - plugins        # must list at least one EXISTING dir; relative paths
-#                         # resolve against $CFG and "~" is never expanded
+#                         # resolve against $CFG, "~" expands to your home
 #      api:
 #        enabled: true
 #        listen: "127.0.0.1:8081"

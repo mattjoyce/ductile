@@ -262,7 +262,7 @@
       "properties": {
         "path": {
           "type": "string",
-          "description": "Path to the SQLite database file (relative to config dir or absolute).",
+          "description": "Path to the SQLite database file (relative to config dir, absolute, or ~/-prefixed — a leading ~ expands to the user's home).",
           "minLength": 1
         }
       },
