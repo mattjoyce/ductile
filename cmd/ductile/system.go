@@ -18,7 +18,17 @@ func runSystemNoun(args []string) int {
 	action := args[0]
 	actionArgs := args[1:]
 
+	// There is deliberately no "stop" (or "restart") action: the service
+	// manager owns the daemon's lifecycle (systemctl / launchctl / Ctrl-C in
+	// the foreground), and the gateway is designed to be supervised, not
+	// self-managing (let-it-crash; see docs/reload_rca.md). `reload` is the
+	// in-process operation; everything below stop is the supervisor's job.
 	switch action {
+	case "stop", "restart":
+		fmt.Fprintf(os.Stderr, "ductile system %s does not exist — the service manager owns the daemon lifecycle.\n", action)
+		fmt.Fprintln(os.Stderr, "Use: systemctl --user stop <unit> | launchctl bootout gui/$UID/<label> | Ctrl-C (foreground).")
+		fmt.Fprintln(os.Stderr, "For an in-process config swap use: ductile system reload")
+		return 1
 	case "start":
 		if hasHelpFlag(actionArgs) {
 			printSystemStartHelp()
@@ -94,6 +104,7 @@ func runSystemNoun(args []string) int {
 func printSystemNounHelp(w *os.File) {
 	_, _ = fmt.Fprintln(w, "Usage: ductile system <action>")
 	_, _ = fmt.Fprintln(w, "Actions: start, status, plugin-facts, vault-audit, breaker, scheduler, reset, reload, selfcheck, backup, skills")
+	_, _ = fmt.Fprintln(w, "(no stop/restart: the service manager owns the daemon lifecycle)")
 }
 
 func printSystemStartHelp() {
