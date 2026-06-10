@@ -12,6 +12,14 @@ state:
   # Keep state alongside the other ductile config files
   path: "~/.config/ductile/ductile.db"
 
+secrets:
+  # The vault is the only home for secrets (API tokens, webhook secrets).
+  # Create both files with genesis BEFORE first boot — see docs/BOOTSTRAP.md:
+  #   ductile secrets keygen --out ~/.config/ductile/age.key
+  #   ductile vault init --vault ~/.config/ductile/vault.age --key ~/.config/ductile/age.key
+  age_key_file: "age.key"
+  vault_file: "vault.age"
+
 plugin_roots:
   - "~/.config/ductile/plugins"
   - "./plugins"

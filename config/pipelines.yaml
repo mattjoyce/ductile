@@ -1,47 +1,50 @@
 # Example pipelines configuration
-pipelines:
-  - name: youtube-wisdom
-    on: youtube.url.detected
-    steps:
-      - id: transcript
-        uses: youtube_transcript
-      - id: summarize
-        uses: fabric
-      - id: write
-        uses: file_handler
+#
+# Commented TEMPLATE — entries reference plugins from the ductile-plugins repo;
+# uncomment alongside the matching plugins.yaml entries.
+# pipelines:
+#   - name: youtube-wisdom
+#     on: youtube.url.detected
+#     steps:
+#       - id: transcript
+#         uses: youtube_transcript
+#       - id: summarize
+#         uses: fabric
+#       - id: write
+#         uses: file_handler
 
-  - name: web-summarize
-    on: web.url.detected
-    steps:
-      - id: summarize
-        uses: fabric
-      - id: write
-        uses: file_handler
+#   - name: web-summarize
+#     on: web.url.detected
+#     steps:
+#       - id: summarize
+#         uses: fabric
+#       - id: write
+#         uses: file_handler
 
-  - name: github-repo-sync
-    on: github_repo_sync.repo_discovered
-    steps:
-      - id: sync
-        uses: git_repo_sync
+#   - name: github-repo-sync
+#     on: github_repo_sync.repo_discovered
+#     steps:
+#       - id: sync
+#         uses: git_repo_sync
 
-  - name: github-repo-sync-notify
-    on: github_repo_sync.completed
-    steps:
-      - id: notify
-        uses: discord_notify
+#   - name: github-repo-sync-notify
+#     on: github_repo_sync.completed
+#     steps:
+#       - id: notify
+#         uses: discord_notify
 
-  - name: repo-maintenance
-    on: git_repo_sync.completed
-    steps:
-      - id: policy
-        uses: repo_policy
-      - id: changelog
-        uses: changelog_microblog
-      - id: commit
-        uses: git_commit_push
+#   - name: repo-maintenance
+#     on: git_repo_sync.completed
+#     steps:
+#       - id: policy
+#         uses: repo_policy
+#       - id: changelog
+#         uses: changelog_microblog
+#       - id: commit
+#         uses: git_commit_push
 
-  - name: repo-maintenance-notify
-    on: git_commit_push.completed
-    steps:
-      - id: notify
-        uses: discord_notify
+#   - name: repo-maintenance-notify
+#     on: git_commit_push.completed
+#     steps:
+#       - id: notify
+#         uses: discord_notify

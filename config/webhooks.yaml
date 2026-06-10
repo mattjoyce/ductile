@@ -1,8 +1,11 @@
 # Example webhooks configuration
-webhooks:
-  endpoints:
-    - name: example_handler
-      path: /webhook/example
-      plugin: sys_exec
-      secret_ref: example_webhook_secret
-      signature_header: X-Ductile-Signature-256
+#
+# Commented TEMPLATE — entries reference plugins from the ductile-plugins repo;
+# uncomment alongside the matching plugins.yaml entries.
+# webhooks:
+#   endpoints:
+#     - name: example_handler
+#       path: /webhook/example
+#       plugin: sys_exec
+#       secret_ref: example_webhook_secret
+#       signature_header: X-Ductile-Signature-256

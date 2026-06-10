@@ -6,9 +6,10 @@ services:
     container_name: ductile-test
     restart: unless-stopped
 
-    # Use test configuration
+    # Mount the example config FOLDER (split-file layout; see docs/BOOTSTRAP.md
+    # for genesis — the vault files must exist in the mounted dir before boot).
     volumes:
-      - ./config.test.yaml:/app/config.yaml:ro
+      - ./config:/app/config:ro
       - ./plugins:/app/plugins:ro
       - ductile-data:/app/data
       - ./logs:/app/logs
@@ -18,7 +19,7 @@ services:
       - .env.test
 
     environment:
-      - CONFIG_PATH=/app/config.yaml
+      - CONFIG_PATH=/app/config
 
     # Expose API port
     ports:

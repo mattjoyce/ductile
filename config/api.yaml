@@ -1,10 +1,19 @@
-# Example API configuration
+# Example API configuration — BOOTSTRAP state (see docs/BOOTSTRAP.md).
+#
+# No api.auth.tokens yet: with a vault present, the daemon boots the management
+# posture and serves /vault/* on the management socket so you can MINT the
+# first token (literal token values are rejected — API secrets are vault-only).
 api:
   enabled: true
   listen: "127.0.0.1:8081"
-  auth:
-    tokens:
-      - token: "REPLACE_WITH_ADMIN_TOKEN"
-        scopes: ["*"]
-      - token: "REPLACE_WITH_READONLY_TOKEN"
-        scopes: ["plugin:ro", "job:ro", "state:ro"]
+  management_socket: "/tmp/ductile-admin.sock" # short path; default sits beside the state DB
+
+# AFTER minting (BOOTSTRAP.md step 5), reference the secret and restart to
+# activate the gateway:
+#
+#  auth:
+#    tokens:
+#      - secret_ref: core-api-token
+#        scopes: ["*"]
+#      - secret_ref: readonly-token
+#        scopes: ["plugin:ro", "job:ro", "state:ro"]

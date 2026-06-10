@@ -1,153 +1,158 @@
 # Example plugins configuration
 #
+# Plugins ship SEPARATELY (the ductile-plugins repo) — this file is a commented
+# template: install a plugin under a plugin_root, then uncomment its entry.
+# An empty map is valid; the gateway boots with zero plugins.
+plugins: {}
+#
 # Per-plugin timeouts and retries use the nested shape that PluginConf actually
 # decodes: `timeouts:` (poll/handle/health/init, Go durations) and
 # `retry: {max_attempts}`. The flat `timeout:`/`max_attempts:` keys some earlier
 # examples used are NOT PluginConf fields — they were silently dropped at load.
 # A single operator-facing duration maps to both core lifecycle commands
 # (poll + handle); set them independently if a plugin needs different values.
-plugins:
-  fabric:
-    enabled: true
-    timeouts:
-      poll: 120s
-      handle: 120s
-    retry:
-      max_attempts: 2
-    config:
-      FABRIC_DEFAULT_PATTERN: "summarize"
+# plugins:
+#   fabric:
+#     enabled: true
+#     timeouts:
+#       poll: 120s
+#       handle: 120s
+#     retry:
+#       max_attempts: 2
+#     config:
+#       FABRIC_DEFAULT_PATTERN: "summarize"
 
-  file_handler:
-    enabled: true
-    timeouts:
-      poll: 30s
-      handle: 30s
-    retry:
-      max_attempts: 1
-    config:
-      allowed_read_paths: "~"
-      allowed_write_paths: "~/.config/ductile/outputs"
+#   file_handler:
+#     enabled: true
+#     timeouts:
+#       poll: 30s
+#       handle: 30s
+#     retry:
+#       max_attempts: 1
+#     config:
+#       allowed_read_paths: "~"
+#       allowed_write_paths: "~/.config/ductile/outputs"
 
-  check_youtube:
-    enabled: true
-    timeouts:
-      poll: 30s
-      handle: 30s
-    retry:
-      max_attempts: 1
-    config:
-      field: url
-      checks:
-        - contains: "youtu.be"
-          emit: youtube.url.detected
-        - contains: "youtube.com"
-          emit: youtube.url.detected
-        - startswith: "http"
-          emit: web.url.detected
-        - default: text.received
+#   check_youtube:
+#     enabled: true
+#     timeouts:
+#       poll: 30s
+#       handle: 30s
+#     retry:
+#       max_attempts: 1
+#     config:
+#       field: url
+#       checks:
+#         - contains: "youtu.be"
+#           emit: youtube.url.detected
+#         - contains: "youtube.com"
+#           emit: youtube.url.detected
+#         - startswith: "http"
+#           emit: web.url.detected
+#         - default: text.received
 
-  jina-reader:
-    enabled: true
-    timeouts:
-      poll: 30s
-      handle: 30s
-    retry:
-      max_attempts: 3
-    circuit_breaker:
-      threshold: 3
-      reset_after: 5m
-    config: {}
+#   jina-reader:
+#     enabled: true
+#     timeouts:
+#       poll: 30s
+#       handle: 30s
+#     retry:
+#       max_attempts: 3
+#     circuit_breaker:
+#       threshold: 3
+#       reset_after: 5m
+#     config: {}
 
-  sys_exec:
-    enabled: true
-    timeouts:
-      poll: 30s
-      handle: 30s
-    retry:
-      max_attempts: 1
-    config:
-      command: "sh -c 'echo payload=$DUCTILE_PAYLOAD_MESSAGE'"
+#   sys_exec:
+#     enabled: true
+#     timeouts:
+#       poll: 30s
+#       handle: 30s
+#     retry:
+#       max_attempts: 1
+#     config:
+#       command: "sh -c 'echo payload=$DUCTILE_PAYLOAD_MESSAGE'"
 
-  folder_watch:
-    enabled: true
-    schedules:
-      - every: 1m
-    timeouts:
-      poll: 30s
-      handle: 30s
-    retry:
-      max_attempts: 1
-    config:
-      watches:
-        - id: summaries
-          root: "~/projects/content"
-          event_type: summaries.changed
-          recursive: true
-          include_globs: ["**/*.md"]
-          emit_mode: aggregate
-          emit_initial: false
-          min_stable_age: 1s
+#   folder_watch:
+#     enabled: true
+#     schedules:
+#       - every: 1m
+#     timeouts:
+#       poll: 30s
+#       handle: 30s
+#     retry:
+#       max_attempts: 1
+#     config:
+#       watches:
+#         - id: summaries
+#           root: "~/projects/content"
+#           event_type: summaries.changed
+#           recursive: true
+#           include_globs: ["**/*.md"]
+#           emit_mode: aggregate
+#           emit_initial: false
+#           min_stable_age: 1s
 
-  github_repo_sync:
-    enabled: true
-    schedules:
-      - id: daily-early
-        cron: "0 6 * * *"
-        timezone: "Australia/Sydney"
-    timeouts:
-      poll: 10m
-      handle: 10m
-    retry:
-      max_attempts: 1
-    config:
-      owner: "mattjoyce"
-      owner_type: "user"
-      clone_dir: "~/github.mattjoyce"
-      lookback_days: 730
-      include_private: false
-      include_forks: false
-      github_token_env: "RO_GITHUB_TOKEN"
+#   github_repo_sync:
+#     enabled: true
+#     schedules:
+#       - id: daily-early
+#         cron: "0 6 * * *"
+#         timezone: "Australia/Sydney"
+#     timeouts:
+#       poll: 10m
+#       handle: 10m
+#     retry:
+#       max_attempts: 1
+#     config:
+#       owner: "mattjoyce"
+#       owner_type: "user"
+#       clone_dir: "~/github.mattjoyce"
+#       lookback_days: 730
+#       include_private: false
+#       include_forks: false
+#       github_token_env: "RO_GITHUB_TOKEN"
 
-  git_repo_sync:
-    enabled: true
-    timeouts:
-      poll: 5m
-      handle: 5m
-    retry:
-      max_attempts: 1
-    config:
-      prefer_ssh: true
-      ssh_alias_host: "github.com-ductile"
+#   git_repo_sync:
+#     enabled: true
+#     timeouts:
+#       poll: 5m
+#       handle: 5m
+#     retry:
+#       max_attempts: 1
+#     config:
+#       prefer_ssh: true
+#       ssh_alias_host: "github.com-ductile"
 
-  repo_policy:
-    enabled: true
-    timeouts:
-      poll: 2m
-      handle: 2m
-    retry:
-      max_attempts: 1
+#   repo_policy:
+#     enabled: true
+#     timeouts:
+#       poll: 2m
+#       handle: 2m
+#     retry:
+#       max_attempts: 1
 
-  changelog_microblog:
-    enabled: true
-    timeouts:
-      poll: 4m
-      handle: 4m
-    retry:
-      max_attempts: 1
-    config:
-      fabric_pattern: "~/.config/fabric/patterns/ductile-microblog-changelog.md"
-      patterns_path: "~/.config/ductile/patterns"
+#   changelog_microblog:
+#     enabled: true
+#     timeouts:
+#       poll: 4m
+#       handle: 4m
+#     retry:
+#       max_attempts: 1
+#     config:
+#       fabric_pattern: "~/.config/fabric/patterns/ductile-microblog-changelog.md"
+#       patterns_path: "~/.config/ductile/patterns"
 
-  git_commit_push:
-    enabled: true
-    timeouts:
-      poll: 5m
-      handle: 5m
-    retry:
-      max_attempts: 1
-    config:
-      author_name: "ductile"
-      author_email: "ductile@local"
-      commit_message: "Update changelog [ductile-changelog]"
-      prefer_ssh: true
-      ssh_alias_host: "github.com-ductile"
+#   git_commit_push:
+#     enabled: true
+#     timeouts:
+#       poll: 5m
+#       handle: 5m
+#     retry:
+#       max_attempts: 1
+#     config:
+#       author_name: "ductile"
+#       author_email: "ductile@local"
+#       commit_message: "Update changelog [ductile-changelog]"
+#       prefer_ssh: true
+#       ssh_alias_host: "github.com-ductile"
