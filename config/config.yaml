@@ -5,12 +5,20 @@
 service:
   name: ductile
   tick_interval: 60s
-  log_level: info        # belongs under service: at the root it was silently ignored
-  strict_mode: true
+  log_level: info        # service-scoped — a top-level log_level is ignored
+  # Admission gates, each independent (the deprecated strict_mode bundle,
+  # decomplected — see docs/CONFIG_REFERENCE.md §4.1):
+  admission:
+    verify_integrity_on_boot: true
+    fail_on_drift: true
+    validate_config_on_boot: true
+    require_api_auth: true
+    fail_on_sidedoor: true
 
 state:
-  # Keep state alongside the other ductile config files
-  path: "~/.config/ductile/ductile.db"
+  # Keep state alongside the other ductile config files. Relative paths
+  # resolve against THIS directory; "~" is never expanded by the loader.
+  path: "ductile.db"
 
 secrets:
   # The vault is the only home for secrets (API tokens, webhook secrets).
@@ -21,8 +29,10 @@ secrets:
   vault_file: "vault.age"
 
 plugin_roots:
-  - "~/.config/ductile/plugins"
-  - "./plugins"
+  # Relative entries resolve against THIS config directory; "~" is never
+  # expanded — use an absolute path to point anywhere else. The plugins/
+  # folder shipped alongside this file is the default (empty) root.
+  - "plugins"
 
 webhooks:
   listen: "127.0.0.1:8091"

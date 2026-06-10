@@ -8,9 +8,10 @@ services:
 
     # Mount the example config FOLDER (split-file layout; see docs/BOOTSTRAP.md
     # for genesis — the vault files must exist in the mounted dir before boot).
+    # The repo plugins/ overlays the config's relative "plugins" root.
     volumes:
       - ./config:/app/config:ro
-      - ./plugins:/app/plugins:ro
+      - ./plugins:/app/config/plugins:ro
       - ductile-data:/app/data
       - ./logs:/app/logs
 
@@ -19,11 +20,13 @@ services:
       - .env.test
 
     environment:
-      - CONFIG_PATH=/app/config
+      # Config discovery env var (the binary reads DUCTILE_CONFIG_DIR).
+      - DUCTILE_CONFIG_DIR=/app/config
 
-    # Expose API port
+    # Expose API port. The example api.yaml binds loopback 127.0.0.1:8081 —
+    # to reach the gateway from the host, set api.listen to "0.0.0.0:8081".
     ports:
-      - "9001:8080"
+      - "9001:8081"
 
     # Logging configuration
     logging:
@@ -32,9 +35,9 @@ services:
         max-size: "10m"
         max-file: "3"
 
-    # Health check
+    # Health check — the real liveness endpoint (see Dockerfile HEALTHCHECK note).
     healthcheck:
-      test: ["CMD", "test", "-f", "/app/ductile.pid"]
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8081/healthz"]
       interval: 30s
       timeout: 10s
       retries: 3
