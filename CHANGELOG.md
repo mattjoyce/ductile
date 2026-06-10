@@ -1,5 +1,72 @@
 # Changelog
 
+## 2026-06-10 — v1.0.0
+
+First tagged release. The headline is the secrets epoch: ductile now owns its credentials
+end-to-end — an encrypted vault, a credential ladder for bootstrap, byte-level plugin
+attestation, and a release pipeline that ships installable artifacts for Linux and macOS.
+
+- **BREAKING (API tokens are vault-only, #94):** a literal `token:` value (including
+  `${ENV}` references) in `api.auth.tokens` is rejected at config load. Tokens are
+  referenced by `secret_ref` and resolved from the vault at boot, fail-closed. Pre-1.0
+  configs carrying literal tokens must mint them into the vault (see `docs/BOOTSTRAP.md`).
+- **The owned vault (#48 epic, #128–#131):** secrets live in an age-encrypted whole-store
+  blob (`vault.age`); the daemon is the sole writer and key-holder. Principals are
+  registered and granted secrets explicitly; plugins receive only their granted secrets,
+  per spawn, over stdin — never the environment. The CLI splits into keyless API clients
+  (`vault set/roll/revoke/…`, daemon running, admin token) and local key-touching ops
+  (`vault init/rotate-key/rotate-admin-token`, daemon stopped). The genesis admin token is
+  machine-minted, printed once, and mint-only thereafter; every `/vault/*` write lands in
+  the append-only `vault_audit` log (names and outcomes, never values).
+- **Plugin attestation (`ductile plugin lock`):** before a plugin receives vault secrets
+  its manifest + entrypoint bytes are fingerprinted with keyed BLAKE3 (keyed by the vault
+  nonce). Changed bytes without re-attestation = no secrets, fail closed. `config lock`
+  (file checksums) and `plugin lock` (byte attestation) are deliberately decoupled rituals.
+- **The credential ladder & management posture (#129, #136):** age key → admin token →
+  API bearer token, each minted by the rung above, nothing written into config files. A
+  config with the API enabled, zero tokens, and a vault present boots the **management
+  posture**: `/vault/*` served on a hardened local unix socket (0600, bind-chmod-rename,
+  Lstat gate), with no public listener, no webhooks, no scheduler, no dispatcher. Mint the
+  token through the socket, reference it, restart — the gateway activates. Losing the API
+  token is recoverable by removing the tokens block and re-minting through the same door.
+- **Posture observability (#130, #133, #135, #138):** live boot posture in `system status`
+  and `/healthz` on both surfaces; keyless `system status` still probes posture via a
+  lenient load; `config check`/doctor share the daemon's vault-aware admission verdict —
+  zero tokens + genesis vault is clean, and unminted webhook `secret_refs` warn rather
+  than error during bootstrap.
+- **Privilege separation (#95, #111, #112):** enforce posture on a privileged Linux host
+  drops each plugin spawn to an unprivileged per-tier account (`accounts:` map +
+  CAP_SETUID), with a boot gate that refuses half-configured setups and side-door
+  detection for drop accounts that could escalate anyway. macOS runs deploy+verify
+  (hygiene-only/`unconfined`) — the uid-drop wall is Linux-only today. Three deployment
+  postures are documented in `docs/DEPLOYMENT_POSTURES.md`.
+- **Deprecation:** `service.strict_mode` is superseded by the explicit `service.admission`
+  block (five independent gates: `verify_integrity_on_boot`, `fail_on_drift`,
+  `validate_config_on_boot`, `require_api_auth`, `fail_on_sidedoor`). The alias still
+  works with a load-time warning.
+- **Behavior change (tilde expansion):** a leading `~`/`~/` in path fields (`state.path`,
+  `plugin_roots`, `secrets.*`, `api.management_socket`, `tcc_paths`,
+  `environment_vars.include`) now expands to the user's home directory at load. It was
+  previously joined under the config directory — an unconditional misconfiguration.
+  The `~user` form remains unsupported.
+- **CLI stance:** there is deliberately no `system stop`/`restart` — the service manager
+  owns the daemon lifecycle; both actions now refuse with the actual commands to use.
+  `system reload` remains the in-process operation.
+- **Testing:** the docker fixture tier is curated to 7 vault-native ladder fixtures and
+  gates CI green-only on the whole directory (#116, #118); a queue state-machine
+  invariant suite characterizes job lifecycle transitions (#117); plugin spawn retries
+  on transient ETXTBSY (#115).
+- **Release tooling (#143):** `scripts/version.sh` is tag-aware (`git describe` semver
+  after the first `v*` tag); `.github/workflows/release.yml` builds CGO-free
+  linux/{amd64,arm64} + darwin/{amd64,arm64} binaries with sha256 checksums on tag push
+  (dispatch = dry run). Darwin release artifacts are unsigned — codesign locally or clear
+  quarantine.
+- **Docs & bootstrap-truth:** `docs/BOOTSTRAP.md` walks zero → serving gateway on both
+  platforms and is verified by execution; the shipped `config/` example is relocatable
+  and boots the management posture verbatim; `docs/WHY.md` records the origin story; the
+  release-path docs (DEPLOYMENT, SECRETS, GETTING_STARTED, MACOS_INSTALLATION,
+  CONFIG_REFERENCE) were reconciled against the code as built.
+
 ## 2026-05-31
 - `GET /stopwatch/{plugin}?window=` now accepts `7d` and `30d` in addition to `5m`/`1h`/`24h`, for trend-awareness sparklines (`ductile-observe` Performance popover) rather than diagnostic zoom. Invalid windows are still rejected (`invalid window (use 5m, 1h, 24h, 7d, or 30d)`); arbitrary durations remain unsupported on purpose. `trend_p95_ms` is now a fixed-width 60-bucket array for every window (was 6) — uniform so a sparkline always renders the same width, and bounded regardless of window (bucket duration is windowDur/60, 5s at 5m through 12h at 30d). This adds no retention guarantee: the long windows surface whatever the operator-pruned `job_stopwatch` ledger still retains; long-term trend storage remains a TSDB concern. ductile-3jn.
 
