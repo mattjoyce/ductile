@@ -32,7 +32,8 @@ tags: [release, semver, docs, ci]
 4. ~~CHANGELOG~~ **DONE 2026-06-10**: v1.0.0 entry written, agent-fact-checked against the
    commit range (one naming nit corrected).
 5. ~~Dry-run~~ **DONE**: run 27253743242 (4 artifacts, no release). Tests re-gate at tag time.
-6. `git tag -a v1.0.0 && git push origin v1.0.0` → workflow publishes the release.
+6. ~~Tag~~ **DONE 2026-06-10**: v1.0.0 tagged on `b9a27e4`, release run 27275499424 published
+   4 binaries + checksums.txt; darwin_arm64 artifact downloaded, checksum-verified, prints v1.0.0.
 7. Credibility test: install from the published artifacts on the Mac AND the Thinkpad following
    BOOTSTRAP.md verbatim — no improvisation. Fix what it surfaces; if anything changed, v1.0.1.
    (A local-binary preview of this walk already passed on the Mac, 2026-06-10.)
@@ -49,6 +50,9 @@ artifact prints v1.0.0; both platforms bootstrapped from the published docs with
 - 2026-06-10: The audit's two design escalations both landed: the loader now expands a leading
   `~` (kills the error class), and the no-`system stop` stance is canon in code — refusal with
   service-manager guidance, per the Armstrong supervisor-owns-lifecycle frame. (by @assistant)
+- 2026-06-10: v1.0.0 SHIPPED — https://github.com/mattjoyce/ductile/releases/tag/v1.0.0.
+  Smoke-tested from the published artifact (checksum OK, version prints v1.0.0). Step 7
+  (verbatim BOOTSTRAP installs on Mac + Thinkpad from published artifacts) closes the card. (by @assistant)
 - 2026-06-10: Matt ruled #132 doc-only and not a blocker (he'll write the nginx example).
   CHANGELOG v1.0.0 entry written and independently fact-checked. Only the tag (step 6) and the
   published-artifact credibility test (step 7) remain. (by @assistant)
