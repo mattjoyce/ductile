@@ -1,0 +1,439 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Ductile: From Start to Ready — A Newcomer's Boot-Sequence Tutorial</title>
+<style>
+  :root {
+    --bg: #0f1117;
+    --panel: #181b24;
+    --panel2: #1f2330;
+    --ink: #e6e9f0;
+    --muted: #9aa3b5;
+    --accent: #5cc8ff;
+    --accent2: #ffb454;
+    --green: #7ee08a;
+    --red: #ff7b72;
+    --purple: #c792ea;
+    --border: #2a2f3e;
+    --mono: "SF Mono", "Fira Code", Menlo, Consolas, monospace;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--ink);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+    line-height: 1.6;
+  }
+  .wrap { max-width: 880px; margin: 0 auto; padding: 2rem 1.5rem 6rem; }
+  header.hero {
+    border-bottom: 1px solid var(--border); padding: 3rem 0 2rem; margin-bottom: 2rem;
+  }
+  h1 { font-size: 2rem; margin: 0 0 .5rem; }
+  h1 .d { color: var(--accent); }
+  .sub { color: var(--muted); font-size: 1.05rem; max-width: 60ch; }
+  .provenance {
+    margin-top: 1rem; font-size: .85rem; color: var(--muted);
+    background: var(--panel); border: 1px solid var(--border);
+    border-radius: 8px; padding: .6rem 1rem; display: inline-block;
+  }
+  h2 { font-size: 1.45rem; margin-top: 3rem; border-bottom: 1px solid var(--border); padding-bottom: .4rem; }
+  h3 { font-size: 1.1rem; margin-top: 1.8rem; }
+  code, pre { font-family: var(--mono); font-size: .86em; }
+  code { background: var(--panel2); padding: .12em .4em; border-radius: 4px; }
+  pre {
+    background: var(--panel); border: 1px solid var(--border);
+    border-radius: 8px; padding: 1rem; overflow-x: auto; line-height: 1.5;
+  }
+  pre code { background: none; padding: 0; }
+  .loc {
+    font-family: var(--mono); font-size: .78rem; color: var(--accent2);
+    background: none; padding: 0;
+  }
+  .phase {
+    background: var(--panel); border: 1px solid var(--border);
+    border-radius: 12px; padding: 1.4rem 1.6rem; margin: 1.4rem 0;
+  }
+  .phase .tag {
+    display: inline-block; font-family: var(--mono); font-size: .72rem;
+    letter-spacing: .08em; text-transform: uppercase;
+    color: var(--bg); background: var(--accent); border-radius: 99px;
+    padding: .15em .8em; margin-bottom: .6rem; font-weight: 700;
+  }
+  .phase.gate .tag { background: var(--red); }
+  .phase.security .tag { background: var(--purple); }
+  .phase.ready .tag { background: var(--green); }
+  ol.steps { padding-left: 1.3rem; }
+  ol.steps li { margin: .7rem 0; }
+  .why {
+    border-left: 3px solid var(--accent2); background: var(--panel2);
+    padding: .6rem 1rem; margin: .8rem 0; border-radius: 0 8px 8px 0;
+    font-size: .92rem; color: var(--muted);
+  }
+  .why b { color: var(--ink); }
+  table { border-collapse: collapse; width: 100%; margin: 1rem 0; font-size: .92rem; }
+  th, td { border: 1px solid var(--border); padding: .5rem .8rem; text-align: left; vertical-align: top; }
+  th { background: var(--panel2); }
+  /* flow diagram */
+  .flow { margin: 2rem 0; }
+  .flow .node {
+    background: var(--panel); border: 1px solid var(--border); border-radius: 10px;
+    padding: .7rem 1.1rem; margin: 0 auto; max-width: 560px; text-align: center;
+  }
+  .flow .node b { display: block; font-size: .98rem; }
+  .flow .node span { font-size: .8rem; color: var(--muted); }
+  .flow .node .loc { display: block; margin-top: .15rem; }
+  .flow .gate-node { border-color: var(--red); }
+  .flow .gate-node b { color: var(--red); }
+  .flow .sec-node { border-color: var(--purple); }
+  .flow .sec-node b { color: var(--purple); }
+  .flow .ok-node { border-color: var(--green); }
+  .flow .ok-node b { color: var(--green); }
+  .flow .arrow { text-align: center; color: var(--muted); font-size: 1.1rem; line-height: 1.6; }
+  .flow .arrow em { font-style: normal; font-size: .75rem; color: var(--red); }
+  .planes { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: .8rem; margin: 1rem 0; }
+  .plane {
+    background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: .8rem 1rem;
+  }
+  .plane b { color: var(--accent); }
+  .plane .loc { display:block; margin-top:.3rem; }
+  .footer { margin-top: 4rem; color: var(--muted); font-size: .85rem; border-top: 1px solid var(--border); padding-top: 1rem; }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  .toc { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 1rem 1.5rem; }
+  .toc ol { margin: .4rem 0; }
+  .kbd { font-family: var(--mono); background: var(--panel2); border: 1px solid var(--border); border-bottom-width: 2px; border-radius: 5px; padding: .05em .45em; font-size: .85em; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header class="hero">
+  <h1><span class="d">ductile</span>: from <code>system start</code> to ready-to-trigger</h1>
+  <p class="sub">A newcomer's walk through every step the gateway takes between the moment you run
+  <code>ductile system start</code> and the moment a job can actually fire. Each step cites the
+  real source location, and each gate explains <em>why it refuses</em> — because in ductile,
+  the refusals are load-bearing.</p>
+  <div class="provenance">
+    Built from the repo's knowledge graph (graphify, 5,409 nodes) — boot spine traced via
+    <code>runStart()</code> → <code>buildRuntime()</code>, then verified line-by-line against
+    <code>cmd/ductile/runtime.go</code>.
+  </div>
+</header>
+
+<nav class="toc">
+  <b>Contents</b>
+  <ol>
+    <li><a href="#big-picture">The big picture</a></li>
+    <li><a href="#phase0">Phase 0 — CLI entry &amp; config resolution</a></li>
+    <li><a href="#phase1">Phase 1 — Hygiene &amp; plugin discovery</a></li>
+    <li><a href="#phase2">Phase 2 — Admission gates (the bouncers)</a></li>
+    <li><a href="#phase3">Phase 3 — State, routing &amp; the snapshot</a></li>
+    <li><a href="#phase4">Phase 4 — Security posture (vault &amp; privsep)</a></li>
+    <li><a href="#phase5">Phase 5 — Trigger planes come up</a></li>
+    <li><a href="#phase6">Phase 6 — Ready: the supervisor loop</a></li>
+    <li><a href="#trigger">Now trigger a job</a></li>
+  </ol>
+</nav>
+
+<h2 id="big-picture">1. The big picture</h2>
+<p>Ductile is an integration gateway: plugins do side-effects, the core owns all orchestration
+(<em>"plugins stay dumb"</em> — AGENTS.md, Idiom&nbsp;3). Boot is therefore not "open a port and go";
+it is a sequence of <b>refusal gates</b> followed by the assembly of four <b>trigger planes</b> that
+all converge on one queue and one dispatcher. If any gate fails, the gateway does not limp — it
+refuses to start, loudly, with the reason.</p>
+
+<div class="flow">
+  <div class="node"><b>ductile system start</b><span>CLI entry</span><span class="loc">cmd/ductile/main.go:31 → runtime.go:908</span></div>
+  <div class="arrow">▼</div>
+  <div class="node"><b>Config resolution &amp; load (with vault decrypt)</b><span class="loc">runtime.go:916–937</span></div>
+  <div class="arrow">▼ <em>refuses: no config found / vault load error</em></div>
+  <div class="node"><b>PID lock — exactly one instance</b><span class="loc">runtime.go:939</span></div>
+  <div class="arrow">▼ <em>refuses: another instance running</em></div>
+  <div class="node gate-node"><b>buildRuntime(): symlink scan → plugin discovery</b><span class="loc">runtime.go:352–401</span></div>
+  <div class="arrow">▼ <em>refuses: symlinks (unless allowed), discovery failure</em></div>
+  <div class="node gate-node"><b>Admission gates: integrity seal · doctor · strict decode</b><span class="loc">runtime.go:443–499</span></div>
+  <div class="arrow">▼ <em>refuses: drift, invalid config, unknown keys</em></div>
+  <div class="node"><b>SQLite open → pipelines compiled → config snapshot</b><span class="loc">runtime.go:508–571</span></div>
+  <div class="arrow">▼</div>
+  <div class="node"><b>Queue · state stores · event hub · scheduler · admitter</b><span class="loc">runtime.go:573–610</span></div>
+  <div class="arrow">▼</div>
+  <div class="node sec-node"><b>Boot posture decision + privsep boot gate</b><span class="loc">runtime.go:641–714</span></div>
+  <div class="arrow">▼ <em>refuses: capability/accounts mismatch, side-doors (strict)</em></div>
+  <div class="node"><b>Dispatcher · relay · scheduler start · API bind · webhooks</b><span class="loc">runtime.go:716–881</span></div>
+  <div class="arrow">▼ <em>refuses: token resolution fails, bind fails</em></div>
+  <div class="node ok-node"><b>READY — signal loop supervising, four trigger planes live</b><span class="loc">runtime.go:967–993</span></div>
+</div>
+
+<h2 id="phase0">2. Phase 0 — CLI entry &amp; config resolution</h2>
+<div class="phase">
+  <span class="tag">Entry</span>
+  <ol class="steps">
+    <li><code>main()</code> hands straight to <code>runCLI()</code>
+      <span class="loc">cmd/ductile/main.go:31,35</span> — a noun-verb CLI; <code>system start</code>
+      routes to <code>runStart()</code> <span class="loc">cmd/ductile/runtime.go:908</span>.</li>
+    <li><b>Config resolution</b>, in strict precedence
+      <span class="loc">runtime.go:916–929</span>:
+      <ol type="a">
+        <li><code>--config &lt;path&gt;</code> (file or directory) — "explicit"</li>
+        <li><code>$DUCTILE_CONFIG_DIR</code> — "env"</li>
+        <li>auto-discovery (e.g. <code>~/.config/ductile/config.yaml</code>) — "auto-discovered"</li>
+      </ol>
+      The chosen <em>source</em> is remembered and logged, so you can always tell which config won.</li>
+    <li><b><code>config.LoadWithVault()</code></b> <span class="loc">runtime.go:933</span> loads and
+      deep-merges the config files (a directory means <code>config.yaml</code> plus its
+      <code>include:</code> files — plugins.yaml, pipelines.yaml, api.yaml, webhooks.yaml) <em>and</em>
+      decrypts the vault <b>exactly once</b>. The decrypted owner is threaded through the whole boot
+      so nothing decrypts twice.</li>
+    <li><b>PID lock</b> <span class="loc">runtime.go:939–944</span> — <code>lock.AcquirePIDLock()</code>
+      guarantees a single instance. A second <code>system start</code> fails here with
+      "another instance may be running".</li>
+    <li>A <b><code>reloadManager</code></b> is created <span class="loc">runtime.go:947–952</span> —
+      this is the named supervisor that later handles <code>SIGHUP</code>/<code>system reload</code>
+      by building a whole new runtime and restoring the old one if the new one fails.</li>
+  </ol>
+  <div class="why"><b>Why a single load-time vault decrypt?</b> The vault is the only place secrets
+  live (api tokens are vault-only on the release path). Resolving the owner once and passing it down
+  means the admission gates, the posture decision, and secret delivery all see the <em>same</em>
+  vault presence — resolving it twice caused real bugs (#134).</div>
+</div>
+
+<h2 id="phase1">3. Phase 1 — Hygiene &amp; plugin discovery</h2>
+<div class="phase">
+  <span class="tag">buildRuntime begins</span>
+  <p>Everything from here to readiness lives in <code>buildRuntime()</code>
+  <span class="loc">cmd/ductile/runtime.go:352</span> — the highest-betweenness hub in the
+  knowledge graph (54 edges), because boot <em>and</em> reload both run through it.</p>
+  <ol class="steps">
+    <li><b>Logging up first</b> — <code>log.Setup(cfg.Service.LogLevel)</code> <span class="loc">runtime.go:353</span>,
+      so every subsequent refusal has a voice.</li>
+    <li><b>Symlink scan</b> <span class="loc">runtime.go:356–371</span> —
+      <code>CollectConfigPaths</code> + <code>DetectSymlinks</code> walk every config path. Symlinks are
+      warned, and if <code>service.allow_symlinks</code> is false the boot is <b>refused</b>. A symlinked
+      config is a config you didn't review.</li>
+    <li><b>Plugin discovery</b> <span class="loc">runtime.go:373–393</span> —
+      <code>resolvePluginRoots()</code> then <code>plugin.DiscoverManyWithOptions()</code> scans each
+      <code>plugin_roots</code> directory for <code>manifest.yaml</code> files (protocol v2). Discovery
+      builds the <b>registry</b>: what exists on disk, what commands each plugin supports.</li>
+    <li><b>Aliases applied</b> <span class="loc">runtime.go:394–401</span> — a config entry with
+      <code>uses:</code> registers one plugin under another name (e.g. two <code>sys_exec</code>
+      instances with different argv allowlists).</li>
+    <li><b>Preflight report</b> <span class="loc">runtime.go:403–435</span> — the log states every
+      config file loaded, plugins discovered vs configured vs enabled, and the API listen address.
+      Read this block first when debugging a boot.</li>
+  </ol>
+  <div class="why"><b>Newcomer note:</b> discovery ≠ enablement. A plugin found on disk does nothing
+  until <code>plugins.yaml</code> enables it, and it cannot be <em>used</em> by a pipeline until routing
+  references it. Config declares; the core controls flow.</div>
+</div>
+
+<h2 id="phase2">4. Phase 2 — Admission gates (the bouncers)</h2>
+<div class="phase gate">
+  <span class="tag">Refusal gates</span>
+  <p>Ductile's admission policy <span class="loc">runtime.go:443</span> is a set of independent
+  switches (decomplected from the old bundled <code>strict_mode</code>). Each one can refuse the boot:</p>
+  <table>
+    <tr><th>Gate</th><th>What it checks</th><th>Where</th></tr>
+    <tr>
+      <td><code>verify_integrity_on_boot</code></td>
+      <td>Recomputes checksums of every config file against the <b>.checksums seal</b> written by
+      <code>config lock</code>. With <code>fail_on_drift</code>, any edit since the lock refuses the boot.</td>
+      <td class="loc">runtime.go:460–466</td>
+    </tr>
+    <tr>
+      <td><code>validate_config_on_boot</code></td>
+      <td>Runs the <b>doctor</b> (<code>doctor.New(cfg, registry).Validate()</code>) — plugin refs,
+      routes, webhooks, token scopes, hook cycles, schedules. Vault-aware: a from-scratch vault
+      gateway with no api token yet is a legitimate bootstrap posture, not an error (#129).</td>
+      <td class="loc">runtime.go:468–481</td>
+    </tr>
+    <tr>
+      <td>Strict decode</td>
+      <td>YAML decoding is lenient, so a typo'd key would be <em>silently dropped</em> — you'd believe
+      a setting is active when it is not. Every dropped key is warned always; under
+      <code>validate_config_on_boot</code> it is an admission <b>failure</b> (#26).</td>
+      <td class="loc">runtime.go:491–499</td>
+    </tr>
+  </table>
+  <div class="why"><b>Why gates instead of warnings?</b> The constitution calls these the
+  <em>load-bearing refusals</em>: a gateway that starts on drifted or invalid config will fail later,
+  at trigger time, in a way that is much harder to diagnose. Fail-closed at boot is the cheap failure.</div>
+</div>
+
+<h2 id="phase3">5. Phase 3 — State, routing &amp; the snapshot</h2>
+<div class="phase">
+  <span class="tag">Assembly</span>
+  <ol class="steps">
+    <li><b>Database opens</b> — <code>storage.OpenSQLite(ctx, cfg.State.Path)</code>
+      <span class="loc">runtime.go:508</span>. One SQLite file holds the job queue, job logs, plugin
+      facts/state, contexts, circuit breakers, transitions, and the audit trail. (In the knowledge
+      graph, <code>OpenSQLite()</code> bridges 30+ communities — nearly everything touches it.)</li>
+    <li><b>Scheduled commands validated</b> against the registry <span class="loc">runtime.go:516</span> —
+      a schedule naming a command the plugin doesn't support refuses the boot.</li>
+    <li><b>Pipelines compile</b> — <code>router.LoadFromConfigFiles()</code>
+      <span class="loc">runtime.go:532–543</span> turns the <code>pipelines:</code> YAML into compiled
+      routes (the DSL compiler: steps, <code>if:</code> conditionals, fan-out edges, max route depths).
+      Every registered pipeline is logged with its trigger.</li>
+    <li><b>Config snapshot recorded</b> — <code>configsnapshot.Build()</code> + <code>Insert()</code>
+      <span class="loc">runtime.go:545–571</span>. The exact config (hash, source, ductile version,
+      binary path, <b>plugin fingerprints</b>) is written to the DB with reason <code>startup</code>.
+      Every job later created carries this snapshot ID — you can always answer
+      <em>"what config was live when this job ran?"</em></li>
+    <li><b>Core plumbing</b> <span class="loc">runtime.go:573–610</span>:
+      <code>queue.New()</code> (with dedupe TTL and the snapshot-ID provider),
+      <code>state.NewStore()</code>, <code>state.NewContextStore()</code>,
+      <code>events.NewHub(256)</code>, <code>scheduler.New()</code>, and
+      <code>state.NewAdmitter()</code> (caps context payload bytes at admission).</li>
+  </ol>
+</div>
+
+<h2 id="phase4">6. Phase 4 — Security posture (vault &amp; privsep)</h2>
+<div class="phase security">
+  <span class="tag">Posture</span>
+  <ol class="steps">
+    <li><b>Secret delivery wired</b> <span class="loc">runtime.go:618–633</span> — if a vault owner
+      exists, it becomes the <code>SecretComposer</code> (spawn-time, stdin-delivered secrets) and a
+      <code>pluginVerifier</code> is created: <b>compose-time attestation</b> re-verifies a plugin's
+      live bytes against its recorded keyed fingerprint <em>right before</em> handing it secrets
+      (ADR §3.3). Changed bytes ⇒ no secrets.</li>
+    <li><b>Boot posture decided</b> — <code>config.DecideBootPosture()</code>
+      <span class="loc">runtime.go:641–645</span>. Two postures:
+      <ul>
+        <li><b>Gateway</b> (normal): api tokens resolve, everything opens.</li>
+        <li><b>Management-only</b> ("vault-operable / ductile-closed"): a vault exists but no api
+        token yet — the credential-ladder bootstrap. Only <code>/vault/*</code> on a local unix
+        socket is served; <em>no</em> trigger plane opens.</li>
+      </ul>
+      The fail-closed guard still refuses a from-scratch gateway with API enabled, zero tokens,
+      and no vault to bootstrap from.</li>
+    <li><b>Privsep boot gate</b> — <code>dispatch.BootGate(cfg)</code>
+      <span class="loc">runtime.go:651–714</span> (#86). The capability to drop privilege and the
+      configured <code>accounts:</code> table must <em>agree</em>, or startup is refused — never a
+      silent run at gateway privilege. Three outcomes:
+      <ul>
+        <li><b>Enforcing</b>: plugins drop to their resolved account. The filesystem floor is
+        reconciled (<code>ReconcileAccountFilesystem</code>, #87 — secrets 0600/0700, per-account
+        0700 dirs, all-or-refuse), and each account is probed for root side-doors
+        (<code>AuditAccountSideDoors</code>, #111 — nopasswd sudo, docker group, writable setuid).
+        Strict mode refuses on a side-door.</li>
+        <li><b>Unconfined override</b>: accounts exist but <code>service.unconfined</code> forces
+        gateway-uid execution — warned loudly, never silent.</li>
+        <li><b>Hygiene-only</b>: no accounts configured (dev box) — posture logged explicitly so
+        "valid config" is never mistaken for "enforcing" (#101).</li>
+      </ul></li>
+  </ol>
+  <div class="why"><b>Why is posture decided before any plane opens?</b> Every plane that could fire
+  a pipeline — scheduler, dispatcher, public listener, webhooks — is gated on the posture (#136).
+  In management posture, no pipeline can fire and no secret can be composed until an operator mints
+  an api token over the admin socket and runs <code>system reload</code> to activate the gateway.</div>
+</div>
+
+<h2 id="phase5">7. Phase 5 — Trigger planes come up</h2>
+<div class="phase">
+  <span class="tag">Planes</span>
+  <ol class="steps">
+    <li><b>Dispatcher built</b> — <code>dispatch.New(q, st, contextStore, router, registry, hub, cfg, …)</code>
+      <span class="loc">runtime.go:716–720</span>, carrying the admitter, secret composer, plugin
+      verifier, and the privsep-enforce flag. This is the engine that will execute every job.</li>
+    <li><b>Relay receiver</b> configured <span class="loc">runtime.go:722</span> — accepts signed
+      event envelopes from remote ductile instances.</li>
+    <li><b>Recovery hooks wired</b> <span class="loc">runtime.go:731</span> — when crash recovery
+      marks a dead orphan job, the dispatcher's hook machinery fires (e.g. a
+      <code>job-failure-notify</code> pipeline).</li>
+    <li><b>Scheduler &amp; dispatcher start</b> <span class="loc">runtime.go:738–752</span>
+      (gateway posture only). The scheduler begins evaluating cron/interval entries; the dispatcher
+      starts its worker loop polling the queue.</li>
+    <li><b>API tokens resolve, fail-closed</b> — <code>config.ResolveAPITokens()</code>
+      <span class="loc">runtime.go:767–780</span>. Bearer tokens are <code>secret_ref</code>s into the
+      vault; an unresolvable or empty ref <b>aborts the boot</b> — the API never opens authenticating
+      against an empty credential (card #94).</li>
+    <li><b>Listener reserved synchronously</b> — <code>apiServer.Bind()</code>
+      <span class="loc">runtime.go:822–826</span> happens <em>before</em> serving, so an activation
+      reload whose bind fails fails the reload (and the old runtime is restored) instead of
+      answering "ok" and dying later (#140). Then <code>Start()</code> serves — or
+      <code>StartManagement()</code> serves only <code>/vault/*</code> on the unix socket in
+      management posture <span class="loc">runtime.go:834–852</span>.</li>
+    <li><b>Webhook server</b> <span class="loc">runtime.go:864–881</span> — if endpoints are
+      configured (and posture is gateway), the webhook listener opens with per-endpoint HMAC
+      signature verification.</li>
+  </ol>
+</div>
+
+<h2 id="phase6">8. Phase 6 — Ready: the supervisor loop</h2>
+<div class="phase ready">
+  <span class="tag">Ready</span>
+  <ol class="steps">
+    <li>Back in <code>runStart()</code>: the PID lock is logged, macOS <b>TCC paths are pre-warmed</b>
+      (<code>runTCCPrewarm</code>, <span class="loc">runtime.go:966</span>) so Full-Disk-Access prompts
+      happen now, not mid-job.</li>
+    <li><code>"ductile running"</code> is logged <span class="loc">runtime.go:967</span> and the
+      process enters its supervision loop <span class="loc">runtime.go:972–993</span>:
+      <ul>
+        <li><span class="kbd">SIGHUP</span> → <code>manager.Reload()</code>: build a complete new
+          runtime through the same buildRuntime gates; on failure the old runtime keeps running.</li>
+        <li><span class="kbd">SIGINT</span>/<span class="kbd">SIGTERM</span> → orderly stop.</li>
+        <li>Any component error on <code>errCh</code> → supervisor stops the gateway (exit 1) — the
+          service manager (launchd/systemd/docker) restarts it. Let-it-crash, applied at the
+          operator layer.</li>
+      </ul></li>
+    <li>Verify from outside: <code>curl http://127.0.0.1:8080/healthz</code> reports status and the
+      boot posture; <code>ductile system status</code> gives the operator view.</li>
+  </ol>
+</div>
+
+<h2 id="trigger">9. Now trigger a job</h2>
+<p>The gateway is "ready" precisely because four independent <b>trigger planes</b> are now live, and
+all of them converge on the same path: <b>enqueue → queue (dedupe, concurrency keys, breaker) →
+dispatcher <code>ExecuteJob()</code> → plugin subprocess</b>.</p>
+
+<div class="planes">
+  <div class="plane"><b>API</b><br>Authenticated <code>POST</code> runs a plugin command or pipeline; sync or async.
+    <span class="loc">internal/api/server.go · handlers.go</span></div>
+  <div class="plane"><b>Webhook</b><br>HMAC-verified external POST (e.g. GitHub) routes into a pipeline.
+    <span class="loc">internal/webhook/server.go</span></div>
+  <div class="plane"><b>Scheduler</b><br>Cron/interval entries enqueue plugin commands on their tick.
+    <span class="loc">internal/scheduler/</span></div>
+  <div class="plane"><b>Relay</b><br>Signed envelopes from a remote ductile instance are admitted and routed.
+    <span class="loc">internal/relay/receiver.go</span></div>
+</div>
+
+<p>The simplest first job, via the API plane:</p>
+<pre><code># 1. health — confirms posture is "gateway"
+curl -s http://127.0.0.1:8080/healthz
+
+# 2. trigger the echo plugin synchronously
+curl -s -X POST http://127.0.0.1:8080/plugins/echo/run \
+  -H "Authorization: Bearer $DUCTILE_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"payload": {"message": "hello, ductile"}, "sync": true}'
+
+# 3. inspect what happened — full lineage, attempts, config snapshot
+ductile job inspect &lt;job-id&gt;</code></pre>
+
+<div class="why"><b>What happens inside:</b> the API handler authenticates the bearer token and its
+scopes, the <b>admitter</b> checks the context payload size, <code>queue.New()</code>'s dedupe logic
+drops replays inside the TTL, the job row is stamped with the active <b>config snapshot ID</b>, and
+the dispatcher picks it up: resolves the plugin and its account (privsep), verifies its fingerprint
+(if vaulted secrets are involved), spawns the subprocess with payload as <code>DUCTILE_PAYLOAD_*</code>
+env, captures the protocol-v2 JSON response, records facts/state updates, evaluates routing for
+successor steps, and finalizes the job. <code>ductile job inspect</code> shows you every one of those
+decisions after the fact.</div>
+
+<h3>Where to go next</h3>
+<ul>
+  <li><code>docs/ARCHITECTURE.md</code> — the component map you just walked through</li>
+  <li><code>docs/8_IDIOMS_OF_DUCTILE.md</code> — why the design refuses what it refuses</li>
+  <li><code>docs/GETTING_STARTED.md</code> &amp; <code>docs/COOKBOOK.md</code> — recipes for real pipelines</li>
+  <li><code>docs/OPERATOR_GUIDE.md</code> §3 — the admission gates in operator terms</li>
+  <li><code>docs/adr/vault-credential-ladder.md</code> — the management-posture bootstrap in full</li>
+</ul>
+
+<div class="footer">
+  Generated 2026-06-10 from the ductile knowledge graph (graphify) + line-verified against
+  <code>cmd/ductile/runtime.go</code> @ main (99d909a). If boot code moves, regenerate via
+  <code>/graphify query</code> — the graph is the map.
+</div>
+
+</div>
+</body>
+</html>

@@ -358,7 +358,7 @@ Returns service metadata for LLM agents and links to the global OpenAPI document
   "schema_version": "v1",
   "name_for_human": "Ductile Gateway",
   "name_for_model": "ductile",
-  "description_for_human": "Integration gateway for triggering plugins and pipelines.",
+  "description_for_human": "Automation runtime for triggering plugins and pipelines.",
   "description_for_model": "Discover and invoke plugins. Fetch /openapi.json for the full spec, or /plugin/{name}/openapi.json for a single plugin. Invoke commands via POST /plugin/{name}/{command}.",
   "auth": {
     "type": "bearer"

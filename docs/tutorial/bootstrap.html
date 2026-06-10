@@ -1,0 +1,456 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Ductile Bootstrap: Genesis to healthz — The Credential Ladder Explained</title>
+<style>
+  :root {
+    --bg: #0f1117;
+    --panel: #181b24;
+    --panel2: #1f2330;
+    --ink: #e6e9f0;
+    --muted: #9aa3b5;
+    --accent: #5cc8ff;
+    --accent2: #ffb454;
+    --green: #7ee08a;
+    --red: #ff7b72;
+    --purple: #c792ea;
+    --border: #2a2f3e;
+    --mono: "SF Mono", "Fira Code", Menlo, Consolas, monospace;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--ink);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+    line-height: 1.6;
+  }
+  .wrap { max-width: 880px; margin: 0 auto; padding: 2rem 1.5rem 6rem; }
+  header.hero { border-bottom: 1px solid var(--border); padding: 3rem 0 2rem; margin-bottom: 2rem; }
+  h1 { font-size: 2rem; margin: 0 0 .5rem; }
+  h1 .d { color: var(--accent); }
+  .sub { color: var(--muted); font-size: 1.05rem; max-width: 62ch; }
+  .provenance {
+    margin-top: 1rem; font-size: .85rem; color: var(--muted);
+    background: var(--panel); border: 1px solid var(--border);
+    border-radius: 8px; padding: .6rem 1rem; display: inline-block;
+  }
+  h2 { font-size: 1.45rem; margin-top: 3rem; border-bottom: 1px solid var(--border); padding-bottom: .4rem; }
+  h3 { font-size: 1.1rem; margin-top: 1.8rem; }
+  code, pre { font-family: var(--mono); font-size: .86em; }
+  code { background: var(--panel2); padding: .12em .4em; border-radius: 4px; }
+  pre {
+    background: var(--panel); border: 1px solid var(--border);
+    border-radius: 8px; padding: 1rem; overflow-x: auto; line-height: 1.5;
+  }
+  pre code { background: none; padding: 0; }
+  .loc { font-family: var(--mono); font-size: .78rem; color: var(--accent2); }
+  .phase {
+    background: var(--panel); border: 1px solid var(--border);
+    border-radius: 12px; padding: 1.4rem 1.6rem; margin: 1.4rem 0;
+  }
+  .phase .tag {
+    display: inline-block; font-family: var(--mono); font-size: .72rem;
+    letter-spacing: .08em; text-transform: uppercase;
+    color: var(--bg); background: var(--accent); border-radius: 99px;
+    padding: .15em .8em; margin-bottom: .6rem; font-weight: 700;
+  }
+  .phase.key .tag { background: var(--accent2); }
+  .phase.admin .tag { background: var(--purple); }
+  .phase.api .tag { background: var(--green); }
+  .phase.practice .tag { background: var(--red); }
+  ol.steps { padding-left: 1.3rem; }
+  ol.steps li { margin: .7rem 0; }
+  .why {
+    border-left: 3px solid var(--accent2); background: var(--panel2);
+    padding: .6rem 1rem; margin: .8rem 0; border-radius: 0 8px 8px 0;
+    font-size: .92rem; color: var(--muted);
+  }
+  .why b { color: var(--ink); }
+  table { border-collapse: collapse; width: 100%; margin: 1rem 0; font-size: .92rem; }
+  th, td { border: 1px solid var(--border); padding: .5rem .8rem; text-align: left; vertical-align: top; }
+  th { background: var(--panel2); }
+  /* ladder diagram */
+  .ladder { margin: 2rem auto; max-width: 640px; }
+  .rung {
+    border: 1px solid var(--border); border-radius: 12px; background: var(--panel);
+    padding: 1rem 1.4rem; margin: 0 auto; position: relative;
+  }
+  .rung b { font-size: 1.05rem; display: block; }
+  .rung span { color: var(--muted); font-size: .88rem; }
+  .rung .loc { display: block; margin-top: .2rem; }
+  .rung.r1 { border-color: var(--accent2); max-width: 420px; }
+  .rung.r1 b { color: var(--accent2); }
+  .rung.r2 { border-color: var(--purple); max-width: 520px; }
+  .rung.r2 b { color: var(--purple); }
+  .rung.r3 { border-color: var(--green); max-width: 620px; }
+  .rung.r3 b { color: var(--green); }
+  .ladder .issue { text-align: center; color: var(--muted); font-size: .85rem; padding: .5rem 0; }
+  .ladder .issue::before { content: "▼ "; color: var(--accent); }
+  .posture-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; margin: 1.2rem 0; }
+  @media (max-width: 700px) { .posture-grid { grid-template-columns: 1fr; } }
+  .posture {
+    border: 1px solid var(--border); border-radius: 12px; background: var(--panel); padding: 1rem 1.2rem;
+  }
+  .posture h4 { margin: 0 0 .5rem; }
+  .posture.mgmt h4 { color: var(--purple); }
+  .posture.gw h4 { color: var(--green); }
+  .posture ul { margin: .4rem 0; padding-left: 1.2rem; font-size: .9rem; }
+  .posture .closed { color: var(--red); }
+  .posture .open { color: var(--green); }
+  .kbd { font-family: var(--mono); background: var(--panel2); border: 1px solid var(--border); border-bottom-width: 2px; border-radius: 5px; padding: .05em .45em; font-size: .85em; }
+  .footer { margin-top: 4rem; color: var(--muted); font-size: .85rem; border-top: 1px solid var(--border); padding-top: 1rem; }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  .toc { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 1rem 1.5rem; }
+  .toc ol { margin: .4rem 0; }
+  .danger {
+    border-left: 3px solid var(--red); background: var(--panel2);
+    padding: .6rem 1rem; margin: .8rem 0; border-radius: 0 8px 8px 0;
+    font-size: .92rem;
+  }
+  .danger b { color: var(--red); }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header class="hero">
+  <h1><span class="d">ductile</span> bootstrap: genesis to <code>/healthz</code></h1>
+  <p class="sub">From an empty directory to a locked, vault-native gateway answering
+  <code>curl http://127.0.0.1:8080/healthz</code> — with no secret ever written into a config file.
+  This explainer teaches the <b>credential ladder</b>: the age key, the vault, minting the admin
+  token, minting and using the API token, and the practices that keep all of it honest.</p>
+  <div class="provenance">
+    Built from the repo's knowledge graph (graphify) — traced via the
+    <code>Credential Ladder</code> concept node (docs/BOOTSTRAP.md §The shape) and the
+    <code>vault.Init()</code> genesis cluster, then verified against
+    <code>internal/vault/genesis.go</code>, <code>cmd/ductile/vault.go</code>, and
+    <code>cmd/ductile/runtime.go</code>.
+  </div>
+</header>
+
+<nav class="toc">
+  <b>Contents</b>
+  <ol>
+    <li><a href="#ladder">The credential ladder — the whole idea</a></li>
+    <li><a href="#genesis">Rung 1 — Genesis: the age key and the vault</a></li>
+    <li><a href="#mgmt">The management posture — a gateway that is deliberately closed</a></li>
+    <li><a href="#admin">Rung 2 — The admin token: operating /vault/*</a></li>
+    <li><a href="#api">Rung 3 — Minting and using the API token</a></li>
+    <li><a href="#seal">Seal, activate, verify</a></li>
+    <li><a href="#practice">Good practice — custody, rotation, recovery</a></li>
+  </ol>
+</nav>
+
+<h2 id="ladder">1. The credential ladder — the whole idea</h2>
+<p>Ductile's bootstrap answers a chicken-and-egg problem every secure system has: <em>the gateway
+needs a token to serve, but the token should live in the vault, and the vault is operated through
+the gateway.</em> The answer is a ladder — every credential is issued by the one above it, and
+<b>nothing is ever written into a config file</b>:</p>
+
+<div class="ladder">
+  <div class="rung r1">
+    <b>1 · The age key</b>
+    <span>A file on disk, mode 0600. The only thing that can decrypt the vault.</span>
+    <span class="loc">secrets.age_key_file · created by <code>ductile secrets keygen</code></span>
+  </div>
+  <div class="issue">decrypts</div>
+  <div class="rung r2">
+    <b>2 · The vault admin token</b>
+    <span>Printed exactly once at genesis. Operates the management API (<code>/vault/*</code>).
+    Never delivered to any plugin — verified by the API, stored as the reserved
+    <code>core-admin-token</code> entry.</span>
+    <span class="loc">internal/vault/genesis.go:38 · vault.go:218 .AuthenticateAdmin()</span>
+  </div>
+  <div class="issue">mints</div>
+  <div class="rung r3">
+    <b>3 · The API bearer token</b>
+    <span>Minted into the vault by the admin token, referenced from config as a
+    <code>secret_ref</code> (never a literal), resolved fail-closed at boot. Operates the gateway.</span>
+    <span class="loc">config: api.auth.tokens[].secret_ref · runtime.go:767 ResolveAPITokens()</span>
+  </div>
+</div>
+
+<div class="why"><b>Why a ladder and not a setup wizard?</b> Each rung has one job and one custody
+boundary. Compromise of an API token never exposes the vault; compromise of config files exposes
+<em>no</em> secret at all (they contain only <code>secret_ref</code> names). And because the ladder
+is also the <b>recovery path</b> (lose a rung → climb back up from the rung above), there is no
+separate, rarely-tested recovery procedure to rot.</div>
+
+<h2 id="genesis">2. Rung 1 — Genesis: the age key and the vault</h2>
+<div class="phase key">
+  <span class="tag">Genesis</span>
+  <p>Start with a config directory that has <b>no tokens at all</b> — the repo's <code>config/</code>
+  folder is a working copy of exactly this state:</p>
+<pre><code>CFG=~/.config/ductile
+
+# config.yaml must carry, at minimum:
+#   secrets:
+#     age_key_file: age.key
+#     vault_file: vault.age
+#   plugin_roots:
+#     - plugins            # at least one EXISTING dir; "~" expands, relative paths resolve against $CFG
+#   api:
+#     enabled: true
+#     listen: "127.0.0.1:8080"
+#     management_socket: /tmp/ductile-admin.sock   # explicit + SHORT (see good practice)
+#
+# Do NOT add api.auth.tokens yet — that absence is the point.
+
+# Daemon stopped. Generate the age key, then create the vault:
+ductile secrets keygen --out "$CFG/age.key"
+ductile vault init --vault "$CFG/vault.age" --key "$CFG/age.key"</code></pre>
+
+  <p>What <code>vault init</code> actually does — <code>vault.Init()</code>
+  <span class="loc">internal/vault/genesis.go:38</span>:</p>
+  <ol class="steps">
+    <li><b>Refuses to clobber</b>: if <code>vault.age</code> already exists, init errors out
+      <span class="loc">genesis.go:39–44</span>. A re-init can never silently wipe a live vault's
+      secrets (fail-closed, Armstrong-style).</li>
+    <li><b>Seeds the reserved <code>core</code> principal</b> with a freshly generated 32-byte
+      <b>fingerprint nonce</b> <span class="loc">genesis.go:59</span> — this nonce later keys plugin
+      attestation (a plugin's recorded fingerprint is HMAC'd with it).</li>
+    <li><b>Mints the admin token</b> (32 random bytes) and stores it as the reserved
+      <code>core-admin-token</code> entry via the sanctioned <code>RotateAdminToken</code> path
+      <span class="loc">genesis.go:63</span>. It has <em>no</em> <code>authorized_principals</code>:
+      it is verified by the API, never composed/delivered to any plugin.</li>
+    <li><b>Saves the first encrypted blob</b> — age-encrypted with your key, written atomically
+      (<code>writeFileAtomic</code> + directory fsync <span class="loc">vault.go:328,365</span>).</li>
+    <li><b>Prints the admin token exactly once.</b> It is not recoverable in plaintext afterward
+      without the key. Capture it into 0600 custody now (see good practice), then shred the capture.</li>
+  </ol>
+  <div class="danger"><b>The admin token prints once.</b> If you lose it before capturing it, you
+  haven't lost the vault — <code>ductile vault rotate-admin-token</code> (daemon stopped, age key
+  present) mints a replacement in place <span class="loc">cmd/ductile/vault.go:294</span>. The age
+  key is the rung above; it can always re-issue rung 2.</div>
+</div>
+
+<h2 id="mgmt">3. The management posture — a gateway that is deliberately closed</h2>
+<div class="phase admin">
+  <span class="tag">Posture</span>
+  <p>Now seal and validate, then boot. A config with the API enabled and <b>zero</b>
+  <code>api.auth.tokens</code> is <em>not</em> an error when a vault is present — it is the
+  recognized <b>bootstrap state</b> (#129):</p>
+<pre><code># Lock FIRST, then check — scope files (webhooks.yaml) are checksum-verified
+# even by `config check`, and zero-tokens + genesis-vault IS a clean verdict.
+ductile config lock --config "$CFG"
+ductile config check --config "$CFG"
+
+# First boot:
+ductile system start --config "$CFG" &
+ductile system status --config "$CFG"     # expect: boot_posture: management-only (live)</code></pre>
+
+  <p>At boot, <code>config.DecideBootPosture()</code> <span class="loc">cmd/ductile/runtime.go:641</span>
+  sees <em>vault present + no API token</em> and chooses the management posture. The two postures
+  side by side:</p>
+
+  <div class="posture-grid">
+    <div class="posture mgmt">
+      <h4>management-only · "vault-operable, ductile-closed"</h4>
+      <ul>
+        <li class="open">✓ <code>/vault/*</code> on a local <b>unix socket</b> only</li>
+        <li class="closed">✗ public TCP listener — never opened</li>
+        <li class="closed">✗ webhooks — closed</li>
+        <li class="closed">✗ scheduler — gated, no ticks</li>
+        <li class="closed">✗ dispatcher — gated, no jobs</li>
+      </ul>
+      <span class="loc">runtime.go:738–752, 835–849 (#136)</span>
+    </div>
+    <div class="posture gw">
+      <h4>gateway · normal serving posture</h4>
+      <ul>
+        <li class="open">✓ public listener (after fail-closed token resolution)</li>
+        <li class="open">✓ webhooks (HMAC-verified)</li>
+        <li class="open">✓ scheduler &amp; dispatcher live</li>
+        <li class="open">✓ <code>/healthz</code> reports <code>"posture": "gateway"</code></li>
+        <li class="open">✓ <code>/vault/*</code> still available to the admin token</li>
+      </ul>
+      <span class="loc">runtime.go:822–852</span>
+    </div>
+  </div>
+
+  <div class="why"><b>Why gate every trigger plane, not just the listener?</b> "Vault operable" and
+  "ductile operable" are different trust states. Until an operator has minted credentials, <em>no
+  pipeline may fire and no secret may be composed</em> — a scheduler tick firing a half-bootstrapped
+  pipeline would be an unaudited action. The boot log says this loudly
+  (<span class="loc">runtime.go:848</span>): it's a named, intentional posture — "waiting for an api
+  token", never "stuck".</div>
+</div>
+
+<h2 id="admin">4. Rung 2 — The admin token: operating <code>/vault/*</code></h2>
+<div class="phase admin">
+  <span class="tag">Admin plane</span>
+  <p>The management socket is the only door right now, and the admin token is the only key to it.
+  Every <code>/vault/*</code> request authenticates via <code>Vault.AuthenticateAdmin()</code>
+  <span class="loc">internal/vault/vault.go:218</span> against the stored
+  <code>core-admin-token</code> entry. Through this plane you can:</p>
+  <table>
+    <tr><th>Operation</th><th>Command</th><th>Notes</th></tr>
+    <tr>
+      <td>Store / mint a secret</td>
+      <td><code>vault set --name &lt;n&gt; --pattern manual</code></td>
+      <td>Value via <b>stdin, never argv</b> — argv is visible in <code>ps</code> and shell history.</td>
+    </tr>
+    <tr>
+      <td>Register a plugin principal</td>
+      <td><code>vault register-principal</code></td>
+      <td>Refuses the reserved <code>core</code> name — genesis-only seeding.</td>
+    </tr>
+    <tr>
+      <td>Roll / revoke secrets</td>
+      <td><code>vault roll · revoke · roll-principal …</code></td>
+      <td>Lifecycle verbs; every action lands in the append-only vault audit.</td>
+    </tr>
+    <tr>
+      <td>Rotate the vault encryption key</td>
+      <td><code>vault rotate-key</code></td>
+      <td>Re-encrypts the blob under a new age key.</td>
+    </tr>
+    <tr>
+      <td>Rotate the admin token itself</td>
+      <td><code>vault rotate-admin-token</code></td>
+      <td>Offline (daemon stopped), needs the age key — rung 1 re-issues rung 2.</td>
+    </tr>
+  </table>
+  <div class="why"><b>Separate credential domain.</b> The admin token operates the vault but cannot
+  run a single pipeline; the API token runs pipelines but cannot read a raw secret back out
+  (<code>vault get</code> is admin-plane). Keep the two in different custody if different people
+  hold those duties.</div>
+</div>
+
+<h2 id="api">5. Rung 3 — Minting and using the API token</h2>
+<div class="phase api">
+  <span class="tag">Mint &amp; reference</span>
+  <ol class="steps">
+    <li><b>Generate a strong token value yourself</b> (you are choosing the credential; the vault is
+      its custody):
+<pre><code>API_TOKEN=$(openssl rand -hex 32)</code></pre></li>
+    <li><b>Mint it into the vault over the unix socket</b> — stdin for the value, admin token for
+      authority:
+<pre><code>printf '%s' "$API_TOKEN" | ductile vault set \
+  --api-url "unix:///tmp/ductile-admin.sock" \
+  --token "$ADMIN_TOKEN" \
+  --name core-api-token --pattern manual</code></pre></li>
+    <li><b>Reference it from config — by name, never by value.</b> Stop the daemon, then add:
+<pre><code>api:
+  auth:
+    tokens:
+      - secret_ref: core-api-token
+        scopes: ["*"]        # first token is the operator token; scope later tokens narrowly</code></pre>
+      At boot, <code>ResolveAPITokens()</code> <span class="loc">runtime.go:767–780</span> resolves
+      every <code>secret_ref</code> against the vault, <b>fail-closed</b>: an unresolvable or empty
+      ref aborts the boot — the API never opens authenticating against an empty credential.</li>
+  </ol>
+  <div class="why"><b>Scopes are part of the mint, not an afterthought.</b> <code>"*"</code> is for
+  your operator token. Tokens for automations should carry only what they use —
+  e.g. <code>["jobs:read"]</code> for a dashboard, <code>["plugins:run"]</code> for a trigger-only
+  client. The doctor validates scope names at boot (<span class="loc">doctor.go:271</span>).</div>
+</div>
+
+<h2 id="seal">6. Seal, activate, verify</h2>
+<div class="phase api">
+  <span class="tag">Activate</span>
+<pre><code># Seal config and plugins — ORDER MATTERS:
+#   config lock writes the .checksums file that plugin lock extends,
+#   and both must come after genesis (attestation is keyed by the vault nonce).
+ductile config lock --config "$CFG"
+ductile plugin lock --all --config "$CFG"        # prints a confirm code
+ductile plugin lock --all &lt;code&gt; --config "$CFG"
+
+# Boot the gateway (under your service manager in real deployments):
+ductile system start --config "$CFG"
+
+# ── The finish line ──
+curl -s http://127.0.0.1:8080/healthz            # "posture": "gateway"
+
+# Prove the token works and the audit trail is intact:
+curl -s http://127.0.0.1:8080/jobs -H "Authorization: Bearer $API_TOKEN"
+ductile system vault-audit --config "$CFG"       # genesis + mint recorded</code></pre>
+  <p>What changed at this boot: <code>DecideBootPosture()</code> now sees a configured token, the
+  posture is <b>gateway</b>, tokens resolve fail-closed, the listener is reserved synchronously
+  (<code>Bind()</code> before serve, <span class="loc">runtime.go:822</span> — #140), and every
+  trigger plane opens. The same transition works <em>without</em> a restart-from-scratch during
+  recovery: an armed management-posture box activates on <code>system reload</code> once the token
+  ref resolves.</p>
+</div>
+
+<h2 id="practice">7. Good practice — custody, rotation, recovery</h2>
+<div class="phase practice">
+  <span class="tag">Practice</span>
+  <h3>Custody</h3>
+  <ul>
+    <li><b>Age key</b>: 0600, owned by the gateway user, on the gateway host only. It is rung 1 —
+      anyone holding it holds the vault. Under enforced privsep, boot reconciles the whole secrets
+      surface to gateway-owned 0600/0700 and <b>refuses to start</b> otherwise
+      (<span class="loc">runtime.go:688–692</span>, #87).</li>
+    <li><b>Admin token</b>: capture the one-time print into a password manager or 0600 file
+      immediately, then shred the capture file (<code>shred -u</code> / <code>rm -P</code>).
+      Don't export it in dotfiles; pass it per-invocation.</li>
+    <li><b>API token values</b> exist in exactly two places: the vault, and the client that uses
+      them. Configs carry only <code>secret_ref</code> names — safe to commit, sync, and back up.
+      <code>config view</code> redacts sensitive values for the same reason.</li>
+    <li><b>Secrets enter via stdin, never argv</b> — argv leaks through <code>ps</code>, shell
+      history, and audit logs.</li>
+  </ul>
+
+  <h3>Rotation — each rung rotates independently</h3>
+  <table>
+    <tr><th>Rung</th><th>Command</th><th>When</th></tr>
+    <tr><td>Age key</td><td><code>ductile secrets rotate</code> / <code>vault rotate-key</code></td>
+        <td>Key custody change, scheduled hygiene. Re-encrypts the blob; secrets untouched.</td></tr>
+    <tr><td>Admin token</td><td><code>ductile vault rotate-admin-token</code> (daemon stopped)</td>
+        <td>Operator turnover, suspected exposure, or simply lost — rung 1 re-issues it.</td></tr>
+    <tr><td>API token</td><td><code>vault roll</code> the secret, then <code>system reload</code></td>
+        <td>Routine. The <code>secret_ref</code> in config never changes — only the vault value does.</td></tr>
+  </table>
+
+  <h3>Recovery is the same ladder, climbed again</h3>
+  <ul>
+    <li><b>Lost API token?</b> Remove the <code>api.auth.tokens</code> block, restart → the daemon
+      is back in management posture; mint a new token over the socket. The bootstrap path <em>is</em>
+      the recovery path — it stays tested because it's the same code (#129/#136).</li>
+    <li><b>Lost admin token?</b> <code>vault rotate-admin-token</code> with the age key, daemon stopped.</li>
+    <li><b>Lost age key?</b> That is the one unrecoverable rung — the vault blob is ciphertext
+      without it. Back the key up under separate custody from the vault file; the pair together is
+      the secret, separately they are inert.</li>
+  </ul>
+
+  <h3>Sanity rules that bite (from the field)</h3>
+  <ul>
+    <li>Unix socket paths cap near <b>104 bytes</b> (<code>sun_path</code>) — set
+      <code>api.management_socket</code> explicitly and keep it short (<code>/tmp/…</code> or beside
+      the state DB <span class="loc">runtime.go:890</span>).</li>
+    <li>The daemon <b>refuses</b> to boot if the management socket path points at an existing
+      non-socket file — it will not delete your file.</li>
+    <li>A config cannot <em>activate</em> while any configured <code>secret_ref</code> is unminted —
+      mint everything you reference before the activating restart, or stage those includes until
+      after bootstrap.</li>
+    <li>Lock order: <code>config lock</code> before <code>plugin lock</code> (the latter extends the
+      former's <code>.checksums</code>), and both <em>after</em> genesis (attestation is keyed by the
+      vault nonce from rung 1).</li>
+    <li>Verify after every change: <code>system status</code> for posture,
+      <code>system vault-audit</code> for the append-only credential history,
+      <code>/healthz</code> for the outside view.</li>
+  </ul>
+</div>
+
+<h3>Where to go next</h3>
+<ul>
+  <li><a href="index.html">Tutorial: from <code>system start</code> to ready-to-trigger</a> — what happens <em>inside</em> each boot</li>
+  <li><code>docs/BOOTSTRAP.md</code> — the canonical from-scratch procedure this page explains</li>
+  <li><code>docs/adr/vault-credential-ladder.md</code> — the design rationale in full</li>
+  <li><code>docs/SECRETS.md</code> — the secrets model beyond bootstrap (principals, compose, attestation)</li>
+  <li><code>docs/DEPLOYMENT.md</code> §5b — privsep postures for production hosts</li>
+</ul>
+
+<div class="footer">
+  Generated 2026-06-10 from the ductile knowledge graph (graphify) + verified against
+  <code>internal/vault/genesis.go</code>, <code>cmd/ductile/vault.go</code>,
+  <code>cmd/ductile/runtime.go</code>, and <code>docs/BOOTSTRAP.md</code> @ main (99d909a).
+  Companion page: <a href="index.html">boot sequence tutorial</a>.
+</div>
+
+</div>
+</body>
+</html>
