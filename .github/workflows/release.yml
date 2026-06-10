@@ -1,0 +1,70 @@
+name: release
+
+# Fires when a v* tag is pushed (the release) or by hand (a dry run that builds
+# and uploads workflow artifacts WITHOUT creating a GitHub release). Pure-Go
+# build (modernc sqlite, CGO_ENABLED=0), so one Linux runner cross-compiles
+# every target. Binaries are unsigned — macOS users codesign locally or clear
+# quarantine (see docs/BOOTSTRAP.md).
+on:
+  push:
+    tags:
+      - "v[0-9]*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # full history + tags so version.sh can git-describe
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Run tests (release gate)
+        run: ./scripts/test-fast
+
+      - name: Cross-compile all targets
+        run: |
+          VERSION="$(./scripts/version.sh)"
+          COMMIT="$(git rev-parse --short HEAD)"
+          BUILD_DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          LDFLAGS="-X main.version=${VERSION} -X main.gitCommit=${COMMIT} -X main.buildDate=${BUILD_DATE}"
+          mkdir -p dist
+          for target in linux/amd64 linux/arm64 darwin/amd64 darwin/arm64; do
+            GOOS="${target%/*}"
+            GOARCH="${target#*/}"
+            out="dist/ductile_${VERSION}_${GOOS}_${GOARCH}"
+            echo "==> ${out}"
+            CGO_ENABLED=0 GOOS="$GOOS" GOARCH="$GOARCH" \
+              go build -trimpath -ldflags "$LDFLAGS" -o "$out" ./cmd/ductile
+          done
+          (cd dist && shasum -a 256 ductile_* > checksums.txt && cat checksums.txt)
+
+      - name: Smoke-test the linux/amd64 artifact
+        run: |
+          BIN=$(ls dist/ductile_*_linux_amd64)
+          "$BIN" version
+          "$BIN" version --json
+
+      - name: Upload artifacts (always — dry runs end here)
+        uses: actions/upload-artifact@v4
+        with:
+          name: ductile-${{ github.ref_name }}
+          path: dist/
+
+      - name: Create GitHub release (tag pushes only)
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${GITHUB_REF_NAME}" dist/* \
+            --title "ductile ${GITHUB_REF_NAME}" \
+            --generate-notes
