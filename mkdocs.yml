@@ -92,6 +92,9 @@ plugins:
           - 8_IDIOMS_OF_DUCTILE.md
           - GLOSSARY.md
           - AUDIENCES.md
+        Tutorials:
+          - tutorials/boot-sequence.md
+          - tutorials/bootstrap.md
         Concepts:
           - ARCHITECTURE.md
           - PIPELINES.md
@@ -127,6 +130,10 @@ extra:
 nav:
   - Home: index.md
   - Why: WHY.md
+
+  - Tutorials:
+      - Boot Sequence: tutorials/boot-sequence.md
+      - Bootstrap & the Credential Ladder: tutorials/bootstrap.md
 
   - Introduction:
       - Getting Started: GETTING_STARTED.md
