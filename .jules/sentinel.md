@@ -1,0 +1,4 @@
+## 2026-06-14 - Fix SQL Injection in SQLite Table Checks
+**Vulnerability:** The `sqliteColumnExists` function in `internal/storage/sqlite.go` formatted a parameterized PRAGMA table_info statement using `fmt.Sprintf("PRAGMA table_info(%s);", table)`. This allowed possible SQL injection via the table parameter.
+**Learning:** SQLite added table-valued functions for PRAGMA statements starting in version 3.16.0, allowing safe parameterized inputs like `SELECT * FROM pragma_table_info(?)`. Since earlier code might not be aware of this modern SQLite capability, developers fallback to unsafe string formatting for PRAGMAs.
+**Prevention:** Whenever checking table metadata in SQLite, avoid using the traditional `PRAGMA` statement combined with string formatting. Always utilize the table-valued function equivalent with `SELECT * FROM pragma_table_info(?)` allowing for bound parameters.
