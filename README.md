@@ -1,161 +1,358 @@
 # Ductile
 
-[![Go Version](https://img.shields.io/badge/go-1.25.0-blue.svg)](https://golang.org)
-[![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
+**An automation runtime designed to be operated by AI agents.**
 
-**An automation runtime AI agents can run, debug, and build for.**
+Ductile is a local-first automation runtime for event-driven workflows.
 
-Ductile runs local automation pipelines at personal scale (~50–500 jobs/day). Every surface — CLI, REST API, plugin protocol, execution ledger — is shaped so an AI agent can drive it as confidently as a human can audit it. Agents don't just trigger jobs; they diagnose failures, reconstruct incidents, test plugins, and author new ones in any language.
+It runs pipelines, schedules jobs, accepts webhooks, executes plugins, retries failures, and records everything in a durable execution ledger.
+
+Unlike most automation tools, Ductile is designed around a different assumption:
+
+> The primary operator is an AI agent.
+>
+> Humans configure, govern, and audit.
+> AI operates.
+
+Every surface — CLI, API, plugin protocol, execution history, topology, diagnostics, and skills — is designed so an AI agent can understand the system, operate it safely, diagnose failures, and build new automations.
 
 ---
 
-## How it works
+# Why Ductile Exists
 
-Connectors (plugins) produce and consume events. Pipelines chain them. A queue handles retries.
+Most automation systems assume a human administrator.
+
+They expose dashboards, forms, and visual builders because the operator is expected to be a person.
+
+Ductile assumes the operator is increasingly an AI agent.
+
+That changes the design.
+
+An AI does not need a dashboard.
+
+It needs:
+
+- Structured APIs
+- Machine-readable configuration
+- Durable execution history
+- Clear contracts
+- Deterministic behaviour
+- Good evidence when things fail
+
+Ductile therefore optimises for:
+
+- AI as operator
+- Humans as governors and auditors
+- Local ownership of data
+- Durable execution lineage
+- Simple composable primitives
+
+---
+
+# How It Works
 
 ```text
-[ Schedule / Webhook ] → event → [ Pipeline ] → step 1 → [ Connector A ]
-                                               → step 2 → [ Connector B ]
-                                               → step 3 → [ Connector C ]
+Schedule ─┐
+          │
+Webhook ──┼──► Event
+          │
+API ──────┘
+
+Event
+  │
+  ▼
+Pipeline
+  │
+  ├──► Plugin A
+  ├──► Plugin B
+  └──► Plugin C
+
+Results
+  │
+  ▼
+Execution Ledger
 ```
 
-1. **Connectors** do the work — fetch a URL, run a shell command, call an API, send a notification.
-2. **Schedules** or **Webhooks** fire the first event.
-3. **Pipelines** react to events, chain connectors, and pass data (payload) between steps.
-4. **The Queue** ensures every step is retried on failure and tracked in the execution ledger.
+A plugin emits an event.
+
+A pipeline reacts to the event.
+
+The pipeline invokes one or more plugins.
+
+Jobs are queued, retried, recorded, and tracked.
+
+Everything is visible in the execution ledger.
 
 ---
 
-## Quick Start
+# Quick Start
+
+Build Ductile:
 
 ```bash
-# Clone and build
 git clone https://github.com/mattjoyce/ductile.git
 cd ductile
-go build -o ductile ./cmd/ductile
 
-# Copy the example config, then provision the API bearer token in the vault
-# (api.yaml references it by secret_ref — a literal token is rejected at boot):
-#   ductile vault register-principal --name ductile-api --kind consumer
-#   printf '%s' "$TOKEN" | ductile vault set ductile-api-admin --principal ductile-api
+make build        # canonical (stamps the version); or: go build -o ductile ./cmd/ductile
+```
+
+Copy the example configuration:
+
+```bash
 cp -R ./config ~/.config/ductile
+```
 
-# Start the gateway
+The example config ships with its admission gates on, so a fresh gateway will not
+boot until it has a vault to draw secrets from. Run genesis once (the daemon
+stopped), then seal and validate the config:
+
+```bash
+# Genesis: create the age key, then the vault it unlocks.
+# `vault init` prints the admin token ONCE — capture it to 0600 custody.
+./ductile secrets keygen --out ~/.config/ductile/age.key
+./ductile vault init   --vault ~/.config/ductile/vault.age --key ~/.config/ductile/age.key
+
+# Seal the config (lock first — scope files are checksum-verified), then check.
+./ductile config lock  --config ~/.config/ductile
+./ductile config check --config ~/.config/ductile
+```
+
+Start Ductile:
+
+```bash
 ./ductile system start
 ```
 
-The `echo` plugin in `plugins/echo/` runs every 5 minutes by default — use it to confirm the scheduler and queue are working before wiring up real connectors.
+> Provisioning the API bearer token (so the REST surface serves publicly) is a
+> couple more vault commands — see [docs/BOOTSTRAP.md](docs/BOOTSTRAP.md) for the
+> full credential ladder.
 
-See [Getting Started](docs/GETTING_STARTED.md) for a complete walkthrough.
-
----
-
-## Example pipelines
-
-### YouTube to knowledge base
-Fetch new playlist videos, transcribe, AI-summarize, save to a file, notify Discord.
+The example configuration loads:
 
 ```yaml
-pipelines:
-  - name: playlist-to-knowledge-base
-    on: youtube.playlist_item
-    steps:
-      - uses: youtube_transcript
-      - uses: fabric
-      - uses: file_handler
-      - uses: discord_notify
+include:
+  - api.yaml
+  - plugins.yaml
+  - pipelines.yaml
+  - webhooks.yaml
 ```
 
-### GitHub policy guard
-On every pull request, run a policy check and alert on violations.
-
-```yaml
-pipelines:
-  - name: github-policy-guard
-    on: github.webhook.pull_request
-    steps:
-      - uses: repo_policy
-      - uses: discord_notify
-        if: payload.policy_failed == true
-```
-
-### Content-triggered site rebuild
-Watch a folder for new markdown files, rebuild only when something changed.
+Install a plugin and enable it:
 
 ```yaml
 plugins:
   folder_watch:
+    enabled: true
+
     schedules:
       - every: 1m
-    config:
-      root: ./content/summaries
-      event_type: summaries.updated
 
+    config:
+      watches:
+        - id: summaries
+          root: "~/projects/content"
+          event_type: summaries.changed
+```
+
+Create a pipeline:
+
+```yaml
 pipelines:
   - name: rebuild-on-update
-    on: summaries.updated
+
+    on: summaries.changed
+
     steps:
-      - uses: sys_exec
-        config:
-          command: "npm run build && docker restart astro-site"
+      - id: rebuild
+        uses: sys_exec
 ```
 
----
-
-## Capabilities
-
-- **Polyglot plugins** — Write connectors in Python, Bash, Node.js, Go, Rust, or anything that reads stdin and writes stdout JSON.
-- **Event-driven pipelines** — Chain connectors into multi-step workflows with automatic payload propagation between steps.
-- **Step-level payload remap** — Use `with:` mappings to adapt inputs downstream without creating one-off plugin aliases.
-- **Cron and fuzzy schedules** — `cron`, intervals, and jitter to avoid thundering herds.
-- **HMAC-verified webhooks** — Inbound endpoints for GitHub, Discord, or any custom service.
-- **Parallel dispatch** — Bounded worker pool with per-plugin concurrency caps.
-- **Plugin aliasing** — Run multiple instances of the same connector (e.g., three different Discord channels) without duplicating code.
-- **SQLite queue** — At-least-once delivery; recovers orphaned jobs after a crash.
-- **AI-first surfaces** — `/skills` registry, auto-generated OpenAPI, `/topology` plugin graph, `/stopwatch/{plugin}` latency aggregation, `/system/doctor`, and `/system/selfcheck`.
-- **Local and private** — Single binary, no cloud dependency. State lives in files an agent can `ls` and a human can `git diff`.
+When the plugin emits `summaries.changed`, Ductile dispatches the pipeline and records execution in the ledger.
 
 ---
 
-## For AI operators
+# Core Concepts
 
-Ductile ships skill manifests so agents have structured ways to operate it. Copy skills to your agent's skills directory:
+## Plugins
 
-```bash
-cp -r skills/ductile/ ~/.claude/skills/ductile/
+Plugins do work.
+
+Examples:
+
+- Read a folder
+- Call an API
+- Execute a command
+- Send Discord messages
+- Read GitHub repositories
+- Generate AI summaries
+
+Plugins are polyglot.
+
+They can be written in:
+
+- Go
+- Python
+- Bash
+- Node.js
+- Rust
+- Any language capable of speaking the plugin protocol
+
+---
+
+## Events
+
+Events describe something that happened.
+
+Examples:
+
+```text
+summaries.changed
+github.pull_request.opened
+youtube.url.detected
+backup.completed
 ```
 
-| Skill | Pillar | Purpose |
-|---|---|---|
-| [`skills/ductile/`](skills/ductile/) | Run | Operate, configure, deploy |
-| [`skills/ductile-rca/`](skills/ductile-rca/) | RCA | Root cause analysis from the execution ledger |
-| [`skills/ductile-plugin-developer/`](skills/ductile-plugin-developer/) | Author | Build plugins to the manifest contract |
-
-Planned: `ductile-doctor` (Debug) and `ductile-plugin-tester` (Test).
+Events trigger pipelines.
 
 ---
 
-## Documentation
+## Pipelines
 
-- [**Getting Started**](docs/GETTING_STARTED.md) — From zero to a running pipeline.
-- [**Cookbook**](docs/COOKBOOK.md) — Recipes for Discord, YouTube, Astro, and more.
-- [**8 Idioms of Ductile**](docs/8_IDIOMS_OF_DUCTILE.md) — How to think in Ductile.
-- [**Constitution**](CONSTITUTION.md) — Why Ductile is shaped this way and what it refuses to be.
-- [**Architecture**](docs/ARCHITECTURE.md) — Technical deep dive.
-- [**Plugin Development**](docs/PLUGIN_DEVELOPMENT.md) — Build your own connectors.
-- [**Database Reference**](docs/DATABASE.md) — Schemas and useful SQL queries.
+Pipelines connect events to actions.
 
-## Contributing
+```yaml
+pipelines:
+  - name: github-policy
 
-- [**AGENTS.md**](AGENTS.md) — Design lenses, vocabulary, Go quality bar.
-- [**CONTRIBUTING.md**](CONTRIBUTING.md) — Build, test, and PR mechanics.
+    on: github.pull_request.opened
+
+    steps:
+      - uses: repo_policy
+
+      - uses: discord_notify
+```
+
+> `repo_policy` and `discord_notify` are not bundled in core — they ship as
+> separate plugins (the `ductile-plugins` and `ductile-discord` repos). Install a
+> plugin under a `plugin_root`, then enable it in `plugins.yaml`. The core repo
+> bundles a handful of example plugins (`echo`, `sys_exec`, `folder_watch`, …) to
+> get you started.
+
+Pipelines are the preferred orchestration model.
 
 ---
 
-## License
+## Queue
 
-Apache 2.0. See [LICENSE](LICENSE) for details.
+The queue provides:
 
-## Changelog
+- Durable execution
+- Retry handling
+- Crash recovery
+- Concurrency control
+- Execution history
 
-See [CHANGELOG.md](CHANGELOG.md).
+If Ductile crashes, jobs survive.
+
+---
+
+# AI Operator Features
+
+Ductile includes explicit affordances for AI operators.
+
+- Skills
+- OpenAPI descriptions
+- Topology inspection
+- Self-checks
+- Doctor commands
+- Execution lineage
+- Structured diagnostics
+- Machine-readable configuration
+
+The goal is not merely that AI can use Ductile.
+
+The goal is that AI can successfully administer Ductile.
+
+---
+
+# Capabilities
+
+- Event-driven pipelines
+- Scheduled jobs
+- HMAC-verified webhooks
+- Retry policies
+- Circuit breakers
+- Parallel execution
+- SQLite state store
+- Polyglot plugins
+- Remote relay
+- Vault-backed secrets
+- Configuration integrity verification
+- AI operator skills
+
+---
+
+# Documentation Structure
+
+## Tutorial
+
+Start here:
+
+- Getting Started
+
+Goal:
+
+> Get Ductile running and execute your first pipeline.
+
+---
+
+## How-To Guides
+
+Examples:
+
+- Configure webhooks
+- Build a Discord workflow
+- Create a scheduled task
+- Relay events between instances
+- Deploy to a server
+
+Goal:
+
+> Solve a specific problem.
+
+---
+
+## Reference
+
+Authoritative technical specifications:
+
+- Configuration Reference
+- Pipeline Schema
+- Plugin Protocol
+- Database Schema
+- API Reference
+
+Goal:
+
+> Look up facts.
+
+---
+
+## Explanation
+
+Why Ductile is built this way:
+
+- Constitution
+- Architecture
+- AI-first operations
+- Execution lineage
+- Design principles
+
+Goal:
+
+> Understand the theory behind the system.
+
+---
+
+# License
+
+Apache 2.0
