@@ -1,0 +1,5 @@
+
+## 2026-06-17 - Fix SQL injection risk and false positive G204
+**Vulnerability:** A `PRAGMA table_info` query used `fmt.Sprintf` for string interpolation with the table name, introducing a potential SQL injection vulnerability if the table name was ever unsanitized user input. Additionally, `gosec` flagged a false positive `G204` on a safe `exec.CommandContext` call inside the UNIX sidedoor audit checks.
+**Learning:** SQLite supports parameterizing `PRAGMA` queries using the table-valued function equivalent (`SELECT * FROM pragma_table_info(?)`), which securely binds variables instead of relying on string formatting. Also, explicit `#nosec G204` tags with comments explaining why inputs are trusted and separated are required to keep automated security scans clean while documenting intent.
+**Prevention:** Always use `SELECT * FROM pragma_table_info(?)` or parameterized queries for schema checks rather than `fmt.Sprintf` with raw `PRAGMA` statements. Use inline `#nosec` directives with justification for safe `exec.Command` patterns to prevent scan noise.

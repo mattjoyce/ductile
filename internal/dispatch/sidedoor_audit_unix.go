@@ -80,6 +80,9 @@ func (realOSLookup) SudoNoPasswd(username string) (bool, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), sudoProbeTimeout)
 	defer cancel()
 
+	// #nosec G204 -- The sudo binary path and username are trusted context inputs, and arguments are passed as discrete elements.
+	// While `username` comes from the host system, it is passed directly as the 5th argument to sudo,
+	// avoiding any shell interpretation. This query pattern is safe and required to check for NOPASSWD access.
 	cmd := exec.CommandContext(ctx, sudo, "-n", "-l", "-U", username)
 	cmd.Env = append(os.Environ(), "LC_ALL=C") // deterministic English error prose
 	out, runErr := cmd.CombinedOutput()
