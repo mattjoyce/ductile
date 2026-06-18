@@ -1,0 +1,4 @@
+## 2026-06-18 - Suppressing False Positive G204 Warnings for `exec.CommandContext`
+**Vulnerability:** `gosec` flags a medium severity issue (G204) when `exec.CommandContext` is called with variable arguments.
+**Learning:** This warning occurs even when arguments are safely separated and passed as distinct parameters to `exec.CommandContext`, preventing standard injection attacks. In cases where the executable binary path and arguments are fully validated or controlled (e.g., `sudo`, system utilities), the warning is a false positive.
+**Prevention:** When explicitly using `exec.CommandContext` or `exec.Command` with trusted and safely separated variables (and no string concatenation for commands), document the security intent using a `// #nosec G204` comment above the command execution along with a brief explanation to avoid raising alarms during automated security scans while maintaining auditability.
