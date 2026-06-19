@@ -80,6 +80,7 @@ func (realOSLookup) SudoNoPasswd(username string) (bool, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), sudoProbeTimeout)
 	defer cancel()
 
+	// #nosec G204 -- The `sudo` binary path is verified via LookPath, and `username` is constrained to the bounded local OS lookup results or safe string arguments.
 	cmd := exec.CommandContext(ctx, sudo, "-n", "-l", "-U", username)
 	cmd.Env = append(os.Environ(), "LC_ALL=C") // deterministic English error prose
 	out, runErr := cmd.CombinedOutput()
