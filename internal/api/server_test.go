@@ -151,3 +151,30 @@ func TestBindFailsFastOnOccupiedPort(t *testing.T) {
 		t.Fatalf("WaitServeStopped after failed Bind must return immediately, got %v", err)
 	}
 }
+
+// TestCORSMiddlewareWildcard verifies that when the wildcard "*" is in the
+// AllowedOrigins list, any origin is accepted and Access-Control-Allow-Credentials
+// is NOT sent, preventing credential leakage to untrusted origins.
+func TestCORSMiddlewareWildcard(t *testing.T) {
+	called := false
+	handler := corsMiddleware([]string{"*"}) (http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		called = true
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	req := httptest.NewRequest(http.MethodGet, "/jobs", nil)
+	req.Header.Set("Origin", "https://attacker.example")
+	resp := httptest.NewRecorder()
+
+	handler.ServeHTTP(resp, req)
+
+	if !called {
+		t.Fatal("wildcard should pass through to next handler")
+	}
+	if got := resp.Header().Get("Access-Control-Allow-Origin"); got != "*" {
+		t.Fatalf("Access-Control-Allow-Origin = %q, want *", got)
+	}
+	if got := resp.Header().Get("Access-Control-Allow-Credentials"); got != "" {
+		t.Fatalf("Access-Control-Allow-Credentials should not be set for wildcard")
+	}
+}
