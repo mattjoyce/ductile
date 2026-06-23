@@ -1,0 +1,4 @@
+## 2026-06-23 - Document Trusted Input in Subprocess Executions
+**Vulnerability:** Gosec flagged a potential G204 (CWE-78) vulnerability where a subprocess was launched with variables (e.g., `sudo` and `username`) instead of hardcoded strings, presenting a theoretical command injection risk.
+**Learning:** The execution pattern using `exec.CommandContext` with safely separated arguments (e.g., `exec.CommandContext(ctx, sudo, "-n", "-l", "-U", username)`) correctly prevents command injection. However, gosec flags this by default. The inputs were trusted because `sudo` was resolved from the PATH and `username` originated from the trusted local OS via `user.LookupId()`.
+**Prevention:** When dynamically executing commands with safely separated arguments from trusted sources, suppress `gosec` false positives by adding a `// #nosec G204` comment above the command execution accompanied by documentation explicitly explaining why the inputs are trusted.

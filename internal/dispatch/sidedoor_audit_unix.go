@@ -80,6 +80,9 @@ func (realOSLookup) SudoNoPasswd(username string) (bool, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), sudoProbeTimeout)
 	defer cancel()
 
+	// #nosec G204 -- The `sudo` variable is looked up from PATH (trusted binary).
+	// The `username` variable originates from `user.LookupId()` output which
+	// is a trusted local OS source, preventing arbitrary command injection.
 	cmd := exec.CommandContext(ctx, sudo, "-n", "-l", "-U", username)
 	cmd.Env = append(os.Environ(), "LC_ALL=C") // deterministic English error prose
 	out, runErr := cmd.CombinedOutput()
