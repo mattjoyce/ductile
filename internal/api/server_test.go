@@ -123,6 +123,50 @@ func TestCORSMiddlewareEmptyAllowList(t *testing.T) {
 	}
 }
 
+func TestCORSMiddlewareWildcardOrigin(t *testing.T) {
+	called := false
+	handler := corsMiddleware([]string{"*"})(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		called = true
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	req := httptest.NewRequest(http.MethodGet, "/jobs", nil)
+	req.Header.Set("Origin", "https://any.example")
+	resp := httptest.NewRecorder()
+
+	handler.ServeHTTP(resp, req)
+
+	if !called {
+		t.Fatal("wildcard origin should pass through to next handler")
+	}
+	assertHeader(t, resp, "Access-Control-Allow-Origin", "*")
+	if got := resp.Header().Get("Access-Control-Allow-Credentials"); got != "" {
+		t.Fatalf("Access-Control-Allow-Credentials = %q, want empty for wildcard origin", got)
+	}
+}
+
+func TestCORSMiddlewareWildcardPreflight(t *testing.T) {
+	handler := corsMiddleware([]string{"*"})(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		t.Fatal("preflight should not call next handler")
+	}))
+
+	req := httptest.NewRequest(http.MethodOptions, "/jobs", nil)
+	req.Header.Set("Origin", "https://any.example")
+	req.Header.Set("Access-Control-Request-Method", http.MethodPost)
+	req.Header.Set("Access-Control-Request-Headers", "Authorization, Content-Type")
+	resp := httptest.NewRecorder()
+
+	handler.ServeHTTP(resp, req)
+
+	if resp.Code != http.StatusNoContent {
+		t.Fatalf("status = %d, want %d", resp.Code, http.StatusNoContent)
+	}
+	assertHeader(t, resp, "Access-Control-Allow-Origin", "*")
+	if got := resp.Header().Get("Access-Control-Allow-Credentials"); got != "" {
+		t.Fatalf("Access-Control-Allow-Credentials = %q, want empty for wildcard origin", got)
+	}
+}
+
 func assertHeader(t *testing.T, resp *httptest.ResponseRecorder, key, want string) {
 	t.Helper()
 	if got := resp.Header().Get(key); got != want {
