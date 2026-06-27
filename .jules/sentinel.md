@@ -1,0 +1,4 @@
+## 2024-05-24 - Suppressing false positive shell injection warnings for safely passed arguments
+**Vulnerability:** gosec G204 (Subprocess launched with variable) warning in `sidedoor_audit_unix.go`.
+**Learning:** `exec.CommandContext` (and similar `exec` functions) take arguments as a slice of strings. As long as variables are passed as separate array elements instead of being concatenated into a single command string executed by a shell (like `/bin/sh -c`), there is no shell injection risk. This is because the OS executes the command with exactly those arguments, rather than parsing them for shell metacharacters.
+**Prevention:** When using `exec.Command` or `exec.CommandContext` with variable inputs, pass them as separate arguments. If `gosec` flags this as G204 (Subprocess launched with variable) and it's confirmed safe, suppress the false positive with a `// #nosec G204` comment that clearly explains why the input is trusted or safely handled.
