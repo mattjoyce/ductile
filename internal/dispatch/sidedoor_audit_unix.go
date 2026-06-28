@@ -80,6 +80,7 @@ func (realOSLookup) SudoNoPasswd(username string) (bool, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), sudoProbeTimeout)
 	defer cancel()
 
+	// #nosec G204 -- The arguments are safely separated, meaning 'username' cannot inject arbitrary commands or options into the exec invocation.
 	cmd := exec.CommandContext(ctx, sudo, "-n", "-l", "-U", username)
 	cmd.Env = append(os.Environ(), "LC_ALL=C") // deterministic English error prose
 	out, runErr := cmd.CombinedOutput()
