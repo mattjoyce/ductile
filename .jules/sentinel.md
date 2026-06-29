@@ -1,0 +1,4 @@
+## 2026-06-29 - False Positive in Subprocess Execution Analysis
+**Vulnerability:** Gosec flagged `cmd := exec.CommandContext(ctx, sudo, "-n", "-l", "-U", username)` as CWE-78 (G204: Subprocess launched with a variable).
+**Learning:** Go's `exec.Command` safely separates command arguments from the executable path, bypassing shell execution entirely. In this specific case, `username` is safely passed as an argument to the `-U` flag of `sudo`, making it immune to shell injection. The warning was a false positive inherent to static analysis tools lacking deeper context.
+**Prevention:** When intentionally constructing commands with variables as direct arguments, explicitly suppress the Gosec warning with a `#nosec G204` comment that documents *why* the input is trusted (e.g., bypassing shell parsing, arguments vs commands) to maintain clear security intent and prevent future developers from misinterpreting the code's safety.
