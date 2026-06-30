@@ -1,5 +1,23 @@
 # Changelog
 
+## 2026-06-30 — v1.0.1
+
+A maintenance release: one durability fix, plus a sweep that collapsed ~20 duplicate
+security-bot PRs down to the handful of changes that were actually real.
+
+- **Webhook enqueue survives a client hang-up (#152, #153):** the durable enqueue is now
+  detached from the HTTP request context (`context.WithoutCancel` plus a bounded 10s
+  timeout), so a client disconnect or a keep-alive connection-reuse race can no longer
+  cancel the transaction mid-commit and turn a valid, HMAC-verified webhook into a 500.
+- **Trigger handlers no longer swallow marshal errors (#154):** `json.Marshal` failures in
+  the pipeline and plugin trigger paths now return 500 instead of enqueuing a zero-value
+  payload.
+- **Security false-positive cleanup (#154):** `sqliteColumnExists` uses a parameterised
+  `pragma_table_info(?)` query, and the sudo side-door probe passes a constant `argv[0]` —
+  silencing gosec SQL-injection / G204 findings that were never reachable (table names and
+  sudo arguments are not user-controlled). No behaviour change. Consolidates and supersedes
+  ~20 duplicate Sentinel-bot PRs; `.jules/` is now gitignored.
+
 ## 2026-06-10 — v1.0.0
 
 First tagged release. The headline is the secrets epoch: ductile now owns its credentials
