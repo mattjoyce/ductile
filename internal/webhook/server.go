@@ -15,6 +15,12 @@ import (
 	"github.com/mattjoyce/ductile/internal/queue"
 )
 
+// enqueueTimeout bounds the durable enqueue once a webhook has been accepted.
+// It is intentionally decoupled from the HTTP request context so a client
+// hang-up or a keep-alive connection-reuse race cannot cancel the enqueue
+// transaction mid-commit (see #152).
+const enqueueTimeout = 10 * time.Second
+
 // Server represents the webhook HTTP server.
 type Server struct {
 	config Config
@@ -185,8 +191,15 @@ func (s *Server) handleWebhook(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Enqueue job
-	jobID, err := s.queue.Enqueue(ctx, queue.EnqueueRequest{
+	// Enqueue job. The HMAC is verified and the body fully read by now, so the
+	// durable enqueue must survive the request connection: a client hang-up or a
+	// keep-alive reuse race would otherwise cancel the request context mid-commit,
+	// auto-rolling-back the tx so tx.Commit() fails ("transaction has already been
+	// committed or rolled back") and a valid webhook 500s. Detach from request
+	// cancellation, but keep it bounded. (#152)
+	enqCtx, cancelEnq := context.WithTimeout(context.WithoutCancel(ctx), enqueueTimeout)
+	defer cancelEnq()
+	jobID, err := s.queue.Enqueue(enqCtx, queue.EnqueueRequest{
 		Plugin:      endpoint.Plugin,
 		Command:     endpoint.Command,
 		Payload:     json.RawMessage(body),

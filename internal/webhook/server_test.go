@@ -87,6 +87,60 @@ func TestHandleWebhook_ValidSignature(t *testing.T) {
 	}
 }
 
+// TestHandleWebhook_SurvivesRequestCancellation reproduces #152: a verified
+// webhook must still enqueue even when the HTTP request context is already
+// cancelled (a client hang-up or keep-alive connection-reuse race). Before the
+// fix the handler passed the request context straight into the enqueue
+// transaction, so BeginTx/Commit on a cancelled context rolled back and the
+// caller got a 500 ("transaction has already been committed or rolled back").
+func TestHandleWebhook_SurvivesRequestCancellation(t *testing.T) {
+	secret := "test-secret"
+	body := []byte(`{"event":"push"}`)
+	signature := formatGitHubSignature(computeExpectedSignature(body, secret))
+
+	config := Config{
+		Listen: "127.0.0.1:0",
+		Endpoints: []EndpointConfig{
+			{
+				Path:            "/webhook/github",
+				Plugin:          "github-handler",
+				Command:         "handle",
+				Secret:          secret,
+				SignatureHeader: "X-Hub-Signature-256",
+				MaxBodySize:     1048576,
+			},
+		},
+	}
+
+	db := setupTestDB(t)
+	q := queue.New(db)
+	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelError}))
+	server := New(config, q, logger)
+
+	// Request whose context is already cancelled — the client connection is gone.
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	req := httptest.NewRequest("POST", "/webhook/github", bytes.NewReader(body)).WithContext(ctx)
+	req.Header.Set("X-Hub-Signature-256", signature)
+	rec := httptest.NewRecorder()
+
+	server.handleWebhook(rec, req)
+
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("status = %d, want %d (enqueue must survive a cancelled request ctx, #152)", rec.Code, http.StatusAccepted)
+	}
+	var resp TriggerResponse
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if resp.JobID == "" {
+		t.Fatal("expected non-empty job id")
+	}
+	if _, err := q.GetJobByID(context.Background(), resp.JobID); err != nil {
+		t.Fatalf("job should be durably enqueued despite a cancelled request ctx: %v", err)
+	}
+}
+
 func TestHandleWebhook_InvalidSignature(t *testing.T) {
 	secret := "test-secret"
 	body := []byte(`{"event":"push"}`)
