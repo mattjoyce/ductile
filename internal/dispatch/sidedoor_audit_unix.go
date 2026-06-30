@@ -73,14 +73,13 @@ func (realOSLookup) GroupNamesForUID(uid int) ([]string, error) {
 // any other failure is reported inconclusive so the audit can react (fail-closed
 // under strict for a confined account).
 func (realOSLookup) SudoNoPasswd(username string) (bool, error) {
-	sudo, err := exec.LookPath("sudo")
-	if err != nil {
+	if _, err := exec.LookPath("sudo"); err != nil {
 		return false, nil // no sudo binary -> no sudo side-door
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), sudoProbeTimeout)
 	defer cancel()
 
-	cmd := exec.CommandContext(ctx, sudo, "-n", "-l", "-U", username)
+	cmd := exec.CommandContext(ctx, "sudo", "-n", "-l", "-U", username)
 	cmd.Env = append(os.Environ(), "LC_ALL=C") // deterministic English error prose
 	out, runErr := cmd.CombinedOutput()
 	text := string(out)

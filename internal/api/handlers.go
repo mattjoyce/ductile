@@ -241,7 +241,13 @@ func (s *Server) handlePipelineTrigger(w http.ResponseWriter, r *http.Request) {
 		// Wrap payload for handle command
 		enqueuePayload := req.Payload
 		if d.Command == "handle" {
-			enqueuePayload, _ = json.Marshal(event)
+			var err error
+			enqueuePayload, err = json.Marshal(event)
+			if err != nil {
+				s.logger.Error("failed to marshal handle event payload", "error", err)
+				s.writeError(w, http.StatusInternalServerError, "failed to marshal handle event payload")
+				return
+			}
 		}
 
 		jobID, err := s.queue.Enqueue(r.Context(), queue.EnqueueRequest{
@@ -414,7 +420,13 @@ func (s *Server) handlePluginTrigger(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		}
-		enqueuePayload, _ = json.Marshal(event)
+		var err error
+		enqueuePayload, err = json.Marshal(event)
+		if err != nil {
+			s.logger.Error("failed to marshal handle event payload", "error", err)
+			s.writeError(w, http.StatusInternalServerError, "failed to marshal handle event payload")
+			return
+		}
 	}
 
 	jobID, err := s.queue.Enqueue(r.Context(), queue.EnqueueRequest{
