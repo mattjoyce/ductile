@@ -53,6 +53,9 @@ go.work.sum
 .agent-notes/
 MEMORY/
 
+# Jules / Sentinel bot learning log (never commit; source of duplicate-PR churn)
+.jules/
+
 # Fixture state
 test/fixtures/docker/**/state/
 test/fixtures/docker/**/config/state/
