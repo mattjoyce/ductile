@@ -1,0 +1,4 @@
+## 2026-06-30 - Fix Unhandled JSON Marshal Errors & CORS Wildcard Credential Leak
+**Vulnerability:** Found unhandled `json.Marshal` errors in `internal/api/handlers.go` and a CORS wildcard misconfiguration in `internal/api/server.go` where `AllowedOrigins: ["*"]` could potentially emit `Access-Control-Allow-Credentials: true`.
+**Learning:** `json.Marshal` errors can fail silently if ignored, leading to zero-value payloads being enqueued. The CORS specification forbids setting `Access-Control-Allow-Credentials: true` when `Access-Control-Allow-Origin` is `*`; allowing this combination violates the spec and risks credential leakage.
+**Prevention:** Always explicitly check the `error` return value of `json.Marshal`. When implementing CORS middleware, explicitly ensure that if the wildcard `*` is matched, the credentials header is omitted.
