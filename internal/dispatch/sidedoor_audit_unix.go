@@ -79,6 +79,7 @@ func (realOSLookup) SudoNoPasswd(username string) (bool, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), sudoProbeTimeout)
 	defer cancel()
 
+	// #nosec G204 -- The exec.CommandContext API safely escapes individual arguments. The username is passed directly as a value to the -U flag, avoiding shell injection risks.
 	cmd := exec.CommandContext(ctx, "sudo", "-n", "-l", "-U", username)
 	cmd.Env = append(os.Environ(), "LC_ALL=C") // deterministic English error prose
 	out, runErr := cmd.CombinedOutput()
