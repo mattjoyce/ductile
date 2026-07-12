@@ -222,7 +222,7 @@ hypothesis every time.
 - Fix is in plugin code → `ductile-plugin-developer`
 - Fix is in config / lock / deploy → `ductile`
 - Fix is "operator forgot a step" — close the incident with a runbook update in
-  `docs/OPERATOR_GUIDE.md` (idiom 10: observability is a feature).
+  `docs/OPERATOR_GUIDE.md` (idiom 8: every surface is agent-drivable).
 
 ## References
 

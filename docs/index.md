@@ -24,7 +24,7 @@ See the [Constitution](https://github.com/mattjoyce/ductile/blob/main/CONSTITUTI
 
     ---
 
-    Architecture, pipelines, routing, scheduling, and the ten idioms that make Ductile feel natural.
+    Architecture, pipelines, routing, scheduling, and the eight idioms that make Ductile feel natural.
 
     [:octicons-arrow-right-24: 8 Idioms](8_IDIOMS_OF_DUCTILE.md)
 
