@@ -102,6 +102,30 @@ func TestCORSMiddlewareDisallowedOrigin(t *testing.T) {
 
 // TestCORSMiddlewareEmptyAllowList verifies that no origin receives credentialed
 // headers when AllowedOrigins is empty — the safe production default.
+func TestCORSMiddlewareWildcard(t *testing.T) {
+	called := false
+	handler := corsMiddleware([]string{"*"})(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		called = true
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	req := httptest.NewRequest(http.MethodGet, "/jobs", nil)
+	req.Header.Set("Origin", "https://any.example")
+	resp := httptest.NewRecorder()
+
+	handler.ServeHTTP(resp, req)
+
+	if !called {
+		t.Fatal("wildcard allow list should pass through to next handler")
+	}
+	if got := resp.Header().Get("Access-Control-Allow-Origin"); got != "*" {
+		t.Fatalf("Access-Control-Allow-Origin = %q, want %q when allow list is wildcard", got, "*")
+	}
+	if got := resp.Header().Get("Access-Control-Allow-Credentials"); got != "" {
+		t.Fatalf("Access-Control-Allow-Credentials = %q, want empty when allow list is wildcard", got)
+	}
+}
+
 func TestCORSMiddlewareEmptyAllowList(t *testing.T) {
 	called := false
 	handler := corsMiddleware(nil)(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
