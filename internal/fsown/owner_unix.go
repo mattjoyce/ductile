@@ -3,9 +3,7 @@
 package fsown
 
 import (
-	"errors"
 	"fmt"
-	"io/fs"
 	"os"
 	"os/user"
 	"path/filepath"
@@ -22,28 +20,24 @@ type Owner struct {
 // Desired resolves who a service-read artifact *should* belong to (#167, #169,
 // #170, #171).
 //
-// Order matters. An existing file wins, because an operator who has already
-// chowned it has stated the answer; re-deriving from the directory would undo
-// that. Otherwise the containing directory decides — on a privsep install
-// /etc/ductile and the state dir are owned by the service user, which is exactly
-// the account that has to read the artifact back.
+// The containing directory decides, always. On a privsep install /etc/ductile
+// and the state dir are owned by the service user — precisely the account that
+// has to read the artifact back — so the directory is the authoritative statement
+// of intent.
+//
+// An earlier version preferred an existing file's owner, on the theory that an
+// operator who had already chowned it had stated the answer. The posture harness
+// refuted that: on an install already broken by #167 the existing manifest is
+// root-owned *because of the bug*, so deferring to it meant `ductile config lock`
+// — the operator's natural remediation — could not repair the install. It also
+// let anyone able to place a file at the path choose the uid of the next write.
+// One rule fixed both: never take ownership intent from the artifact being
+// replaced.
 //
 // A false second return means "no opinion" and callers must leave ownership
 // alone: the directory could not be stat'ed, or this platform's FileInfo does
 // not carry a Unix owner.
 func Desired(path string) (Owner, bool) {
-	switch fi, err := os.Stat(path); {
-	case err == nil:
-		if owner, ok := ownerOf(fi); ok {
-			return owner, true
-		}
-	case !errors.Is(err, fs.ErrNotExist):
-		// The file is there but unreadable. Falling through to the directory would
-		// quietly overrule an operator who had already chowned it — the one thing
-		// the file-wins rule exists to prevent. Decline to guess instead.
-		return Owner{}, false
-	}
-
 	fi, err := os.Stat(filepath.Dir(path))
 	if err != nil {
 		return Owner{}, false

@@ -49,52 +49,56 @@ func TestDesired_FallsBackToDirectory(t *testing.T) {
 	}
 }
 
-// #167: an existing file states the answer — an operator who already chowned it
-// must not have that undone by re-deriving from the directory.
-func TestDesired_ExistingFileWinsOverDirectory(t *testing.T) {
+// #167: the directory decides, even when a differently-owned artifact is already
+// there. This is the self-healing property: on an install already broken by #167
+// the existing manifest is root-owned *because of the bug*, so deferring to it
+// would mean `config lock` could not repair the install. The posture harness
+// failed on exactly this, which is how the rule got corrected.
+func TestDesired_DirectoryDecidesOverExistingFile(t *testing.T) {
 	requireRoot(t)
 	dir := t.TempDir()
 	path := filepath.Join(dir, ".checksums")
 	if err := os.WriteFile(path, []byte("version: 2\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Chown(path, 12345, 12345); err != nil {
+	if err := os.Chown(dir, 12345, 12345); err != nil {
 		t.Skipf("host refuses chown (user namespace or ownership-less fs): %v", err)
 	}
-	dirUID, _ := statOwner(t, dir)
-	if dirUID == 12345 {
-		t.Skip("fixture uid collides with the directory owner")
+	// The stale artifact claims a different owner; it must not win.
+	if err := os.Chown(path, 0, 0); err != nil {
+		t.Skipf("host refuses chown: %v", err)
 	}
 
 	got, ok := Desired(path)
 	if !ok {
-		t.Fatal("expected an ownership opinion for an existing file")
+		t.Fatal("expected an ownership opinion")
 	}
 	if got.UID != 12345 || got.GID != 12345 {
-		t.Fatalf("owner = %d:%d, want the existing file's 12345:12345", got.UID, got.GID)
+		t.Fatalf("owner = %d:%d, want the directory's 12345:12345 — "+
+			"a stale root-owned artifact must not dictate the next write", got.UID, got.GID)
 	}
 }
 
-// #167 (found by postmortem of the fix itself): an existing-but-unreadable file
-// must produce no opinion rather than falling back to the directory — silently
-// re-deriving would overrule an operator who had already chowned it.
-func TestDesired_UnreadableExistingFileYieldsNoOpinion(t *testing.T) {
+// #167: an unreadable artifact must not change the answer either. The directory
+// stats independently of the file, so ownership intent survives a manifest the
+// caller cannot open — which is the state a broken install is actually in.
+func TestDesired_UnreadableExistingFileDoesNotBlockResolution(t *testing.T) {
 	if os.Geteuid() == 0 {
 		t.Skip("root bypasses file permissions")
 	}
 	dir := t.TempDir()
+	wantUID, wantGID := statOwner(t, dir)
 	path := filepath.Join(dir, ".checksums")
-	if err := os.WriteFile(path, []byte("version: 2\n"), 0600); err != nil {
+	if err := os.WriteFile(path, []byte("version: 2\n"), 0000); err != nil {
 		t.Fatal(err)
 	}
-	// Remove traverse permission so stat on the file fails while the file exists.
-	if err := os.Chmod(dir, 0000); err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = os.Chmod(dir, 0700) })
 
-	if _, ok := Desired(path); ok {
-		t.Fatal("expected no ownership opinion for an unreadable existing file")
+	got, ok := Desired(path)
+	if !ok {
+		t.Fatal("expected an ownership opinion despite the unreadable artifact")
+	}
+	if got.UID != wantUID || got.GID != wantGID {
+		t.Fatalf("owner = %d:%d, want directory owner %d:%d", got.UID, got.GID, wantUID, wantGID)
 	}
 }
 
@@ -171,15 +175,12 @@ func TestApplyToTemp_UnprivilegedChownFailureIsNotFatal(t *testing.T) {
 		t.Skip("root is expected to fail hard; see the requireRoot sibling")
 	}
 	dir := t.TempDir()
-	path := filepath.Join(dir, ".checksums")
-	if err := os.WriteFile(path, []byte("version: 2\n"), 0600); err != nil {
-		t.Fatal(err)
-	}
-	// An owner we have no authority to assign, reached via the existing-file rule.
-	if err := os.Chown(path, 12345, 12345); err == nil {
+	// Stage a desired owner we have no authority to assign. The directory decides,
+	// so the refusal has to be staged there rather than on the artifact.
+	if err := os.Chown(dir, 12345, 12345); err == nil {
 		t.Skip("caller can chown freely; cannot stage the refusal")
 	}
-
+	path := filepath.Join(dir, ".checksums")
 	tmp := filepath.Join(dir, ".checksums.tmp-unpriv")
 	if err := os.WriteFile(tmp, []byte("x"), 0600); err != nil {
 		t.Fatal(err)
