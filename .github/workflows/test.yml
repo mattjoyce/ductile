@@ -32,6 +32,43 @@ jobs:
           sudo /tmp/dispatch.test -test.v -test.run \
             'TestPrivsepAccountCannotReadAgeKey|TestPrivsepNegativeSuite|TestReconcileAccountFilesystemAsRoot|TestHasDropCapabilityAsRoot|TestBindAccountToFingerprint|TestEvaluateBootGate|TestResolveAccount|TestApplyAccountCredential|TestValidateAccounts'
 
+      # Ownership gate (#175). The gate above covered ./internal/dispatch/ and
+      # nothing else, so no test in config/vault/storage/cmd could observe a uid
+      # problem — which is exactly how #167 and its siblings (#169-#171) reached
+      # production. These packages own the artifacts the CLI writes and the daemon
+      # reads, so they need the same root treatment.
+      #
+      # No test-name allowlist here: the whole package runs as root, so a new
+      # privileged test is picked up without editing CI. Off-root the same tests
+      # skip, and `Run fast tests` above has already covered the unprivileged paths.
+      - name: Ownership suite (privileged gate)
+        run: |
+          set -e
+          for pkg in internal/fsown internal/config internal/secrets internal/vault internal/storage cmd/ductile; do
+            name="$(echo "$pkg" | tr / -)"
+            go test -c -o "/tmp/${name}.test" "./${pkg}/"
+            echo "::group::privileged ${pkg}"
+            # Run from the package directory: several suites resolve testdata/
+            # relative to cwd, and `sudo` from elsewhere silently fails them.
+            # Preserve PATH so tests that shell out to `go build` still work.
+            ( cd "${pkg}" && sudo --preserve-env=PATH "/tmp/${name}.test" -test.v )
+            echo "::endgroup::"
+          done
+
+      # #167 ISC-17: a chown refusal cannot be staged on an ordinary filesystem as
+      # root, so the fixture is a user namespace — unmapped uids appear as 65534 and
+      # chown to them returns EINVAL, giving a genuine refusal to a process that
+      # believes it is root.
+      - name: Ownership abort path (user namespace)
+        run: |
+          mkdir -p /tmp/isc17ns
+          printf 'version: 2\nhashes: {}\n# original\n' > /tmp/isc17ns/.checksums
+          sudo chown 65534:65534 /tmp/isc17ns/.checksums
+          chmod 0777 /tmp/isc17ns && sudo chmod 0666 /tmp/isc17ns/.checksums
+          go test -c -o /tmp/config-ns.test ./internal/config/
+          unshare -U -r env DUCTILE_TEST_UNCHOWNABLE_DIR=/tmp/isc17ns \
+            /tmp/config-ns.test -test.v -test.run TestWriteChecksumsAtomic_FailedOwnershipLeavesManifestIntact
+
       - name: Run lint
         uses: golangci/golangci-lint-action@v6
         with:
