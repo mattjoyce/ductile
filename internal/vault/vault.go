@@ -12,6 +12,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/mattjoyce/ductile/internal/fsown"
 	"github.com/mattjoyce/ductile/internal/secrets"
 	"gopkg.in/yaml.v3"
 )
@@ -347,6 +348,13 @@ func writeFileAtomic(path string, data []byte) error {
 		return err
 	}
 	if err := tmp.Close(); err != nil {
+		return err
+	}
+	// #170: the vault blob and — via rotate-key, which renames a staged file over
+	// the age key's inode — secret-zero itself must stay readable by the service
+	// account. Under sudo they would otherwise land root-owned and the daemon
+	// could decrypt nothing, with the failure surfacing far from the cause.
+	if err := fsown.ApplyToTemp(tmpName, path); err != nil {
 		return err
 	}
 	if err := os.Rename(tmpName, path); err != nil {

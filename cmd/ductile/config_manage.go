@@ -8,6 +8,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"sort"
@@ -17,6 +18,7 @@ import (
 
 	"github.com/mattjoyce/ductile/internal/config"
 	"github.com/mattjoyce/ductile/internal/doctor"
+	"github.com/mattjoyce/ductile/internal/fsown"
 	"github.com/mattjoyce/ductile/internal/plugin"
 	"github.com/mattjoyce/ductile/internal/router/dsl"
 	"github.com/mattjoyce/ductile/internal/vault"
@@ -231,7 +233,15 @@ func verifyPluginFingerprintsForConfig(configPath string, owner *vault.Vault) er
 	configDir := resolveConfigDir(configPath)
 	manifest, err := config.LoadChecksums(configDir)
 	if err != nil {
-		return nil
+		// #173: only a *missing* manifest is downgrade-safe. Returning nil for
+		// every error meant an unreadable, truncated or wrong-version manifest
+		// silently skipped plugin attestation entirely and admitted the boot —
+		// fail-open on a security gate. plugin_verifier.go:57 already had the
+		// right posture; this matches it.
+		if errors.Is(err, fs.ErrNotExist) {
+			return nil
+		}
+		return fmt.Errorf("cannot read attestation (.checksums): %w%s", err, fsown.Hint(filepath.Join(configDir, ".checksums")))
 	}
 	cfg, err := config.Load(configPath)
 	if err != nil {
@@ -407,6 +417,12 @@ func writeFileAtomicWithBackup(path string, data []byte, mode os.FileMode) error
 		if err := os.WriteFile(path+".bak", current, mode); err != nil {
 			return err
 		}
+		// #169: the sidecar inherits the *original file's* intended owner, not its
+		// own — a root-owned .bak next to a service-owned config is the same trap
+		// one restore away.
+		if err := fsown.ApplyToTemp(path+".bak", path); err != nil {
+			return err
+		}
 	}
 
 	tmpFile, err := os.CreateTemp(filepath.Dir(path), "."+filepath.Base(path)+".tmp-")
@@ -425,6 +441,13 @@ func writeFileAtomicWithBackup(path string, data []byte, mode os.FileMode) error
 		return err
 	}
 	if err := tmpFile.Close(); err != nil {
+		return err
+	}
+	// #169: negotiate ownership before the rename publishes the file, exactly as
+	// the .checksums write does (#167). Without this, any `sudo` config edit on a
+	// privsep install leaves the daemon unable to read its own config — and it
+	// surfaces as "unlocked changes detected" rather than a permission error.
+	if err := fsown.ApplyToTemp(tmpPath, path); err != nil {
 		return err
 	}
 	if err := os.Rename(tmpPath, path); err != nil {

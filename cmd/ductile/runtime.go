@@ -22,6 +22,7 @@ import (
 	"github.com/mattjoyce/ductile/internal/dispatch"
 	"github.com/mattjoyce/ductile/internal/doctor"
 	"github.com/mattjoyce/ductile/internal/events"
+	"github.com/mattjoyce/ductile/internal/fsown"
 	"github.com/mattjoyce/ductile/internal/lock"
 	"github.com/mattjoyce/ductile/internal/log"
 	"github.com/mattjoyce/ductile/internal/plugin"
@@ -255,13 +256,21 @@ func resolveConfigDir(configPath string) string {
 // fresh vault load, preserving prior behaviour.
 func verifyReloadIntegrity(configPath string, failOnDrift bool, owner *vault.Vault) error {
 	configDir := resolveConfigDir(configPath)
+	// #172: propagate the cause. These two branches used to assert "unlocked
+	// changes detected" for every failure, which covers at least five distinct
+	// causes — EACCES on the config dir, a deleted config.yaml, an unreadable
+	// scopes/, ENOTDIR, a dangling symlink — and points the operator at
+	// `config lock`, the wrong subsystem. Under sudo that remediation recreates
+	// the ownership defect that caused the problem, which is the #167 loop
+	// arriving from a different entry point.
 	files, err := config.DiscoverConfigFiles(configDir)
 	if err != nil {
-		return fmt.Errorf("config reload rejected: unlocked changes detected")
+		return fmt.Errorf("config reload rejected: cannot read config directory %s: %w%s",
+			configDir, err, fsown.Hint(configDir))
 	}
 	result, err := config.VerifyIntegrity(configDir, files)
 	if err != nil {
-		return fmt.Errorf("config reload rejected: unlocked changes detected")
+		return fmt.Errorf("config reload rejected: integrity check failed: %w", err)
 	}
 	if !result.Passed {
 		return fmt.Errorf("config reload rejected: %s", strings.Join(result.Errors, "; "))
@@ -276,8 +285,15 @@ func verifyReloadIntegrity(configPath string, failOnDrift bool, owner *vault.Vau
 }
 
 func loadPluginFingerprintRecords(configPath string, cfg *config.Config, registry *plugin.Registry) []configsnapshot.PluginFingerprintRecord {
+	if cfg == nil || len(cfg.Plugins) == 0 {
+		return nil
+	}
+	// #173: separated from the "no plugins configured" case above. Collapsing the
+	// two meant an unreadable manifest recorded zero fingerprints, so the config
+	// snapshot showed a clean plugin table for a box whose attestation state was
+	// actually unknowable.
 	manifest, err := config.LoadChecksums(resolveConfigDir(configPath))
-	if err != nil || cfg == nil || len(cfg.Plugins) == 0 {
+	if err != nil {
 		return nil
 	}
 	locked := make(map[string]config.PluginFingerprint, len(manifest.PluginFingerprints))

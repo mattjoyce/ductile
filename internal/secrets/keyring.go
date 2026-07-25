@@ -5,6 +5,7 @@ import (
 	"os"
 
 	"filippo.io/age"
+	"github.com/mattjoyce/ductile/internal/fsown"
 )
 
 // Keyring holds the age identities the gateway uses to decrypt config at load.
@@ -77,7 +78,13 @@ func LoadKeyringFromFile(path string) (*Keyring, error) {
 	// #nosec G304 -- key path is operator-controlled local input.
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return nil, fmt.Errorf("age key file %q: %w", path, err)
+		// #170: the mode check above asks whether anyone *else* can read the key.
+		// It never asked whether *we* can — so a root-owned 0600 key, which is what
+		// `sudo ductile vault rotate-key` used to produce, sailed through the gate
+		// that exists to make filesystem isolation meaningful and then failed here
+		// with a bare "permission denied". Name the ownership, since that is the
+		// remediation.
+		return nil, fmt.Errorf("age key file %q: %w%s", path, err, fsown.Hint(path))
 	}
 	ids, err := ParseIdentities(data)
 	if err != nil {
