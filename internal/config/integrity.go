@@ -1,8 +1,12 @@
 package config
 
 import (
+	"errors"
 	"fmt"
+	"io/fs"
 	"path/filepath"
+
+	"github.com/mattjoyce/ductile/internal/fsown"
 )
 
 // VerifyIntegrity checks all discovered files against the .checksums manifest.
@@ -13,6 +17,22 @@ func VerifyIntegrity(configDir string, files *ConfigFiles) (*IntegrityResult, er
 
 	checksumPath := filepath.Join(configDir, ".checksums")
 	manifest, err := LoadChecksums(configDir)
+	if err != nil && !errors.Is(err, fs.ErrNotExist) {
+		// The manifest exists but cannot be used — unreadable (EACCES),
+		// unparseable, or an unsupported version. This is categorically not the
+		// missing-manifest case and must not be reported as one (#167): the
+		// remediation for "missing" is `config lock`, which under sudo rewrites
+		// the same root-owned file and loops the operator straight back here.
+		//
+		// Always a hard error, even where a *missing* manifest would only warn.
+		// Absent means integrity was never enabled; unusable means it was
+		// enabled and cannot be checked — degrading that to a warning would let
+		// verify_integrity_on_boot pass while verifying nothing.
+		result.Passed = false
+		result.Errors = append(result.Errors,
+			fmt.Sprintf("cannot use .checksums manifest at %s: %v%s", checksumPath, err, fsown.Hint(checksumPath)))
+		return result, nil
+	}
 	if err != nil {
 		// No .checksums file at all
 		highSec := files.HighSecurityFiles()

@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/mattjoyce/ductile/internal/fsown"
 	"github.com/zeebo/blake3"
 	"gopkg.in/yaml.v3"
 )
@@ -179,6 +180,14 @@ func writeChecksumsAtomic(path string, manifest ChecksumManifest) error {
 		cleanup()
 		return fmt.Errorf("failed to close checksums temp: %w", err)
 	}
+	// #167: inherit the intended owner before publishing. Under `sudo config
+	// lock` on a privsep install the temp file is root-owned; without this the
+	// renamed manifest is unreadable by the service account and the next boot
+	// fails admission.
+	if err := fsown.ApplyToTemp(tmpPath, path); err != nil {
+		cleanup()
+		return err
+	}
 	if err := os.Rename(tmpPath, path); err != nil {
 		cleanup()
 		return fmt.Errorf("failed to rename checksums: %w", err)
@@ -194,8 +203,11 @@ func LoadChecksums(configDir string) (*ChecksumManifest, error) {
 	// #nosec G304 -- config paths are operator-controlled local inputs.
 	data, err := os.ReadFile(checksumPath)
 	if err != nil {
+		// The wrap keeps errors.Is(err, fs.ErrNotExist) true so callers can tell
+		// "never locked" from "locked but unreadable" (#167). Flattening the
+		// cause here is what let a permission failure surface as a missing file.
 		if os.IsNotExist(err) {
-			return nil, fmt.Errorf("checksums file not found (run 'ductile config lock')")
+			return nil, fmt.Errorf("checksums file not found (run 'ductile config lock'): %w", err)
 		}
 		return nil, fmt.Errorf("failed to read checksums: %w", err)
 	}
