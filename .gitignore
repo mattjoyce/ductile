@@ -77,3 +77,6 @@ test-artifacts/
 
 # stray pytest cache (plugin tests live in the separate ductile-plugins repo)
 .pytest_cache/
+
+# graphify knowledge-graph output (generated, ~16M)
+graphify-out/
