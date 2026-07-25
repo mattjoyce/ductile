@@ -511,9 +511,27 @@ func (d *Doctor) validateUsesCycles(r *Result) {
 }
 
 // warnUnusedPlugins warns about discovered plugins not referenced in config.
+//
+// A manifest is "referenced" two ways (#168): directly, when a config key equals
+// the manifest name, or indirectly, when an aliased instance points at it via
+// `uses:`. Following `uses:` here keeps this check in step with the rest of the
+// alias machinery — validateUsesCycles walks the same edge — so a manifest wired
+// only through aliases is no longer reported unused.
+//
+// Enabled is deliberately not consulted, matching the direct-key branch: a
+// disabled entry is still a reference, and "unused" means "nothing in config
+// mentions this manifest", not "nothing currently runs it".
 func (d *Doctor) warnUnusedPlugins(r *Result) {
+	referenced := make(map[string]struct{}, len(d.cfg.Plugins))
+	for key, pc := range d.cfg.Plugins {
+		referenced[key] = struct{}{}
+		if uses := strings.TrimSpace(pc.Uses); uses != "" {
+			referenced[uses] = struct{}{}
+		}
+	}
+
 	for name := range d.registry.All() {
-		if _, inConfig := d.cfg.Plugins[name]; !inConfig {
+		if _, inConfig := referenced[name]; !inConfig {
 			d.addWarning(r, "unused", "",
 				fmt.Sprintf("plugin %q discovered but not referenced in config", name))
 		}

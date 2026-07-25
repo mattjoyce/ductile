@@ -581,3 +581,87 @@ func TestValidatePrivsepPostureWarnsOverrideOnConfiguredAccounts(t *testing.T) {
 		t.Fatalf("expected a privsep override warning, got: %+v", r.Warnings)
 	}
 }
+
+// aliasConfig builds a config whose only reference to the "touchstone_trigger"
+// manifest is through two aliased instances — the documented `uses:` pattern from
+// #168, where no config key matches the manifest name.
+func aliasConfig() *config.Config {
+	cfg := validConfig()
+	delete(cfg.Plugins, "echo")
+	cfg.Plugins["touchstone_harvest"] = config.PluginConf{
+		Uses:      "touchstone_trigger",
+		Enabled:   true,
+		Schedules: []config.ScheduleConfig{{Every: "30m", Command: "poll"}},
+	}
+	cfg.Plugins["touchstone_score"] = config.PluginConf{
+		Uses:      "touchstone_trigger",
+		Enabled:   true,
+		Schedules: []config.ScheduleConfig{{Every: "35m", Command: "poll"}},
+	}
+	return cfg
+}
+
+func triggerPlugin() *plugin.Plugin {
+	return &plugin.Plugin{
+		Name:     "touchstone_trigger",
+		Protocol: 2,
+		Commands: plugin.Commands{{Name: "poll", Type: plugin.CommandTypeRead}},
+	}
+}
+
+// #168: a manifest reached only through aliased `uses:` instances is referenced,
+// not unused. This warned before the fix even though both aliases were scheduled.
+func TestValidate_UsesAliasCountsAsReferenced(t *testing.T) {
+	t.Parallel()
+	r := New(aliasConfig(), registryWith(triggerPlugin())).Validate()
+	if !r.Valid {
+		t.Fatalf("expected valid, got errors: %v", r.Errors)
+	}
+	assertNoWarningCategory(t, r, "unused")
+}
+
+// #168: following `uses:` must not blanket-suppress the warning — a manifest that
+// nothing references, directly or by alias, still warns.
+func TestValidate_UsesAliasStillWarnsForTrulyUnreferenced(t *testing.T) {
+	t.Parallel()
+	orphan := &plugin.Plugin{
+		Name:     "orphan-plugin",
+		Protocol: 2,
+		Commands: plugin.Commands{{Name: "poll", Type: plugin.CommandTypeRead}},
+	}
+	r := New(aliasConfig(), registryWith(triggerPlugin(), orphan)).Validate()
+	assertHasWarning(t, r, "unused", "orphan-plugin")
+	for _, w := range r.Warnings {
+		if w.Category == "unused" && strings.Contains(w.Message, "touchstone_trigger") {
+			t.Fatalf("aliased manifest should not warn: %v", w)
+		}
+	}
+}
+
+// #168: whitespace around a `uses:` value must not defeat the match, matching the
+// TrimSpace that validateUsesCycles already applies to the same edge.
+func TestValidate_UsesAliasTrimsWhitespace(t *testing.T) {
+	t.Parallel()
+	cfg := aliasConfig()
+	pc := cfg.Plugins["touchstone_harvest"]
+	pc.Uses = "  touchstone_trigger  "
+	cfg.Plugins["touchstone_harvest"] = pc
+	delete(cfg.Plugins, "touchstone_score")
+
+	r := New(cfg, registryWith(triggerPlugin())).Validate()
+	assertNoWarningCategory(t, r, "unused")
+}
+
+// #168: "referenced" means mentioned in config, not currently running. A disabled
+// alias still counts, matching the direct-key branch which never consulted Enabled.
+func TestValidate_UsesAliasDisabledStillCountsAsReferenced(t *testing.T) {
+	t.Parallel()
+	cfg := aliasConfig()
+	delete(cfg.Plugins, "touchstone_score")
+	pc := cfg.Plugins["touchstone_harvest"]
+	pc.Enabled = false
+	cfg.Plugins["touchstone_harvest"] = pc
+
+	r := New(cfg, registryWith(triggerPlugin())).Validate()
+	assertNoWarningCategory(t, r, "unused")
+}
