@@ -1,0 +1,37 @@
+# Example docker-compose.yml for Ductile (lowsec / unconfined posture)
+#
+# Usage:
+#   1. Build the image:  sudo docker build -t ductile:latest .
+#   2. Generate age key: age-keygen -o config/age.key
+#   3. Fix ownership:     sudo chown -R 100:100 config/ data/ && sudo chmod 600 config/age.key
+#   4. Genesis:           sudo docker run --rm -v "$(pwd)/config:/app/config" -v "$(pwd)/data:/app/data" -e DUCTILE_CONFIG_DIR=/app/config ductile:latest ./ductile vault init --vault /app/config/vault.age --key /app/config/age.key
+#   5. Start:             sudo docker compose up -d
+#   6. Mint API token:    sudo docker exec ductile sh -c "printf '%s' 'YOUR_TOKEN' | ./ductile vault set --api-url unix:///tmp/ductile-admin.sock --token 'ADMIN_TOKEN' --name core-api-token --pattern manual"
+#   7. Update api.yaml with secret_ref, then: sudo docker exec ductile ./ductile config lock --config /app/config && sudo docker exec ductile ./ductile plugin lock --all --config /app/config
+#   8. Reload:             sudo docker exec ductile ./ductile system reload --config /app/config
+#
+# After the first bootstrap, subsequent `docker compose up -d` boots straight to gateway posture.
+
+services:
+  ductile:
+    image: ductile:latest
+    container_name: ductile
+    restart: unless-stopped
+    environment:
+      - DUCTILE_CONFIG_DIR=/app/config
+    volumes:
+      - ./config:/app/config
+      - ./data:/app/data
+    ports:
+      - "18081:8081"
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8081/healthz"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
