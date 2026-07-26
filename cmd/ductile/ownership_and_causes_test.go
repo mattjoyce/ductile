@@ -50,29 +50,38 @@ func TestWriteFileAtomicWithBackup_InheritsDirectoryOwner(t *testing.T) {
 	}
 }
 
-// #169: the .bak sidecar inherits the *original file's* owner. A root-owned
-// backup beside a service-owned config is the same outage one restore away.
-func TestWriteFileAtomicWithBackup_SidecarInheritsOwner(t *testing.T) {
+// #169: the .bak sidecar takes the config directory's owner, same as the file it
+// backs up. A root-owned backup beside a service-owned config is the same outage
+// one restore away.
+//
+// The stale config.yaml here is deliberately root-owned: after 8030ab6 the
+// directory decides, so an artifact already mis-owned by the bug must not dictate
+// the owner of its replacement or its backup.
+func TestWriteFileAtomicWithBackup_SidecarTakesDirectoryOwner(t *testing.T) {
 	requireRootForOwnership(t)
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config.yaml")
 	if err := os.WriteFile(path, []byte("service:\n  name: first\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Chown(path, 12345, 12345); err != nil {
+	if err := os.Chown(dir, 12345, 12345); err != nil {
+		t.Skipf("host refuses chown: %v", err)
+	}
+	if err := os.Chown(path, 0, 0); err != nil {
 		t.Skipf("host refuses chown: %v", err)
 	}
 
-	// Second write produces the .bak from the existing (12345-owned) file.
+	// Second write produces the .bak from the existing file.
 	if err := writeFileAtomicWithBackup(path, []byte("service:\n  name: second\n"), 0600); err != nil {
 		t.Fatalf("writeFileAtomicWithBackup: %v", err)
 	}
 
 	if uid, _ := ownerOfPath(t, path+".bak"); uid != 12345 {
-		t.Fatalf(".bak owner = %d, want 12345", uid)
+		t.Fatalf(".bak owner = %d, want the directory's 12345", uid)
 	}
 	if uid, _ := ownerOfPath(t, path); uid != 12345 {
-		t.Fatalf("rewritten config owner = %d, want the preserved 12345", uid)
+		t.Fatalf("rewritten config owner = %d, want the directory's 12345 — "+
+			"a stale root-owned artifact must not dictate its replacement", uid)
 	}
 }
 
