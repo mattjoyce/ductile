@@ -50,6 +50,29 @@ WORK="$(cd "$WORK" && pwd -P)"
 # service account cannot reach a file it legitimately owns, which would look
 # exactly like the #167 outage and make every scenario below a false positive.
 chmod 0755 "$WORK"
+
+# $BIN normally sits in the checkout, which on a CI runner lives under a home
+# directory the service account cannot traverse. Running it via `su` then fails
+# with rc=126 (permission denied) — which is non-zero and contains no
+# missing-manifest text, so the refusal assertions below would pass VACUOUSLY.
+# That is precisely what happened on the first CI run of this fixture. Copy the
+# binary somewhere the service account can actually reach.
+SVC_BIN="$WORK/ductile"
+cp "$BIN" "$SVC_BIN"
+chmod 0755 "$SVC_BIN"
+
+# run_as_service <label> <command...> — runs as the service account and refuses to
+# let an exec failure masquerade as a program result. Sets RUN_OUT and RUN_RC.
+run_as_service() {
+  local label="$1"; shift
+  set +e
+  RUN_OUT="$(su -s /bin/sh -c "$*" "$SVC_USER" 2>&1)"
+  RUN_RC=$?
+  set -e
+  if [[ "$RUN_RC" -eq 126 || "$RUN_RC" -eq 127 ]]; then
+    fixture_fail "$label: could not execute as $SVC_USER (rc=$RUN_RC) — that is a harness problem, not a refusal: $RUN_OUT"
+  fi
+}
 cleanup() {
   rm -rf "$WORK"
   userdel "$SVC_USER" 2>/dev/null || true
@@ -154,18 +177,15 @@ C2="$WORK/root-owned-manifest"; write_privsep_config "$C2" true true
 "$BIN" config lock --config-dir "$C2" >/dev/null 2>&1
 chown 0:0 "$C2/.checksums"
 chmod 600 "$C2/.checksums"
-set +e
-S2_OUT="$(su -s /bin/sh -c "timeout 20 '$BIN' system start --config '$C2' 2>&1" "$SVC_USER")"
-S2_RC=$?
-set -e
-printf '%s\n' "$S2_OUT" > "$ARTIFACT_DIR/s2-start.log"
-[[ "$S2_RC" -ne 0 ]] || fixture_fail "s2: daemon booted with an unreadable manifest — integrity gate did not fail closed"
-if printf '%s' "$S2_OUT" | grep -qi "no .checksums manifest found"; then
-  fixture_fail "s2: EACCES still reported as a missing manifest (#167 read side): $S2_OUT"
+run_as_service "s2" "timeout 20 '$SVC_BIN' system start --config '$C2'"
+printf '%s\n' "$RUN_OUT" > "$ARTIFACT_DIR/s2-start.log"
+[[ "$RUN_RC" -ne 0 ]] || fixture_fail "s2: daemon booted with an unreadable manifest — integrity gate did not fail closed"
+if printf '%s' "$RUN_OUT" | grep -qi "no .checksums manifest found"; then
+  fixture_fail "s2: EACCES still reported as a missing manifest (#167 read side): $RUN_OUT"
 fi
-printf '%s' "$S2_OUT" | grep -qi "permission denied" \
-  || fixture_fail "s2: refusal did not name the permission cause; got: $S2_OUT"
-fixture_log "s2 OK — refused (rc=$S2_RC) naming permission, not a missing manifest"
+printf '%s' "$RUN_OUT" | grep -qi "permission denied" \
+  || fixture_fail "s2: refusal did not name the permission cause; got: $RUN_OUT"
+fixture_log "s2 OK — refused (rc=$RUN_RC) naming permission, not a missing manifest"
 
 # --- Scenario 3 (#167): self-healing — re-locking as root repairs ownership --
 "$BIN" config lock --config-dir "$C2" >"$ARTIFACT_DIR/s3-relock.log" 2>&1 \
@@ -227,15 +247,22 @@ for verify in true false; do
     D="$WORK/$label"; write_privsep_config "$D" "$verify" "$drift"
     "$BIN" config lock --config-dir "$D" >/dev/null 2>&1
     chown 0:0 "$D/.checksums"; chmod 600 "$D/.checksums"
-    set +e
-    OUT="$(su -s /bin/sh -c "timeout 20 '$BIN' system start --config '$D' 2>&1" "$SVC_USER")"
-    RC=$?
-    set -e
-    printf '%s\n' "$OUT" > "$ARTIFACT_DIR/${label}.log"
-    if printf '%s' "$OUT" | grep -qi "no .checksums manifest found"; then
+    run_as_service "$label" "timeout 20 '$SVC_BIN' system start --config '$D'"
+    printf '%s\n' "$RUN_OUT" > "$ARTIFACT_DIR/${label}.log"
+    if printf '%s' "$RUN_OUT" | grep -qi "no .checksums manifest found"; then
       fixture_fail "$label: still misreports EACCES as a missing manifest"
     fi
-    fixture_log "$label OK — rc=$RC, no missing-manifest misreport"
+    # With verification on, the daemon must actually refuse and say why. With it
+    # off it is expected to boot (and be killed by timeout, rc=124). Asserting the
+    # shape here is what stops an unrelated non-zero exit reading as a pass.
+    if [[ "$verify" == "true" ]]; then
+      [[ "$RUN_RC" -ne 0 ]] || fixture_fail "$label: expected refusal with verify_integrity_on_boot=true"
+      printf '%s' "$RUN_OUT" | grep -qi "permission denied" \
+        || fixture_fail "$label: refusal did not name the permission cause; got: $RUN_OUT"
+    else
+      [[ "$RUN_RC" -eq 124 ]] || fixture_fail "$label: expected the daemon to boot (timeout kill, rc=124) with verification off; got rc=$RUN_RC: $RUN_OUT"
+    fi
+    fixture_log "$label OK — rc=$RUN_RC, behaviour matches the admission policy"
   done
 done
 
@@ -246,11 +273,9 @@ done
 # #167 fix that was previously an assumption.
 C6="$WORK/unprivileged"; write_privsep_config "$C6" true true
 chmod 0777 "$C6"
-set +e
-su -s /bin/sh -c "'$BIN' config lock --config-dir '$C6'" "$SVC_USER" >"$ARTIFACT_DIR/s6-lock.log" 2>&1
-S6_RC=$?
-set -e
-[[ "$S6_RC" -eq 0 ]] || fixture_fail "s6: unprivileged config lock regressed (rc=$S6_RC): $(cat "$ARTIFACT_DIR/s6-lock.log")"
+run_as_service "s6" "'$SVC_BIN' config lock --config-dir '$C6'"
+printf '%s\n' "$RUN_OUT" > "$ARTIFACT_DIR/s6-lock.log"
+[[ "$RUN_RC" -eq 0 ]] || fixture_fail "s6: unprivileged config lock regressed (rc=$RUN_RC): $RUN_OUT"
 fixture_log "s6 OK — unprivileged lock still succeeds; no regression for Docker/NFS/userns installs"
 
 fixture_log "success — privileged writes land service-owned, unreadable manifests are diagnosed not misreported, and unprivileged writes are unchanged"
