@@ -13,6 +13,7 @@ import (
 
 	"github.com/mattjoyce/ductile/internal/config"
 	"github.com/mattjoyce/ductile/internal/doctor"
+	"github.com/mattjoyce/ductile/internal/fsown"
 	"github.com/mattjoyce/ductile/internal/state"
 	"github.com/mattjoyce/ductile/internal/storage"
 	"gopkg.in/yaml.v3"
@@ -665,9 +666,14 @@ func runConfigCheck(args []string) int {
 	}
 
 	// LoadWithVault: reuse the owner the load already decrypted so this verdict
-	// matches the daemon's boot admission — `config check` must accept the
-	// genesis-vault, zero-token bootstrap config the daemon boots into the
-	// management posture (#129, #133), as DEPLOYMENT.md §11 runs it.
+	// matches the daemon's `validate_config_on_boot` admission — `config check`
+	// must accept the genesis-vault, zero-token bootstrap config the daemon boots
+	// into the management posture (#129, #133), as DEPLOYMENT.md §11 runs it.
+	//
+	// #174: doctor.Validate() covers validate_config_on_boot and nothing else. The
+	// integrity half — verify_integrity_on_boot — is added below, because claiming
+	// parity while never opening .checksums is what let #167 pass a pre-flight
+	// gate on a box that would not boot.
 	cfg, owner, err := config.LoadWithVault(configPath)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Config load error: %v\n", err)
@@ -690,6 +696,7 @@ func runConfigCheck(args []string) int {
 	}
 
 	result := doc.Validate()
+	appendIntegrityFindings(result, cfg, configPath)
 
 	switch format {
 	case "json":
@@ -858,4 +865,82 @@ func runConfigHashUpdate(args []string) int {
 	}
 
 	return 0
+}
+
+// appendIntegrityFindings gives `config check` the half of boot admission it was
+// missing (#174).
+//
+// Before this, runConfigCheck ran doctor.Validate() and never opened .checksums,
+// while its own comment claimed the verdict matched the daemon's boot admission.
+// It matched validate_config_on_boot; verify_integrity_on_boot — the half that
+// actually fails — was never exercised. VerifyIntegrity had exactly one non-test
+// caller, reachable only from boot and reload, so the only way to test the
+// manifest was to restart the daemon. With verify_integrity_on_boot that restart
+// IS the outage, and docs/runbooks/privsep-thinkpad-enforce.md uses
+// `config check ... # MUST be clean` as its pre-flight gate.
+//
+// Not breaking existing installs is the governing constraint here, so this
+// follows the config's OWN admission policy rather than always checking:
+//
+//   - verify_integrity_on_boot: false → skipped entirely, reported as skipped.
+//     The daemon does not check, so neither do we; those installs see no change.
+//   - fail_on_drift is applied exactly as verifyReloadIntegrity applies it, so
+//     operational drift is fatal here only where it is fatal at boot.
+//
+// The consequence is that this can only newly fail a config that would also fail
+// to boot — which is the entire point, and the opposite of a regression.
+func appendIntegrityFindings(result *doctor.Result, cfg *config.Config, configPath string) {
+	if result == nil || cfg == nil {
+		return
+	}
+	admission := cfg.Service.AdmissionPolicy()
+	if !admission.VerifyIntegrityOnBoot {
+		result.Warnings = append(result.Warnings, doctor.Issue{
+			Category: "integrity",
+			Field:    "service.admission.verify_integrity_on_boot",
+			Message:  "integrity not checked: verify_integrity_on_boot is false, so the daemon does not verify .checksums at boot either",
+		})
+		return
+	}
+
+	configDir := resolveConfigDir(configPath)
+	files, err := config.DiscoverConfigFiles(configDir)
+	if err != nil {
+		result.Valid = false
+		result.Errors = append(result.Errors, doctor.Issue{
+			Category: "integrity",
+			Message: fmt.Sprintf("cannot read config directory %s: %v%s",
+				configDir, err, fsown.Hint(configDir)),
+		})
+		return
+	}
+
+	integrity, err := config.VerifyIntegrity(configDir, files)
+	if err != nil || integrity == nil {
+		result.Valid = false
+		result.Errors = append(result.Errors, doctor.Issue{
+			Category: "integrity",
+			Message:  fmt.Sprintf("integrity check failed to run: %v", err),
+		})
+		return
+	}
+
+	for _, msg := range integrity.Errors {
+		result.Valid = false
+		result.Errors = append(result.Errors, doctor.Issue{Category: "integrity", Message: msg})
+	}
+	for _, msg := range integrity.Warnings {
+		// Mirror verifyReloadIntegrity: drift is a warning unless the running
+		// admission policy promotes it, in which case the daemon rejects and so
+		// must this verdict.
+		if admission.FailOnDrift {
+			result.Valid = false
+			result.Errors = append(result.Errors, doctor.Issue{
+				Category: "integrity",
+				Message:  fmt.Sprintf("%s (fatal: admission.fail_on_drift)", msg),
+			})
+			continue
+		}
+		result.Warnings = append(result.Warnings, doctor.Issue{Category: "integrity", Message: msg})
+	}
 }

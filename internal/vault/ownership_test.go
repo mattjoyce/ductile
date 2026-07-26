@@ -49,10 +49,17 @@ func TestWriteFileAtomic_VaultBlobInheritsDirectoryOwner(t *testing.T) {
 	}
 }
 
-// #170: rotate-key renames a staged file over the age key's inode, so the staged
-// file must inherit the *existing key's* owner — otherwise rotation is what hands
-// secret-zero to the wrong account.
-func TestWriteFileAtomic_StagedKeyInheritsExistingKeyOwner(t *testing.T) {
+// #170: rotate-key renames a staged file over the age key's inode. The replacement
+// must land owned by the key directory's account, which on a privsep install is
+// the service user that has to decrypt with it — otherwise rotation is the step
+// that hands secret-zero to the wrong account.
+//
+// Note the stale key here is deliberately root-owned: after 8030ab6 the directory
+// decides, so a previously-mis-owned key must NOT dictate the owner of its
+// replacement. An earlier version of this test asserted the opposite (the old
+// file-wins rule) and, being root-gated, skipped locally while failing in CI's
+// privileged gate — the exact blind spot #175 exists to close.
+func TestWriteFileAtomic_RotatedKeyTakesDirectoryOwnerNotStaleKey(t *testing.T) {
 	if os.Geteuid() != 0 {
 		t.Skip("needs root to change file ownership")
 	}
@@ -61,7 +68,10 @@ func TestWriteFileAtomic_StagedKeyInheritsExistingKeyOwner(t *testing.T) {
 	if err := os.WriteFile(keyPath, []byte("# existing key\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Chown(keyPath, 12345, 12345); err != nil {
+	if err := os.Chown(dir, 12345, 12345); err != nil {
+		t.Skipf("host refuses chown: %v", err)
+	}
+	if err := os.Chown(keyPath, 0, 0); err != nil {
 		t.Skipf("host refuses chown: %v", err)
 	}
 
@@ -71,7 +81,8 @@ func TestWriteFileAtomic_StagedKeyInheritsExistingKeyOwner(t *testing.T) {
 
 	uid, gid := vaultFileOwner(t, keyPath)
 	if uid != 12345 || gid != 12345 {
-		t.Fatalf("rotated key owner = %d:%d, want the preserved 12345:12345", uid, gid)
+		t.Fatalf("rotated key owner = %d:%d, want the directory's 12345:12345 — "+
+			"a stale root-owned key must not dictate its replacement", uid, gid)
 	}
 }
 
