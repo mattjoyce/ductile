@@ -55,18 +55,32 @@ jobs:
             echo "::endgroup::"
           done
 
-      # #167 ISC-17: a chown refusal cannot be staged on an ordinary filesystem as
-      # root, so the fixture is a user namespace — unmapped uids appear as 65534 and
-      # chown to them returns EINVAL, giving a genuine refusal to a process that
-      # believes it is root.
+      # #167: proving that a refused chown aborts the write needs a chown that
+      # actually fails for a process that believes it is root — and root can chown
+      # to anything on an ordinary filesystem. A user namespace supplies it:
+      # unmapped uids return EINVAL.
+      #
+      # Three details, each of which failed a real run before landing here:
+      #   - `unshare` must be run under sudo. Ubuntu 24.04 restricts unprivileged
+      #     user namespaces (kernel.apparmor_restrict_unprivileged_userns), so the
+      #     unprivileged form dies on /proc/self/uid_map.
+      #   - the DIRECTORY carries the unchownable owner, not the artifact, because
+      #     Desired() resolves ownership from the directory (8030ab6).
+      #   - the test binary must live somewhere world-traversable. Inside the
+      #     namespace the runner's home is owned by an unmapped uid, so a binary
+      #     under it is unreachable even to in-ns root.
       - name: Ownership abort path (user namespace)
         run: |
+          set -e
+          sudo rm -rf /tmp/isc17ns
           mkdir -p /tmp/isc17ns
           printf 'version: 2\nhashes: {}\n# original\n' > /tmp/isc17ns/.checksums
-          sudo chown 65534:65534 /tmp/isc17ns/.checksums
-          chmod 0777 /tmp/isc17ns && sudo chmod 0666 /tmp/isc17ns/.checksums
+          sudo chown 65534:65534 /tmp/isc17ns
+          sudo chmod 0777 /tmp/isc17ns
+          sudo chmod 0666 /tmp/isc17ns/.checksums
           go test -c -o /tmp/config-ns.test ./internal/config/
-          unshare -U -r env DUCTILE_TEST_UNCHOWNABLE_DIR=/tmp/isc17ns \
+          chmod 0755 /tmp/config-ns.test
+          sudo unshare -U -r env DUCTILE_TEST_UNCHOWNABLE_DIR=/tmp/isc17ns TMPDIR=/tmp \
             /tmp/config-ns.test -test.v -test.run TestWriteChecksumsAtomic_FailedOwnershipLeavesManifestIntact
 
       - name: Run lint

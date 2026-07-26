@@ -8,6 +8,8 @@ import (
 	"strings"
 	"syscall"
 	"testing"
+
+	"github.com/mattjoyce/ductile/internal/fsown"
 )
 
 // checksumsOwner reads a path's uid/gid straight from the syscall, so the
@@ -85,11 +87,12 @@ func TestWriteChecksumsAtomic_DoesNotWidenMode(t *testing.T) {
 //
 // Root can chown to anything on an ordinary filesystem, so the refusal has to be
 // staged by the harness. Point DUCTILE_TEST_UNCHOWNABLE_DIR at a writable
-// directory that already contains a .checksums owned by an account this process
-// cannot chown to — a user namespace (`unshare -U -r`, where unmapped uids appear
-// as 65534 and chown to them returns EINVAL) is the cheapest way to arrange that,
-// and it works unprivileged in CI. Without the fixture the test says so rather
-// than passing vacuously.
+// directory OWNED by an account this process cannot chown to — the directory,
+// because that is what Desired() resolves ownership from (8030ab6). A user
+// namespace supplies such an account for free: unmapped uids appear as 65534 and
+// chown to them returns EINVAL even to in-ns root. See the workflow step for the
+// staging that actually works. Without the fixture the test says so rather than
+// passing vacuously.
 func TestWriteChecksumsAtomic_FailedOwnershipLeavesManifestIntact(t *testing.T) {
 	requireRootForChecksums(t)
 	dir := os.Getenv("DUCTILE_TEST_UNCHOWNABLE_DIR")
@@ -102,9 +105,14 @@ func TestWriteChecksumsAtomic_FailedOwnershipLeavesManifestIntact(t *testing.T) 
 	if err != nil {
 		t.Skipf("fixture %s is not readable: %v", path, err)
 	}
-	uid, _ := checksumsOwner(t, path)
-	if uid == os.Geteuid() {
-		t.Skipf("fixture owner %d matches euid; no mismatch to refuse", uid)
+	// The desired owner comes from the directory (8030ab6), so that is what the
+	// harness must stage as unchownable — not the artifact.
+	want, ok := fsown.Desired(path)
+	if !ok {
+		t.Skipf("fixture %s yields no ownership opinion", path)
+	}
+	if want.UID == os.Geteuid() {
+		t.Skipf("fixture desired owner %d matches euid; no mismatch to refuse", want.UID)
 	}
 
 	err = writeChecksumsAtomic(path, ChecksumManifest{Version: 2, Hashes: map[string]string{"a": "b"}})
