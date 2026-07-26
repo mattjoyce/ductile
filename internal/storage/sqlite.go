@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mattjoyce/ductile/internal/fsown"
 	_ "modernc.org/sqlite"
 )
 
@@ -56,6 +57,8 @@ func OpenSQLite(ctx context.Context, path string) (*sql.DB, error) {
 	// Restrict to 1 connection to avoid SQLITE_BUSY errors during concurrent writes.
 	// This ensures only one writer at a time while busy_timeout handles waiting.
 	db.SetMaxOpenConns(1)
+
+	secureSQLiteFiles(path)
 
 	empty, err := isSQLiteEmpty(ctx, db)
 	if err != nil {
@@ -240,4 +243,31 @@ func sqliteObjectExists(ctx context.Context, db *sql.DB, objectType, name string
 		return false, err
 	}
 	return true, nil
+}
+
+// secureSQLiteFiles constrains the state DB and its WAL/SHM sidecars (#171).
+//
+// Two problems, both empirically confirmed before this fix: the driver created
+// ductile.db, ductile.db-wal and ductile.db-shm at 0644, leaving the 0700 parent
+// directory as the only thing keeping job payloads and baggage private; and
+// roughly a dozen CLI entry points open this DB against one daemon site, so a
+// single `sudo ductile job list` left root-owned sidecars in the daemon's state
+// dir. The daemon then hit SQLITE_READONLY/EACCES at query time rather than at
+// admission, so no boot gate caught it and the failure was attributed to
+// whichever query happened to touch it first.
+//
+// Deliberately best-effort and never fatal. OpenSQLite is on every CLI path as
+// well as the daemon's, so refusing to open the database on a chown or chmod
+// refusal would be the riskiest possible change for existing installs. Where we
+// have the authority the files land correct; where we do not, nothing is worse
+// than the previous behaviour, which negotiated nothing at all.
+//
+// The sidecars are created lazily by the driver, so this runs after the WAL
+// pragma has materialised them. A sidecar recreated later in the process's life
+// inherits the umask, not this call — closing that fully needs the sidecars to
+// stop being created by a privileged CLI in the first place.
+func secureSQLiteFiles(path string) {
+	for _, p := range []string{path, path + "-wal", path + "-shm"} {
+		_ = fsown.Apply(p, 0o600)
+	}
 }

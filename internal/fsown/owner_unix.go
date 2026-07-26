@@ -137,3 +137,38 @@ func ApplyToTemp(tmpPath, finalPath string) error {
 	}
 	return nil
 }
+
+// Apply best-effort corrects an existing file's ownership to what its directory
+// says it should be, and tightens its mode to at most perm.
+//
+// Unlike ApplyToTemp this never fails the caller (#171). The state DB is opened
+// by roughly a dozen CLI entry points as well as the daemon, so refusing to open
+// it on a chown refusal would be the riskiest possible change for existing
+// installs — NFS, userns and Docker bind mounts all refuse legitimately, and the
+// pre-existing behaviour there was simply "no ownership negotiation at all".
+// Where we do have the authority, the artifact lands correct; where we do not,
+// nothing is worse than before.
+//
+// Returns true when ownership now matches the directory, so callers that want to
+// warn can.
+func Apply(path string, perm os.FileMode) bool {
+	fi, err := os.Stat(path)
+	if err != nil {
+		return false
+	}
+	if fi.Mode().Perm()&^perm != 0 {
+		_ = os.Chmod(path, fi.Mode().Perm()&perm)
+	}
+	want, ok := Desired(path)
+	if !ok {
+		return false
+	}
+	have, ok := ownerOf(fi)
+	if !ok {
+		return false
+	}
+	if have == want {
+		return true
+	}
+	return os.Chown(path, want.UID, want.GID) == nil
+}

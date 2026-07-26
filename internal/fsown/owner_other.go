@@ -2,6 +2,8 @@
 
 package fsown
 
+import "os"
+
 // ApplyToTemp is a no-op on platforms with no Unix ownership model.
 //
 // The signature mirrors the unix build-tag sibling for substitutability; there is
