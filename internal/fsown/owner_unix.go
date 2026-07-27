@@ -38,7 +38,13 @@ type Owner struct {
 // alone: the directory could not be stat'ed, or this platform's FileInfo does
 // not carry a Unix owner.
 func Desired(path string) (Owner, bool) {
-	fi, err := os.Stat(filepath.Dir(path))
+	return Of(filepath.Dir(path))
+}
+
+// Of resolves the owner of path itself, where Desired resolves the owner of its
+// containing directory. Both return false for "no opinion".
+func Of(path string) (Owner, bool) {
+	fi, err := os.Stat(path)
 	if err != nil {
 		return Owner{}, false
 	}

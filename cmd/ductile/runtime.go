@@ -473,6 +473,28 @@ func buildRuntime(cfg *config.Config, configPath string, configSource string, re
 		vaultOwner = fallbackOwner
 	}
 
+	// Readability BEFORE the integrity gate, and the ordering is the point (#179).
+	//
+	// #167 was reported as "no .checksums manifest found" on a box whose manifest
+	// was present but root-owned. The layer that could have said so —
+	// reconcileAccountFilesystem, further down this function — runs after the
+	// integrity check, so the wrong diagnosis always got there first. A readability
+	// check placed after the integrity gate would inherit exactly that hole.
+	//
+	// This cannot newly refuse a working install: it only fails on artifacts this
+	// process itself must open, evaluated against this process's own identity. If it
+	// says no, the boot was going to fail anyway — later, with a worse message, at
+	// whichever query first touched the file (#171's failure mode).
+	if findings := config.CheckReadability(config.GatewayOnly(
+		config.ServiceReadArtifacts(resolveConfigDir(configPath), cfg, fsown.CurrentAccount()),
+	)); len(findings) > 0 {
+		for _, f := range findings {
+			logger.Error("cannot open a file this gateway needs",
+				"role", f.Role, "path", f.Path, "detail", f.Detail)
+		}
+		return nil, fmt.Errorf("%s unreadable: %s", findings[0].Role, findings[0].Detail)
+	}
+
 	if admission.VerifyIntegrityOnBoot {
 		logger.Info("admission: verifying config integrity at boot", "fail_on_drift", admission.FailOnDrift)
 		if err := verifyReloadIntegrity(configPath, admission.FailOnDrift, vaultOwner); err != nil {
