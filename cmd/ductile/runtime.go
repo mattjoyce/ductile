@@ -473,6 +473,34 @@ func buildRuntime(cfg *config.Config, configPath string, configSource string, re
 		vaultOwner = fallbackOwner
 	}
 
+	// Readability BEFORE the integrity gate, and the ordering is the point (#179).
+	//
+	// #167 was reported as "no .checksums manifest found" on a box whose manifest
+	// was present but root-owned. The layer that could have said so —
+	// reconcileAccountFilesystem, further down this function — runs after the
+	// integrity check, so the wrong diagnosis always got there first. A readability
+	// check placed after the integrity gate would inherit exactly that hole.
+	//
+	// This cannot newly refuse a working install, and the reason is that it OPENS
+	// the files rather than reasoning about their mode bits. At boot this process is
+	// the gateway, so an open is ground truth: if it fails, the gateway genuinely
+	// cannot read the file and the boot was going to fail anyway — later, with a
+	// worse message, at whichever query first touched it (#171's failure mode).
+	// Modelling here would be actively wrong: a POSIX ACL, CAP_DAC_READ_SEARCH from
+	// the unit file, or supplementary groups resolved at exec all grant reads the
+	// mode bits deny, and a fail-closed gate built on a model would refuse installs
+	// that work today. `config check` models, because there the process is usually
+	// root and cannot open as anybody else.
+	if findings := config.CheckOpenable(config.GatewayOnly(
+		config.ServiceReadArtifacts(resolveConfigDir(configPath), cfg, fsown.CurrentAccount()),
+	)); len(findings) > 0 {
+		for _, f := range findings {
+			logger.Error("cannot open a file this gateway needs",
+				"role", f.Role, "path", f.Path, "detail", f.Detail)
+		}
+		return nil, fmt.Errorf("%s unreadable: %s", findings[0].Role, findings[0].Detail)
+	}
+
 	if admission.VerifyIntegrityOnBoot {
 		logger.Info("admission: verifying config integrity at boot", "fail_on_drift", admission.FailOnDrift)
 		if err := verifyReloadIntegrity(configPath, admission.FailOnDrift, vaultOwner); err != nil {
