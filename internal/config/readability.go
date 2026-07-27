@@ -76,7 +76,21 @@ func ServiceReadArtifacts(configDir string, cfg *Config, gateway fsown.Account) 
 			add(f, "config file")
 		}
 	}
-	add(filepath.Join(configDir, ".checksums"), "integrity manifest")
+	// .checksums is in scope only when the daemon will actually open it.
+	//
+	// With verify_integrity_on_boot off, an unreadable manifest is not a boot
+	// failure — the daemon never reads it — and an install in that state runs
+	// perfectly well today. Refusing it would break a working deployment to warn
+	// about a problem it does not have, which is the exact trade this whole check
+	// is supposed to be on the right side of. The posture fixture asserts the
+	// verify=false boot succeeds, and caught this when it did not.
+	//
+	// loadPluginFingerprintRecords also opens the manifest when plugins are
+	// configured, but tolerates failure by design (#173), so it does not make the
+	// file boot-critical.
+	if cfg != nil && cfg.Service.AdmissionPolicy().VerifyIntegrityOnBoot {
+		add(filepath.Join(configDir, ".checksums"), "integrity manifest")
+	}
 	add(ResolveVaultPath(configDir, cfg), "vault blob")
 	add(ResolveAgeKeyPath(configDir, cfg), "age key")
 

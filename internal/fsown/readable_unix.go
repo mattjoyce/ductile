@@ -3,6 +3,7 @@
 package fsown
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"os/user"
@@ -130,7 +131,11 @@ func Openable(path string) (bool, string) {
 		if os.IsNotExist(err) {
 			return true, ""
 		}
-		detail := fmt.Sprintf("%s cannot open %s", CurrentAccount(), path)
+		// Keep the kernel's own words alongside the ownership facts. "permission
+		// denied" is what an operator greps for and what every other tool on the box
+		// calls this; replacing it with a nicer sentence would make the message
+		// harder to search for, not easier to read.
+		detail := fmt.Sprintf("%s cannot open %s: %v", CurrentAccount(), path, unwrapPathError(err))
 		if owner, ok := Of(path); ok {
 			if fi, statErr := os.Stat(path); statErr == nil {
 				detail += fmt.Sprintf(" (owned by %s, mode %04o)",
@@ -141,6 +146,16 @@ func Openable(path string) (bool, string) {
 	}
 	_ = f.Close()
 	return true, ""
+}
+
+// unwrapPathError reduces os.Open's *PathError to its cause, so the path is not
+// repeated twice in one sentence.
+func unwrapPathError(err error) error {
+	var pe *os.PathError
+	if errors.As(err, &pe) {
+		return pe.Err
+	}
+	return err
 }
 
 // ancestors lists the directories that must be searchable to reach path,

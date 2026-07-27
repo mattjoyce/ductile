@@ -23,7 +23,7 @@ func readabilityFixture(t *testing.T) (string, *Config) {
 	if err := os.MkdirAll(filepath.Join(dir, "state"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	yaml := "service:\n  unconfined: true\n" +
+	yaml := "service:\n  unconfined: true\n  admission:\n    verify_integrity_on_boot: true\n" +
 		"state:\n  path: \"" + filepath.Join(dir, "state", "d.db") + "\"\n" +
 		"plugin_roots:\n  - \"" + filepath.Join(dir, "plugins") + "\"\n"
 	write := func(path string, mode os.FileMode) {
@@ -193,5 +193,25 @@ func TestCheckReadability_MissingArtifactsAreNotFindings(t *testing.T) {
 	}
 	if findings := CheckReadability(ServiceReadArtifacts(dir, cfg, fsown.CurrentAccount())); len(findings) != 0 {
 		t.Fatalf("missing files must not be readability findings; got %+v", findings)
+	}
+}
+
+// With verify_integrity_on_boot off the daemon never opens .checksums, so an
+// unreadable one is not a boot failure and an install in that state runs fine
+// today. Including it would refuse a working deployment over a file it does not
+// read — the #176 posture fixture asserts exactly this boot succeeds, and caught
+// it when the first cut of this check did not.
+func TestServiceReadArtifacts_ChecksumsFollowsTheIntegrityPolicy(t *testing.T) {
+	dir, cfg := readabilityFixture(t)
+	manifest := filepath.Join(dir, ".checksums")
+
+	cfg.Service.Admission = &AdmissionConfig{VerifyIntegrityOnBoot: true}
+	if !slices.Contains(paths(ServiceReadArtifacts(dir, cfg, fsown.CurrentAccount())), manifest) {
+		t.Fatal("with verification on, .checksums must be in scope")
+	}
+
+	cfg.Service.Admission = &AdmissionConfig{VerifyIntegrityOnBoot: false}
+	if slices.Contains(paths(ServiceReadArtifacts(dir, cfg, fsown.CurrentAccount())), manifest) {
+		t.Fatal("with verification off, .checksums must NOT be in scope — the daemon never opens it")
 	}
 }
