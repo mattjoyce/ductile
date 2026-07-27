@@ -7,7 +7,6 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/mattjoyce/ductile/internal/fsown"
 	"github.com/zeebo/blake3"
 	"gopkg.in/yaml.v3"
 )
@@ -141,58 +140,19 @@ func GenerateChecksumsWithReport(configDir string, scopeFiles []string, dryRun b
 	return report, nil
 }
 
-// writeChecksumsAtomic marshals the manifest and writes it to path via a
-// temp file + fsync + rename so a crash mid-write cannot corrupt the existing
-// .checksums file. Perms are 0600 (contains expected hashes).
+// writeChecksumsAtomic marshals the manifest and publishes it at path.
+//
+// The temp → fsync → chown → rename body used to live here in full. It now
+// delegates to WriteFileAtomic, which is the same sequence: consolidating was the
+// stated point of #177, and two copies of this that agree today are two copies
+// that can disagree tomorrow. Perms stay 0600 — the manifest carries expected
+// hashes.
 func writeChecksumsAtomic(path string, manifest ChecksumManifest) error {
 	data, err := yaml.Marshal(manifest)
 	if err != nil {
 		return fmt.Errorf("failed to marshal checksums: %w", err)
 	}
-
-	dir := filepath.Dir(path)
-	tmp, err := os.CreateTemp(dir, ".checksums.tmp-*")
-	if err != nil {
-		return fmt.Errorf("failed to create checksums temp file: %w", err)
-	}
-	tmpPath := tmp.Name()
-
-	cleanup := func() {
-		_ = os.Remove(tmpPath)
-	}
-
-	if _, err := tmp.Write(data); err != nil {
-		_ = tmp.Close()
-		cleanup()
-		return fmt.Errorf("failed to write checksums temp: %w", err)
-	}
-	if err := tmp.Chmod(0600); err != nil {
-		_ = tmp.Close()
-		cleanup()
-		return fmt.Errorf("failed to chmod checksums temp: %w", err)
-	}
-	if err := tmp.Sync(); err != nil {
-		_ = tmp.Close()
-		cleanup()
-		return fmt.Errorf("failed to fsync checksums temp: %w", err)
-	}
-	if err := tmp.Close(); err != nil {
-		cleanup()
-		return fmt.Errorf("failed to close checksums temp: %w", err)
-	}
-	// #167: inherit the intended owner before publishing. Under `sudo config
-	// lock` on a privsep install the temp file is root-owned; without this the
-	// renamed manifest is unreadable by the service account and the next boot
-	// fails admission.
-	if err := fsown.ApplyToTemp(tmpPath, path); err != nil {
-		cleanup()
-		return err
-	}
-	if err := os.Rename(tmpPath, path); err != nil {
-		cleanup()
-		return fmt.Errorf("failed to rename checksums: %w", err)
-	}
-	return nil
+	return WriteFileAtomic(path, data, 0600)
 }
 
 // LoadChecksums reads the .checksums file from a config directory.

@@ -260,15 +260,24 @@ func (c *Config) persistWithValidation(targetFile string, candidate []byte) erro
 		mode = info.Mode().Perm()
 	}
 
-	// #nosec G703 -- targetFile is derived from config sources (operator-controlled).
-	if err := os.WriteFile(targetFile, candidate, mode); err != nil {
+	// #177: was a bare os.WriteFile — the fifth .yaml writer in the tree and the
+	// only one that neither wrote atomically nor negotiated ownership. It was
+	// accidentally safe on the ownership axis because os.WriteFile truncates an
+	// existing file in place and so keeps the inode's owner; that stops holding the
+	// moment the target does not already exist. The atomicity gap had no such luck:
+	// a crash, a full disk, or a kill between truncate and completion left
+	// config.yaml partially written — the one file the daemon needs in order to boot
+	// at all.
+	if err := WriteFileAtomic(targetFile, candidate, mode); err != nil {
 		return fmt.Errorf("failed to persist config change: %w", err)
 	}
 
 	rootPath := c.resolveRootConfigPath(targetFile)
 	if _, err := Load(rootPath); err != nil {
-		// #nosec G703 -- targetFile is derived from config sources (operator-controlled).
-		restoreErr := os.WriteFile(targetFile, original, mode)
+		// The rollback goes through the same atomic path. Restoring with a
+		// non-atomic write would mean the recovery from a bad edit could itself
+		// leave the file truncated, which is a worse outcome than the edit.
+		restoreErr := WriteFileAtomic(targetFile, original, mode)
 		if restoreErr != nil {
 			return fmt.Errorf("validation failed (%v) and rollback failed (%v)", err, restoreErr)
 		}
