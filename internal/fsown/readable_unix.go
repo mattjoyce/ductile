@@ -10,6 +10,8 @@ import (
 	"path/filepath"
 	"slices"
 	"strconv"
+
+	"golang.org/x/sys/unix"
 )
 
 // Account is the identity a readability question is asked on behalf of (#179).
@@ -114,48 +116,51 @@ func Diagnose(path string, acct Account) (bool, string) {
 	return true, ""
 }
 
-// Openable answers the same question as Diagnose by actually opening the file,
-// and is the right tool whenever the asking process IS the account in question.
+// Openable asks the kernel whether this process could read path, and is the right
+// tool whenever the asking process IS the account in question.
 //
-// A real open is ground truth. Diagnose models the Unix permission bits, which is
-// the only option when asking on someone else's behalf, but the model is not the
-// whole story: a POSIX ACL (`setfacl -m u:ductile:r` on a 0640 root:root file is
-// the standard fix for exactly this privileged-writer/limited-reader problem),
-// CAP_DAC_READ_SEARCH from the unit file, or supplementary groups resolved at
-// exec rather than from NSS now, all grant access the mode bits deny. Modelling
-// at boot would refuse installs that work today. Opening also catches SELinux and
-// AppArmor denials, which no permission model sees.
+// It is ground truth where Diagnose is a model. Diagnose reasons about the mode
+// bits, which is the only option when asking on someone else's behalf, but the
+// bits are not the whole story: a POSIX ACL (`setfacl -m u:ductile:r` on a 0640
+// root:root file is the standard fix for exactly this privileged-writer/
+// limited-reader problem), CAP_DAC_READ_SEARCH from the unit file, or
+// supplementary groups resolved at exec rather than from NSS now all grant access
+// the bits deny. Modelling at boot would refuse installs that work today. This
+// also accounts for SELinux and AppArmor, which no permission model sees.
+//
+// It asks via faccessat and NOT by opening the file, and that distinction is
+// load-bearing rather than stylistic. On POSIX, closing ANY descriptor to a file
+// releases every lock the process holds on it — so opening the live SQLite state
+// database inside the daemon's own process, even read-only and even for an
+// instant, destroys the locks SQLite is relying on. The first version of this did
+// exactly that, and the reload-lifecycle fixture caught it: the daemon kept
+// running and kept reporting jobs succeeded, while their rows stopped being
+// visible to any other reader. Nothing failed loudly. SQLite documents this trap;
+// it is worth restating here, because "just open it and see" is the obvious
+// implementation and it is wrong for any file the process may already hold.
+//
+// AT_EACCESS makes the question use the effective uid, matching what an open
+// would have been permitted to do; plain access(2) would answer for the real uid.
 func Openable(path string) (bool, string) {
-	f, err := os.Open(path) // #nosec G304 -- paths come from the gateway's own config
-	if err != nil {
-		if os.IsNotExist(err) {
-			return true, ""
-		}
-		// Keep the kernel's own words alongside the ownership facts. "permission
-		// denied" is what an operator greps for and what every other tool on the box
-		// calls this; replacing it with a nicer sentence would make the message
-		// harder to search for, not easier to read.
-		detail := fmt.Sprintf("%s cannot open %s: %v", CurrentAccount(), path, unwrapPathError(err))
-		if owner, ok := Of(path); ok {
-			if fi, statErr := os.Stat(path); statErr == nil {
-				detail += fmt.Sprintf(" (owned by %s, mode %04o)",
-					Label(owner.UID, owner.GID), fi.Mode().Perm())
-			}
-		}
-		return false, detail
+	err := unix.Faccessat(unix.AT_FDCWD, path, unix.R_OK, unix.AT_EACCESS)
+	if err == nil {
+		return true, ""
 	}
-	_ = f.Close()
-	return true, ""
-}
-
-// unwrapPathError reduces os.Open's *PathError to its cause, so the path is not
-// repeated twice in one sentence.
-func unwrapPathError(err error) error {
-	var pe *os.PathError
-	if errors.As(err, &pe) {
-		return pe.Err
+	if errors.Is(err, os.ErrNotExist) {
+		return true, ""
 	}
-	return err
+	// Keep the kernel's own words alongside the ownership facts. "permission
+	// denied" is what an operator greps for and what every other tool on the box
+	// calls this; replacing it with a nicer sentence would make the message harder
+	// to search for, not easier to read.
+	detail := fmt.Sprintf("%s cannot open %s: %v", CurrentAccount(), path, err)
+	if owner, ok := Of(path); ok {
+		if fi, statErr := os.Stat(path); statErr == nil {
+			detail += fmt.Sprintf(" (owned by %s, mode %04o)",
+				Label(owner.UID, owner.GID), fi.Mode().Perm())
+		}
+	}
+	return false, detail
 }
 
 // ancestors lists the directories that must be searchable to reach path,

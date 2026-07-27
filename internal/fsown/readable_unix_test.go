@@ -232,3 +232,43 @@ func TestOpenable_MissingFileIsNotAFailure(t *testing.T) {
 		t.Fatalf("a missing file must not be reported unopenable; got: %s", detail)
 	}
 }
+
+// Openable must not acquire a descriptor on the file it is asked about.
+//
+// On POSIX, closing any descriptor to a file releases every lock the process
+// holds on it, so an implementation that opens-and-closes destroys the locks a
+// live SQLite handle in the same process depends on. The first version did open,
+// and the symptom was silent: the daemon kept running and kept reporting jobs
+// succeeded while their rows stopped being visible to other readers. This test
+// pins the property by proving the answer is available for a file this process
+// could not have opened for reading at all.
+func TestOpenable_AnswersWithoutOpeningTheFile(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root reads regardless; this case needs an unprivileged euid")
+	}
+	dir := t.TempDir()
+	path := filepath.Join(dir, "locked.db")
+	if err := os.WriteFile(path, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// Write-only: an os.Open(path) for reading fails, so any implementation that
+	// answers correctly here is not answering by opening for read.
+	if err := os.Chmod(path, 0o200); err != nil {
+		t.Fatal(err)
+	}
+	if f, err := os.Open(path); err == nil {
+		f.Close()
+		t.Fatal("fixture is vacuous: a write-only file opened for reading")
+	}
+	if ok, _ := Openable(path); ok {
+		t.Fatal("a write-only file must not report readable")
+	}
+
+	// And the positive direction: a readable file answers yes.
+	if err := os.Chmod(path, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if ok, detail := Openable(path); !ok {
+		t.Fatalf("a readable file must report readable; got: %s", detail)
+	}
+}
