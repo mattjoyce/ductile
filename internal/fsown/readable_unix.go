@@ -113,6 +113,36 @@ func Diagnose(path string, acct Account) (bool, string) {
 	return true, ""
 }
 
+// Openable answers the same question as Diagnose by actually opening the file,
+// and is the right tool whenever the asking process IS the account in question.
+//
+// A real open is ground truth. Diagnose models the Unix permission bits, which is
+// the only option when asking on someone else's behalf, but the model is not the
+// whole story: a POSIX ACL (`setfacl -m u:ductile:r` on a 0640 root:root file is
+// the standard fix for exactly this privileged-writer/limited-reader problem),
+// CAP_DAC_READ_SEARCH from the unit file, or supplementary groups resolved at
+// exec rather than from NSS now, all grant access the mode bits deny. Modelling
+// at boot would refuse installs that work today. Opening also catches SELinux and
+// AppArmor denials, which no permission model sees.
+func Openable(path string) (bool, string) {
+	f, err := os.Open(path) // #nosec G304 -- paths come from the gateway's own config
+	if err != nil {
+		if os.IsNotExist(err) {
+			return true, ""
+		}
+		detail := fmt.Sprintf("%s cannot open %s", CurrentAccount(), path)
+		if owner, ok := Of(path); ok {
+			if fi, statErr := os.Stat(path); statErr == nil {
+				detail += fmt.Sprintf(" (owned by %s, mode %04o)",
+					Label(owner.UID, owner.GID), fi.Mode().Perm())
+			}
+		}
+		return false, detail
+	}
+	_ = f.Close()
+	return true, ""
+}
+
 // ancestors lists the directories that must be searchable to reach path,
 // shallowest first — so the reported blocker is the outermost one, which is the
 // one worth fixing.

@@ -481,11 +481,17 @@ func buildRuntime(cfg *config.Config, configPath string, configSource string, re
 	// integrity check, so the wrong diagnosis always got there first. A readability
 	// check placed after the integrity gate would inherit exactly that hole.
 	//
-	// This cannot newly refuse a working install: it only fails on artifacts this
-	// process itself must open, evaluated against this process's own identity. If it
-	// says no, the boot was going to fail anyway — later, with a worse message, at
-	// whichever query first touched the file (#171's failure mode).
-	if findings := config.CheckReadability(config.GatewayOnly(
+	// This cannot newly refuse a working install, and the reason is that it OPENS
+	// the files rather than reasoning about their mode bits. At boot this process is
+	// the gateway, so an open is ground truth: if it fails, the gateway genuinely
+	// cannot read the file and the boot was going to fail anyway — later, with a
+	// worse message, at whichever query first touched it (#171's failure mode).
+	// Modelling here would be actively wrong: a POSIX ACL, CAP_DAC_READ_SEARCH from
+	// the unit file, or supplementary groups resolved at exec all grant reads the
+	// mode bits deny, and a fail-closed gate built on a model would refuse installs
+	// that work today. `config check` models, because there the process is usually
+	// root and cannot open as anybody else.
+	if findings := config.CheckOpenable(config.GatewayOnly(
 		config.ServiceReadArtifacts(resolveConfigDir(configPath), cfg, fsown.CurrentAccount()),
 	)); len(findings) > 0 {
 		for _, f := range findings {

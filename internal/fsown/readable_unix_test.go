@@ -194,3 +194,41 @@ func TestAncestors_AreRootFirstAndReachTheRoot(t *testing.T) {
 		}
 	}
 }
+
+// Openable is ground truth where Diagnose is a model, and the boot gate depends
+// on the difference. The model cannot see a POSIX ACL, CAP_DAC_READ_SEARCH or an
+// exec-time supplementary group; an open can. The property under test is the
+// simple one those all reduce to: Openable reflects what the kernel actually did.
+func TestOpenable_ReflectsTheRealOpen(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root opens regardless; this case needs an unprivileged euid")
+	}
+	dir := t.TempDir()
+	path := filepath.Join(dir, "artifact")
+	if err := os.WriteFile(path, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if ok, detail := Openable(path); !ok {
+		t.Fatalf("a readable file must be openable; got: %s", detail)
+	}
+	if err := os.Chmod(path, 0o000); err != nil {
+		t.Fatal(err)
+	}
+	ok, detail := Openable(path)
+	if ok {
+		t.Fatal("a mode-0000 file was reported openable")
+	}
+	for _, want := range []string{path, "owned by", "mode 0000"} {
+		if !strings.Contains(detail, want) {
+			t.Fatalf("diagnosis is missing %q; got: %s", want, detail)
+		}
+	}
+}
+
+// Absence is not a readability failure here either — a fresh install has no WAL
+// side files and an unlocked one has no manifest.
+func TestOpenable_MissingFileIsNotAFailure(t *testing.T) {
+	if ok, detail := Openable(filepath.Join(t.TempDir(), "never-created")); !ok {
+		t.Fatalf("a missing file must not be reported unopenable; got: %s", detail)
+	}
+}

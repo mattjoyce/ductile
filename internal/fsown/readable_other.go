@@ -2,6 +2,8 @@
 
 package fsown
 
+import "os"
+
 // Account exists on this platform only so the readability preflight (#179) can be
 // written once, without build tags, in the packages that call it.
 type Account struct {
@@ -24,3 +26,17 @@ func AccountOwning(path string) (Account, bool) { return Account{}, false }
 // separation does not exist on a platform with no Unix ownership model, so there
 // is nothing here to get wrong.
 func Diagnose(path string, acct Account) (bool, string) { return true, "" }
+
+// Openable reports whether this process can open path. Unlike Diagnose there IS
+// a meaningful answer here, because opening a file is not a Unix-specific idea.
+func Openable(path string) (bool, string) {
+	f, err := os.Open(path) // #nosec G304 -- paths come from the gateway's own config
+	if err != nil {
+		if os.IsNotExist(err) {
+			return true, ""
+		}
+		return false, "cannot open " + path + ": " + err.Error()
+	}
+	_ = f.Close()
+	return true, ""
+}

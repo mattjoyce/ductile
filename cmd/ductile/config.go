@@ -901,7 +901,37 @@ func appendReadabilityFindings(result *doctor.Result, cfg *config.Config, config
 	// asking "can I open this?" would report clean on precisely the boxes that will
 	// not boot, which is #167's own failure mode moved one layer up.
 	gateway := config.GatewayAccount(configDir)
+	// A clean result proves nothing when the account we evaluated as is root,
+	// because root bypasses the permission model entirely. That is not a corner
+	// case: `/etc/ductile` owned root:ductile mode 0750 is ordinary distro
+	// packaging, and an Ansible `file` task defaults to root:root. On those hosts
+	// every finding silently disappears — the check reports clean and is believed,
+	// which is precisely the failure this whole family is about. Say so out loud
+	// rather than pass quietly.
+	if gateway.UID == 0 {
+		result.Warnings = append(result.Warnings, doctor.Issue{
+			Category: "readability",
+			Field:    configDir,
+			Message: fmt.Sprintf(
+				"readability was evaluated as %s: root bypasses file permissions, so a clean result here does not prove the service account can open these files — chown %s to the account the gateway runs as, or run this check as that account",
+				gateway, configDir),
+		})
+	}
 	for _, f := range config.CheckReadability(config.ServiceReadArtifacts(configDir, cfg, gateway)) {
+		// A POSIX ACL can grant exactly the access the mode bits deny — it is the
+		// standard fix for a privileged writer and a limited reader, which is
+		// ductile's own shape. Where one is present the mode bits cannot decide, and
+		// a hard error would fail a `config check` that gates a deploy on an install
+		// that boots perfectly. Say what is unknown instead of guessing.
+		if f.Indeterminate {
+			result.Warnings = append(result.Warnings, doctor.Issue{
+				Category: "readability",
+				Field:    f.Path,
+				Message: fmt.Sprintf("%s may be unreadable by the %s account (%s), but an ACL on the path may grant access the permission bits deny — confirm by running this check as that account",
+					f.Role, f.Account, f.Detail),
+			})
+			continue
+		}
 		result.Valid = false
 		result.Errors = append(result.Errors, doctor.Issue{
 			Category: "readability",

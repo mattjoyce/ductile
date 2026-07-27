@@ -29,6 +29,11 @@ type ReadabilityFinding struct {
 	// Detail is the operator sentence: which path blocks, who owns it, what mode
 	// it has, and who was asking.
 	Detail string
+	// Indeterminate marks a finding the mode bits alone cannot decide, because a
+	// POSIX ACL on the path may grant access they deny. Callers report these as
+	// warnings rather than errors: a hard failure here would break a working
+	// ACL-based install, and `config check` is a deploy gate.
+	Indeterminate bool
 }
 
 // ServiceReadArtifacts enumerates every file the gateway (or a privsep account)
@@ -124,12 +129,44 @@ func GatewayOnly(arts []Artifact) []Artifact {
 }
 
 // CheckReadability returns one finding per artifact the responsible account
-// cannot open. An empty result means every artifact that exists can be opened by
-// the account that needs it.
+// cannot open, by MODELLING the Unix permission bits against that account.
+//
+// Use this only when asking on someone else's behalf — which is `config check`
+// under sudo, where the process is root and root opens anything. The model is
+// necessarily an approximation: POSIX ACLs, CAP_DAC_READ_SEARCH and
+// exec-time supplementary groups all grant access the mode bits deny, so a
+// modelled failure can be a false alarm. That is acceptable for an advisory
+// operator command and NOT acceptable for a fail-closed boot gate, which is why
+// the boot path uses CheckOpenable instead.
 func CheckReadability(arts []Artifact) []ReadabilityFinding {
+	findings := check(arts, func(a Artifact) (bool, string) {
+		return fsown.Diagnose(a.Path, a.Account)
+	})
+	for i := range findings {
+		findings[i].Indeterminate = fsown.HasACL(findings[i].Path)
+	}
+	return findings
+}
+
+// CheckOpenable returns one finding per artifact this process cannot open, by
+// actually opening it.
+//
+// This is the boot-time check, and the reason it is a different function is that
+// at boot the process IS the gateway — so an open is ground truth rather than a
+// model. It cannot produce a false refusal: if the open fails, the gateway
+// genuinely cannot read the file and was going to fail on it later anyway, with a
+// worse message. It also catches what no permission model sees — ACLs granting
+// access, capabilities, SELinux and AppArmor denials.
+func CheckOpenable(arts []Artifact) []ReadabilityFinding {
+	return check(arts, func(a Artifact) (bool, string) {
+		return fsown.Openable(a.Path)
+	})
+}
+
+func check(arts []Artifact, probe func(Artifact) (bool, string)) []ReadabilityFinding {
 	var findings []ReadabilityFinding
 	for _, a := range arts {
-		ok, detail := fsown.Diagnose(a.Path, a.Account)
+		ok, detail := probe(a)
 		if ok {
 			continue
 		}

@@ -126,3 +126,26 @@ func TestConfigCheckReadability_UnsearchableConfigDirIsDiagnosed(t *testing.T) {
 		t.Fatalf("the finding must carry the mode that explains it; got:\n%s", text)
 	}
 }
+
+// The silent-pass hole, and the reason it needs saying out loud: /etc/ductile
+// owned root:ductile mode 0750 is ordinary distro packaging, and an Ansible
+// `file` task defaults to root:root. On those hosts the account resolved from
+// the directory IS root, root bypasses the permission model, and every finding
+// disappears — the check reports clean and is believed. That is the exact shape
+// of failure this whole family is about, so a root evaluation must announce
+// itself rather than pass quietly.
+func TestConfigCheckReadability_RootEvaluationIsReportedAsInconclusive(t *testing.T) {
+	dir, cfg := integrityFixture(t, true, true)
+
+	result := &doctor.Result{Valid: true}
+	appendReadabilityFindings(result, cfg, filepath.Join(dir, "config.yaml"))
+
+	gateway := config.GatewayAccount(dir)
+	warned := strings.Contains(findingsText(result), "does not prove")
+	if gateway.UID == 0 && !warned {
+		t.Fatalf("a root-owned config dir must warn that the result proves nothing; got:\n%s", findingsText(result))
+	}
+	if gateway.UID != 0 && warned {
+		t.Fatalf("the inconclusive warning fired for a non-root account %s:\n%s", gateway, findingsText(result))
+	}
+}
