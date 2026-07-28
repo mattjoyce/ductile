@@ -1,3 +1,5 @@
+//go:build darwin || linux || freebsd || openbsd || netbsd
+
 package storage
 
 import (
@@ -24,21 +26,21 @@ func TestOpenSQLite_ConstrainsDBAndSidecarModes(t *testing.T) {
 		t.Fatalf("write to materialise the WAL: %v", err)
 	}
 
-	checked := 0
+	// All three files must exist by now, and skipping an absent one would be the
+	// bug hiding from its own test: the sidecars are what carry job payloads and
+	// baggage between checkpoints, so "0600 on the ones that happened to exist" is
+	// not the property #171 needs. `PRAGMA journal_mode = WAL` materialises both
+	// sidecars inside OpenSQLite, before secureSQLiteFiles runs — if that ordering
+	// ever changes, this fails loudly instead of quietly checking one file.
 	for _, p := range []string{dbPath, dbPath + "-wal", dbPath + "-shm"} {
 		fi, err := os.Stat(p)
 		if err != nil {
-			continue // sidecars are created lazily; absence is not a failure
+			t.Fatalf("%s missing after open+write: %v — secureSQLiteFiles cannot have constrained it", filepath.Base(p), err)
 		}
-		checked++
 		if perm := fi.Mode().Perm(); perm&0o077 != 0 {
 			t.Errorf("%s mode = %04o, want no group/other access", filepath.Base(p), perm)
 		}
 	}
-	if checked == 0 {
-		t.Fatal("no database files found to check — test is vacuous")
-	}
-	t.Logf("checked %d file(s)", checked)
 }
 
 // #171: opening the DB must not fail when ownership cannot be corrected. This is

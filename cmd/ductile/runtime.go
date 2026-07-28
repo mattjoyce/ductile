@@ -3,8 +3,10 @@ package main
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"flag"
 	"fmt"
+	"io/fs"
 	"log/slog"
 	"os"
 	"os/signal"
@@ -284,6 +286,35 @@ func verifyReloadIntegrity(configPath string, failOnDrift bool, owner *vault.Vau
 	return nil
 }
 
+// unattestedFingerprintRecords states, per configured plugin, that attestation
+// could not be evaluated (#173).
+//
+// The manifest exists but is unusable, so no plugin can be shown as verified and
+// none can be shown as absent from the lock either — the honest record is
+// "unavailable, because the manifest could not be read". The cause travels with
+// it: a snapshot that says only "unavailable" sends the operator to the plugin,
+// which is the wrong subsystem.
+func unattestedFingerprintRecords(cfg *config.Config, cause error) []configsnapshot.PluginFingerprintRecord {
+	names := make([]string, 0, len(cfg.Plugins))
+	for name := range cfg.Plugins {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+
+	reason := fmt.Sprintf("attestation unknown: .checksums could not be read: %v", cause)
+	records := make([]configsnapshot.PluginFingerprintRecord, 0, len(names))
+	for _, name := range names {
+		records = append(records, configsnapshot.PluginFingerprintRecord{
+			Plugin:            name,
+			Enabled:           cfg.Plugins[name].Enabled,
+			Uses:              cfg.Plugins[name].Uses,
+			Available:         false,
+			UnavailableReason: reason,
+		})
+	}
+	return records
+}
+
 func loadPluginFingerprintRecords(configPath string, cfg *config.Config, registry *plugin.Registry) []configsnapshot.PluginFingerprintRecord {
 	if cfg == nil || len(cfg.Plugins) == 0 {
 		return nil
@@ -292,9 +323,20 @@ func loadPluginFingerprintRecords(configPath string, cfg *config.Config, registr
 	// two meant an unreadable manifest recorded zero fingerprints, so the config
 	// snapshot showed a clean plugin table for a box whose attestation state was
 	// actually unknowable.
+	//
+	// Absent and unusable are different verdicts. A *missing* manifest means
+	// integrity was never enabled, and an empty table states that honestly. An
+	// unreadable, truncated or wrong-version manifest means attestation is
+	// enabled and cannot be evaluated — recording nothing would let the snapshot
+	// assert a clean plugin table it has no basis for. Emit the configured
+	// plugins as explicitly unavailable instead, reusing the same Available /
+	// UnavailableReason vocabulary the missing-from-manifest case already uses.
 	manifest, err := config.LoadChecksums(resolveConfigDir(configPath))
 	if err != nil {
-		return nil
+		if errors.Is(err, fs.ErrNotExist) {
+			return nil
+		}
+		return unattestedFingerprintRecords(cfg, err)
 	}
 	locked := make(map[string]config.PluginFingerprint, len(manifest.PluginFingerprints))
 	for _, fp := range manifest.PluginFingerprints {

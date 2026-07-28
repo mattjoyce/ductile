@@ -837,3 +837,88 @@ func TestBuildRuntimeBootVerifyRejectsTamperWithOwner(t *testing.T) {
 		t.Fatalf("boot error should cite an integrity/fingerprint failure, got: %v", err)
 	}
 }
+
+// #173: an unusable manifest and an absent one are different verdicts, and the
+// config snapshot must not blur them. Absent means integrity was never enabled,
+// so an empty plugin table is honest. Unusable means attestation is enabled and
+// cannot be evaluated — a box in that state must not produce a snapshot that
+// reads like a clean one.
+//
+// The manifest is broken by version rather than by mode bits deliberately: the
+// privileged CI gate runs this package as root, and root reads a 0000 file
+// happily, so a chmod-based fixture would prove nothing there.
+func TestLoadPluginFingerprintRecordsUnusableManifest(t *testing.T) {
+	tests := []struct {
+		name           string
+		breakChecksums func(t *testing.T, path string)
+		wantRecords    int
+		wantReason     string
+	}{
+		{
+			name: "unsupported version is unusable, not absent",
+			breakChecksums: func(t *testing.T, path string) {
+				t.Helper()
+				if err := os.WriteFile(path, []byte("version: 99\nhashes: {}\n"), 0o600); err != nil {
+					t.Fatalf("rewrite checksums: %v", err)
+				}
+			},
+			wantRecords: 1,
+			wantReason:  ".checksums could not be read",
+		},
+		{
+			name: "unparseable manifest is unusable, not absent",
+			breakChecksums: func(t *testing.T, path string) {
+				t.Helper()
+				if err := os.WriteFile(path, []byte("{not-yaml\n"), 0o600); err != nil {
+					t.Fatalf("rewrite checksums: %v", err)
+				}
+			},
+			wantRecords: 1,
+			wantReason:  ".checksums could not be read",
+		},
+		{
+			name: "absent manifest records nothing",
+			breakChecksums: func(t *testing.T, path string) {
+				t.Helper()
+				if err := os.Remove(path); err != nil {
+					t.Fatalf("remove checksums: %v", err)
+				}
+			},
+			wantRecords: 0,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			tmp := buildFingerprintFixture(t, true)
+			lockConfigAndPlugins(t, tmp, "gmail")
+			tc.breakChecksums(t, filepath.Join(tmp, ".checksums"))
+
+			cfg, err := config.Load(filepath.Join(tmp, "config.yaml"))
+			if err != nil {
+				t.Fatalf("config.Load: %v", err)
+			}
+
+			records := loadPluginFingerprintRecords(filepath.Join(tmp, "config.yaml"), cfg, plugin.NewRegistry())
+			if len(records) != tc.wantRecords {
+				t.Fatalf("got %d records, want %d: %+v", len(records), tc.wantRecords, records)
+			}
+			if tc.wantRecords == 0 {
+				return
+			}
+			record := records[0]
+			if record.Plugin != "gmail" {
+				t.Errorf("record plugin = %q, want gmail", record.Plugin)
+			}
+			if record.Available {
+				t.Error("plugin reported available while attestation was unevaluable")
+			}
+			if !strings.Contains(record.UnavailableReason, tc.wantReason) {
+				t.Errorf("UnavailableReason = %q, want it to cite %q", record.UnavailableReason, tc.wantReason)
+			}
+			if record.ManifestHash != "" || record.EntrypointHash != "" {
+				t.Errorf("unevaluable attestation leaked hashes: %+v", record)
+			}
+		})
+	}
+}

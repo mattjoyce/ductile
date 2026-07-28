@@ -1,3 +1,5 @@
+//go:build darwin || linux || freebsd || openbsd || netbsd
+
 package main
 
 import (
