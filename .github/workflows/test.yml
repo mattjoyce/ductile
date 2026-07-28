@@ -22,6 +22,25 @@ jobs:
       - name: Run fast tests
         run: ./scripts/test-fast
 
+      # Build-tag sibling gate. internal/fsown is split across owner_unix.go and
+      # owner_other.go, and nothing in normal CI ever compiles the second one — so
+      # it drifted out of sync with its sibling unnoticed (an unused import and a
+      # missing Apply, both invisible to a linux-only build).
+      #
+      # Scoped to the package on purpose. ductile as a whole does NOT cross-compile
+      # — internal/lock, cmd/ductile/system_state.go and system_status.go use
+      # syscall.Flock/Kill with no portable sibling — so a repo-wide GOOS matrix
+      # would fail on pre-existing code and teach everyone to ignore it. This gate
+      # asserts only the property the split file claims: that both halves compile.
+      - name: Build-tag siblings compile (internal/fsown)
+        run: |
+          set -e
+          for target in windows plan9; do
+            echo "GOOS=${target}"
+            GOOS="${target}" GOARCH=amd64 go build ./internal/fsown/
+          done
+          GOOS=js GOARCH=wasm go build ./internal/fsown/
+
       # Privsep negative-test gate (#90). The privileged tests skip as a non-root
       # user (which is how ./scripts/test-fast runs them — a skip is never a pass),
       # so run them explicitly under sudo where they actually drop privilege and the
@@ -101,8 +120,8 @@ jobs:
         with:
           go-version-file: go.mod
 
-      - name: Install jq and sqlite3
-        run: sudo apt-get update && sudo apt-get install -y jq sqlite3
+      - name: Install fixture dependencies
+        run: sudo apt-get update && sudo apt-get install -y jq sqlite3 libcap2-bin
 
       - name: Build ductile binary
         run: make build

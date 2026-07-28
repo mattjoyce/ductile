@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# privsep-artifact-ownership — the LIVE ownership property (#167, #169, #170).
+# privsep-artifact-ownership — the LIVE ownership + posture property
+# (#167, #169, #170, #180).
 #
 # The unit tests prove the owner-negotiation mechanism. This fixture proves the
 # thing the operator actually cares about: that a privileged CLI write leaves an
@@ -43,6 +44,9 @@ exec > >(tee "$SCENARIO_LOG") 2>&1
 SVC_USER="ductilesvc"
 SVC_UID=4167
 SVC_GID=4167
+WORKER_USER="ductileworker"
+WORKER_UID=4267
+WORKER_GID=4267
 
 WORK="$(mktemp -d)"
 WORK="$(cd "$WORK" && pwd -P)"
@@ -60,6 +64,7 @@ chmod 0755 "$WORK"
 SVC_BIN="$WORK/ductile"
 cp "$BIN" "$SVC_BIN"
 chmod 0755 "$SVC_BIN"
+CAP_BIN="$WORK/ductile-cap"
 
 # run_as_service <label> <command...> — runs as the service account and refuses to
 # let an exec failure masquerade as a program result. Sets RUN_OUT and RUN_RC.
@@ -75,6 +80,8 @@ run_as_service() {
 }
 cleanup() {
   rm -rf "$WORK"
+  userdel "$WORKER_USER" 2>/dev/null || true
+  groupdel "$WORKER_USER" 2>/dev/null || true
   userdel "$SVC_USER" 2>/dev/null || true
   groupdel "$SVC_USER" 2>/dev/null || true
 }
@@ -88,6 +95,13 @@ if ! getent passwd "$SVC_USER" >/dev/null; then
   useradd -u "$SVC_UID" -g "$SVC_GID" -M -s /usr/sbin/nologin "$SVC_USER"
 fi
 fixture_log "service account: $SVC_USER ($SVC_UID:$SVC_GID); this process is uid $(id -u)"
+if ! getent group "$WORKER_USER" >/dev/null; then
+  groupadd -g "$WORKER_GID" "$WORKER_USER"
+fi
+if ! getent passwd "$WORKER_USER" >/dev/null; then
+  useradd -u "$WORKER_UID" -g "$WORKER_GID" -M -s /usr/sbin/nologin "$WORKER_USER"
+fi
+fixture_log "plugin account: $WORKER_USER ($WORKER_UID:$WORKER_GID)"
 
 # --- helpers ---------------------------------------------------------------
 
@@ -119,6 +133,116 @@ accounts:
 EOF
   mkdir -p "$d/state/accounts/default"
   chown -R "$SVC_UID:$SVC_GID" "$d"
+}
+
+# write_gate_config <dir> [account_state_dir]
+# Writes the two boot-gate refusal shapes without the unconfined override. When
+# account_state_dir is absent, a capable gateway must refuse because there is
+# nowhere to drop. When present, a plain gateway must refuse because it cannot
+# build the declared wall.
+write_gate_config() {
+  local d="$1" account_state="${2:-}"
+  mkdir -p "$d/plugins" "$d/state"
+  cat > "$d/config.yaml" <<EOF
+service:
+  strict_mode: false
+  admission:
+    verify_integrity_on_boot: false
+    fail_on_drift: false
+    validate_config_on_boot: false
+state:
+  path: "./state/ductile.db"
+plugin_roots:
+  - "./plugins"
+plugins: {}
+EOF
+  if [[ -n "$account_state" ]]; then
+    cat >> "$d/config.yaml" <<EOF
+accounts:
+  default:
+    uid: $WORKER_UID
+    gid: $WORKER_GID
+    state_dir: "$account_state"
+EOF
+    mkdir -p "$account_state"
+    chown "$WORKER_UID:$WORKER_GID" "$account_state"
+    chmod 0700 "$account_state"
+  fi
+  chown -R "$SVC_UID:$SVC_GID" "$d"
+}
+
+# write_enforce_config <config_dir> <plugin_root> <account_state_dir>
+# The plugin root deliberately lives outside config_dir. Enforce reconciliation
+# tightens config_dir to 0700 gateway-owned; a confined plugin must execute from
+# a separately traversable, read-only root and write only in its own state_dir.
+write_enforce_config() {
+  local d="$1" plugin_root="$2" account_state="$3"
+  mkdir -p "$d/state" "$plugin_root/posture_probe" "$account_state"
+  cat > "$plugin_root/posture_probe/manifest.yaml" <<'EOF'
+manifest_spec: ductile.plugin
+manifest_version: 1
+name: posture_probe
+version: 0.1.0
+protocol: 2
+entrypoint: run.sh
+description: "Records the real uid, gid, capabilities, and core-delivered config."
+commands:
+  - name: poll
+    type: write
+    description: "Record the confined runtime identity."
+config_keys:
+  required: [artifact]
+  optional: []
+EOF
+  cat > "$plugin_root/posture_probe/run.sh" <<'EOF'
+#!/bin/sh
+set -eu
+
+request="$(cat)"
+artifact="$(printf '%s' "$request" | jq -r '.config.artifact // empty')"
+if [ -z "$artifact" ]; then
+  printf '%s\n' '{"status":"error","error":"missing config.artifact","retry":false}'
+  exit 0
+fi
+cap_eff="$(awk '/^CapEff:/ { print $2 }' /proc/self/status)"
+printf '%s %s %s %s\n' "$(id -u)" "$(id -g)" "$cap_eff" "$artifact" > "$HOME/enforce-probe"
+printf '%s\n' '{"status":"ok","result":"enforce probe recorded","events":[],"logs":[]}'
+EOF
+  chmod 0755 "$plugin_root" "$plugin_root/posture_probe" "$plugin_root/posture_probe/run.sh"
+  chmod 0644 "$plugin_root/posture_probe/manifest.yaml"
+
+  cat > "$d/config.yaml" <<EOF
+service:
+  tick_interval: 100ms
+  strict_mode: false
+  admission:
+    # Scenarios 1–5 exercise integrity admission. Keeping it off here avoids
+    # coupling the posture proof to vault-keyed plugin attestation: this scenario
+    # owns the capability/accounts agreement and the real dropped spawn.
+    verify_integrity_on_boot: false
+    fail_on_drift: false
+    validate_config_on_boot: true
+state:
+  path: "./state/ductile.db"
+plugin_roots:
+  - "$plugin_root"
+plugins:
+  posture_probe:
+    enabled: true
+    run_as: default
+    schedules:
+      - every: 200ms
+    config:
+      artifact: unset
+accounts:
+  default:
+    uid: $WORKER_UID
+    gid: $WORKER_GID
+    state_dir: "$account_state"
+EOF
+  chown -R "$SVC_UID:$SVC_GID" "$d"
+  chown "$WORKER_UID:$WORKER_GID" "$account_state"
+  chmod 0700 "$account_state"
 }
 
 # assert_owner <label> <path> <want uid:gid>
@@ -278,4 +402,96 @@ printf '%s\n' "$RUN_OUT" > "$ARTIFACT_DIR/s6-lock.log"
 [[ "$RUN_RC" -eq 0 ]] || fixture_fail "s6: unprivileged config lock regressed (rc=$RUN_RC): $RUN_OUT"
 fixture_log "s6 OK — unprivileged lock still succeeds; no regression for Docker/NFS/userns installs"
 
-fixture_log "success — privileged writes land service-owned, unreadable manifests are diagnosed not misreported, and unprivileged writes are unchanged"
+# --- capability setup for true non-root enforce (#180) -----------------------
+# File capabilities are the fixture equivalent of the shipped systemd unit's
+# AmbientCapabilities. The executable is root-owned and carries ONLY the two
+# capabilities the gateway needs to drop a child; its uid remains the service uid.
+command -v setcap >/dev/null 2>&1 \
+  || fixture_fail "s7: setcap is required to exercise non-root enforce (install libcap2-bin)"
+command -v getcap >/dev/null 2>&1 \
+  || fixture_fail "s7: getcap is required to verify the capability-bearing binary"
+cp "$BIN" "$CAP_BIN"
+chown 0:0 "$CAP_BIN"
+chmod 0755 "$CAP_BIN"
+setcap cap_setuid,cap_setgid+eip "$CAP_BIN" \
+  || fixture_fail "s7: could not attach CAP_SETUID/CAP_SETGID to $CAP_BIN"
+CAP_DESC="$(getcap "$CAP_BIN")"
+printf '%s' "$CAP_DESC" | grep -q 'cap_setgid' \
+  || fixture_fail "s7: capable binary is missing CAP_SETGID: $CAP_DESC"
+printf '%s' "$CAP_DESC" | grep -q 'cap_setuid' \
+  || fixture_fail "s7: capable binary is missing CAP_SETUID: $CAP_DESC"
+SERVICE_EXEC_UID="$(su -s /bin/sh -c "id -u" "$SVC_USER")"
+[[ "$SERVICE_EXEC_UID" == "$SVC_UID" ]] \
+  || fixture_fail "s7: su launched uid $SERVICE_EXEC_UID, want genuinely non-root uid $SVC_UID"
+fixture_log "capability setup OK — non-root uid $SERVICE_EXEC_UID executes with $CAP_DESC"
+
+# --- Scenario 7 (#180): capability + no accounts must REFUSE ----------------
+C7="$WORK/capability-no-accounts"; write_gate_config "$C7"
+run_as_service "s7" "timeout 20 '$CAP_BIN' system start --config '$C7'"
+printf '%s\n' "$RUN_OUT" > "$ARTIFACT_DIR/s7-capability-no-accounts.log"
+[[ "$RUN_RC" -ne 0 && "$RUN_RC" -ne 124 ]] \
+  || fixture_fail "s7: capable non-root gateway booted without accounts (rc=$RUN_RC)"
+printf '%s' "$RUN_OUT" | grep -qi "holds the uid-drop capability but no accounts are configured" \
+  || fixture_fail "s7: wrong refusal for capability + no accounts: $RUN_OUT"
+fixture_log "s7 OK — capable non-root gateway refused to boot without accounts"
+
+# --- Scenario 8 (#180): accounts + no capability must REFUSE ----------------
+C8="$WORK/accounts-no-capability"
+C8_ACCOUNT_STATE="$WORK/s8-account-state"
+write_gate_config "$C8" "$C8_ACCOUNT_STATE"
+[[ -z "$(getcap "$SVC_BIN")" ]] \
+  || fixture_fail "s8: plain binary unexpectedly carries file capabilities: $(getcap "$SVC_BIN")"
+run_as_service "s8" "timeout 20 '$SVC_BIN' system start --config '$C8'"
+printf '%s\n' "$RUN_OUT" > "$ARTIFACT_DIR/s8-accounts-no-capability.log"
+[[ "$RUN_RC" -ne 0 && "$RUN_RC" -ne 124 ]] \
+  || fixture_fail "s8: capability-free gateway booted with accounts configured (rc=$RUN_RC)"
+printf '%s' "$RUN_OUT" | grep -qi "accounts are configured but the gateway lacks the uid-drop capability" \
+  || fixture_fail "s8: wrong refusal for accounts + no capability: $RUN_OUT"
+fixture_log "s8 OK — capability-free gateway refused a wall it could not enforce"
+
+# --- Scenario 9 (#180): non-root + capabilities + accounts reaches ENFORCE --
+# A privileged config edit writes config.yaml, then a privileged lock writes the
+# manifest. The service uid must read both, and the scheduled plugin must receive
+# the edited config through the core protocol after dropping to the worker uid.
+C9="$WORK/enforce"
+C9_PLUGIN_ROOT="$WORK/enforce-plugins"
+C9_ACCOUNT_STATE="$WORK/enforce-account-state"
+write_enforce_config "$C9" "$C9_PLUGIN_ROOT" "$C9_ACCOUNT_STATE"
+set +e
+"$BIN" config set "plugins.posture_probe.config.artifact=privileged-cli-artifact" \
+  --apply --config-dir "$C9" >"$ARTIFACT_DIR/s9-config-set.log" 2>&1
+C9_SET_RC=$?
+set -e
+[[ "$C9_SET_RC" -eq 0 || "$C9_SET_RC" -eq 2 ]] \
+  || fixture_fail "s9: privileged config edit failed (rc=$C9_SET_RC): $(cat "$ARTIFACT_DIR/s9-config-set.log")"
+grep -qi "successfully set" "$ARTIFACT_DIR/s9-config-set.log" \
+  || fixture_fail "s9: privileged config edit did not report success: $(cat "$ARTIFACT_DIR/s9-config-set.log")"
+assert_owner "s9-config" "$C9/config.yaml" "$SVC_UID:$SVC_GID"
+"$BIN" config lock --config-dir "$C9" >"$ARTIFACT_DIR/s9-lock.log" 2>&1 \
+  || fixture_fail "s9: privileged config lock failed: $(cat "$ARTIFACT_DIR/s9-lock.log")"
+assert_owner "s9-lock" "$C9/.checksums" "$SVC_UID:$SVC_GID"
+assert_readable_by_service "s9-lock" "$C9/.checksums"
+
+run_as_service "s9" "timeout 10 '$CAP_BIN' system start --config '$C9'"
+printf '%s\n' "$RUN_OUT" > "$ARTIFACT_DIR/s9-enforce.log"
+[[ "$RUN_RC" -eq 124 ]] \
+  || fixture_fail "s9: enforce gateway did not stay booted until timeout (rc=$RUN_RC): $RUN_OUT"
+printf '%s' "$RUN_OUT" | grep -q "privsep enforcing: plugins drop to their resolved account" \
+  || fixture_fail "s9: gateway never announced enforce posture: $RUN_OUT"
+if printf '%s' "$RUN_OUT" | grep -q "privsep UNCONFINED"; then
+  fixture_fail "s9: gateway announced UNCONFINED during an enforce scenario: $RUN_OUT"
+fi
+
+C9_MARKER="$C9_ACCOUNT_STATE/enforce-probe"
+[[ -f "$C9_MARKER" ]] \
+  || fixture_fail "s9: confined plugin wrote no marker; it did not complete a real spawn"
+read -r OBS_UID OBS_GID OBS_CAP_EFF OBS_ARTIFACT < "$C9_MARKER"
+[[ "$OBS_UID" == "$WORKER_UID" && "$OBS_GID" == "$WORKER_GID" ]] \
+  || fixture_fail "s9: plugin ran as $OBS_UID:$OBS_GID, want dropped account $WORKER_UID:$WORKER_GID"
+[[ "$OBS_CAP_EFF" =~ ^0+$ ]] \
+  || fixture_fail "s9: dropped plugin retained effective capabilities: $OBS_CAP_EFF"
+[[ "$OBS_ARTIFACT" == "privileged-cli-artifact" ]] \
+  || fixture_fail "s9: plugin did not receive the privileged CLI config value: $OBS_ARTIFACT"
+fixture_log "s9 OK — uid $SVC_UID + two caps reached enforce; plugin dropped to $OBS_UID:$OBS_GID with CapEff=$OBS_CAP_EFF"
+
+fixture_log "success — ownership paths hold, both boot-gate refusals are live, and non-root capability-backed enforce drops a real plugin"
