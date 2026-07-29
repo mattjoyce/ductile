@@ -22,6 +22,25 @@ jobs:
       - name: Run fast tests
         run: ./scripts/test-fast
 
+      # Build-tag sibling gate. internal/fsown is split across owner_unix.go and
+      # owner_other.go, and nothing in normal CI ever compiles the second one — so
+      # it drifted out of sync with its sibling unnoticed (an unused import and a
+      # missing Apply, both invisible to a linux-only build).
+      #
+      # Scoped to the package on purpose. ductile as a whole does NOT cross-compile
+      # — internal/lock, cmd/ductile/system_state.go and system_status.go use
+      # syscall.Flock/Kill with no portable sibling — so a repo-wide GOOS matrix
+      # would fail on pre-existing code and teach everyone to ignore it. This gate
+      # asserts only the property the split file claims: that both halves compile.
+      - name: Build-tag siblings compile (internal/fsown)
+        run: |
+          set -e
+          for target in windows plan9; do
+            echo "GOOS=${target}"
+            GOOS="${target}" GOARCH=amd64 go build ./internal/fsown/
+          done
+          GOOS=js GOARCH=wasm go build ./internal/fsown/
+
       # Privsep negative-test gate (#90). The privileged tests skip as a non-root
       # user (which is how ./scripts/test-fast runs them — a skip is never a pass),
       # so run them explicitly under sudo where they actually drop privilege and the
@@ -31,6 +50,57 @@ jobs:
           go test -c -o /tmp/dispatch.test ./internal/dispatch/
           sudo /tmp/dispatch.test -test.v -test.run \
             'TestPrivsepAccountCannotReadAgeKey|TestPrivsepNegativeSuite|TestReconcileAccountFilesystemAsRoot|TestHasDropCapabilityAsRoot|TestBindAccountToFingerprint|TestEvaluateBootGate|TestResolveAccount|TestApplyAccountCredential|TestValidateAccounts'
+
+      # Ownership gate (#175). The gate above covered ./internal/dispatch/ and
+      # nothing else, so no test in config/vault/storage/cmd could observe a uid
+      # problem — which is exactly how #167 and its siblings (#169-#171) reached
+      # production. These packages own the artifacts the CLI writes and the daemon
+      # reads, so they need the same root treatment.
+      #
+      # No test-name allowlist here: the whole package runs as root, so a new
+      # privileged test is picked up without editing CI. Off-root the same tests
+      # skip, and `Run fast tests` above has already covered the unprivileged paths.
+      - name: Ownership suite (privileged gate)
+        run: |
+          set -e
+          for pkg in internal/fsown internal/config internal/secrets internal/vault internal/storage cmd/ductile; do
+            name="$(echo "$pkg" | tr / -)"
+            go test -c -o "/tmp/${name}.test" "./${pkg}/"
+            echo "::group::privileged ${pkg}"
+            # Run from the package directory: several suites resolve testdata/
+            # relative to cwd, and `sudo` from elsewhere silently fails them.
+            # Preserve PATH so tests that shell out to `go build` still work.
+            ( cd "${pkg}" && sudo --preserve-env=PATH "/tmp/${name}.test" -test.v )
+            echo "::endgroup::"
+          done
+
+      # #167: proving that a refused chown aborts the write needs a chown that
+      # actually fails for a process that believes it is root — and root can chown
+      # to anything on an ordinary filesystem. A user namespace supplies it:
+      # unmapped uids return EINVAL.
+      #
+      # Three details, each of which failed a real run before landing here:
+      #   - `unshare` must be run under sudo. Ubuntu 24.04 restricts unprivileged
+      #     user namespaces (kernel.apparmor_restrict_unprivileged_userns), so the
+      #     unprivileged form dies on /proc/self/uid_map.
+      #   - the DIRECTORY carries the unchownable owner, not the artifact, because
+      #     Desired() resolves ownership from the directory (8030ab6).
+      #   - the test binary must live somewhere world-traversable. Inside the
+      #     namespace the runner's home is owned by an unmapped uid, so a binary
+      #     under it is unreachable even to in-ns root.
+      - name: Ownership abort path (user namespace)
+        run: |
+          set -e
+          sudo rm -rf /tmp/isc17ns
+          mkdir -p /tmp/isc17ns
+          printf 'version: 2\nhashes: {}\n# original\n' > /tmp/isc17ns/.checksums
+          sudo chown 65534:65534 /tmp/isc17ns
+          sudo chmod 0777 /tmp/isc17ns
+          sudo chmod 0666 /tmp/isc17ns/.checksums
+          go test -c -o /tmp/config-ns.test ./internal/config/
+          chmod 0755 /tmp/config-ns.test
+          sudo unshare -U -r env DUCTILE_TEST_UNCHOWNABLE_DIR=/tmp/isc17ns TMPDIR=/tmp \
+            /tmp/config-ns.test -test.v -test.run TestWriteChecksumsAtomic_FailedOwnershipLeavesManifestIntact
 
       - name: Run lint
         uses: golangci/golangci-lint-action@v6
@@ -50,8 +120,8 @@ jobs:
         with:
           go-version-file: go.mod
 
-      - name: Install jq and sqlite3
-        run: sudo apt-get update && sudo apt-get install -y jq sqlite3
+      - name: Install fixture dependencies
+        run: sudo apt-get update && sudo apt-get install -y jq sqlite3 libcap2-bin
 
       - name: Build ductile binary
         run: make build

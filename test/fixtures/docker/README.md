@@ -23,6 +23,10 @@ Fixtures, each with its live-only property:
 - `plugin-crash-leaves-deterministic-state` — a plugin subprocess dies by
   uncatchable SIGKILL mid-job: the job lands terminal `failed`, the daemon
   keeps serving AND dispatching, no non-terminal queue rows remain.
+- `privsep-artifact-ownership` — privileged CLI writes remain readable by the
+  service account; both mismatched boot-gate combinations refuse; a genuinely
+  non-root gateway carrying only `CAP_SETUID`/`CAP_SETGID` reaches enforce and
+  drops a real scheduled plugin to a distinct account.
 - `reload-lifecycle` — the running daemon survives two live `/system/reload`
   cycles and plugins keep firing.
 - `sys_exec` — polyglot subprocess round-trip: a python plugin spawns, does
@@ -37,3 +41,7 @@ listen ports per fixture (18081/18181/18381/18471/18561/18681);
 `service.unconfined: true` unless the fixture tests privsep (#86) — root-run
 hosts refuse to boot otherwise; bootstrap configs must not reference a
 `secret_ref` that has not been minted yet.
+
+The privsep posture fixture requires `setcap`/`getcap` from `libcap2-bin`.
+File capabilities stand in for the shipped systemd unit's ambient capabilities,
+so the assertion is made as an unprivileged service uid rather than root.
