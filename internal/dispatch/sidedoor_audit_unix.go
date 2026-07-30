@@ -79,6 +79,7 @@ func (realOSLookup) SudoNoPasswd(username string) (bool, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), sudoProbeTimeout)
 	defer cancel()
 
+	// #nosec G204 - 'username' is an isolated environment input safely separated from the executable.
 	cmd := exec.CommandContext(ctx, "sudo", "-n", "-l", "-U", username)
 	cmd.Env = append(os.Environ(), "LC_ALL=C") // deterministic English error prose
 	out, runErr := cmd.CombinedOutput()

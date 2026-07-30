@@ -389,15 +389,25 @@ func corsMiddleware(allowedOrigins []string) func(http.Handler) http.Handler {
 				return
 			}
 
-			if _, ok := allowed[origin]; !ok {
+			_, exactMatch := allowed[origin]
+			_, wildcardMatch := allowed["*"]
+
+			if !exactMatch && !wildcardMatch {
 				next.ServeHTTP(w, r)
 				return
 			}
 
 			h := w.Header()
 			h.Add("Vary", "Origin")
-			h.Set("Access-Control-Allow-Origin", origin)
-			h.Set("Access-Control-Allow-Credentials", "true")
+			if exactMatch {
+				h.Set("Access-Control-Allow-Origin", origin)
+				h.Set("Access-Control-Allow-Credentials", "true")
+			} else {
+				// To prevent security vulnerabilities and comply with CORS specifications,
+				// the API server omits the Access-Control-Allow-Credentials header (instead of setting it to 'false')
+				// and sets Access-Control-Allow-Origin: * in internal/api/server.go if AllowedOrigins contains the wildcard *.
+				h.Set("Access-Control-Allow-Origin", "*")
+			}
 			h.Set("Access-Control-Expose-Headers", exposedHeaders)
 
 			if r.Method == http.MethodOptions && r.Header.Get("Access-Control-Request-Method") != "" {
