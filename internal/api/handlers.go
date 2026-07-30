@@ -138,7 +138,8 @@ func (s *Server) handlePipelineTrigger(w http.ResponseWriter, r *http.Request) {
 	// Resolve entry dispatches
 	dispatches, err := s.router.GetEntryDispatches(pipelineName, event)
 	if err != nil {
-		s.writeError(w, http.StatusInternalServerError, "failed to resolve pipeline entry: "+err.Error())
+		s.logger.Error("failed to resolve pipeline entry", "pipeline", pipelineName, "error", err)
+		s.writeError(w, http.StatusInternalServerError, "failed to resolve pipeline entry")
 		return
 	}
 	if len(dispatches) == 0 {
@@ -312,7 +313,8 @@ func (s *Server) handlePipelineTrigger(w http.ResponseWriter, r *http.Request) {
 				})
 				return
 			}
-			s.writeError(w, http.StatusInternalServerError, "wait failed: "+err.Error())
+			s.logger.Error("wait failed", "pipeline", pipelineName, "error", err)
+			s.writeError(w, http.StatusInternalServerError, "wait failed")
 			return
 		}
 
