@@ -79,8 +79,9 @@ func (realOSLookup) SudoNoPasswd(username string) (bool, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), sudoProbeTimeout)
 	defer cancel()
 
-	cmd := exec.CommandContext(ctx, "sudo", "-n", "-l", "-U", username)
-	cmd.Env = append(os.Environ(), "LC_ALL=C") // deterministic English error prose
+	// Safe to use exec.CommandContext with variable username as arguments are explicitly separated, preventing command injection
+	cmd := exec.CommandContext(ctx, "sudo", "-n", "-l", "-U", username) // #nosec G204
+	cmd.Env = append(os.Environ(), "LC_ALL=C")                          // deterministic English error prose
 	out, runErr := cmd.CombinedOutput()
 	text := string(out)
 
