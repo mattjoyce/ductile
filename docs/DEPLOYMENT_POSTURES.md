@@ -6,7 +6,7 @@
 > (config reference). Theory here; need served by the links.
 
 You can run ductile three ways. They differ in **one thing only**: how much authority a plugin
-inherits when it runs. Everything else — the event bus, pipelines, the CLI, the API — is identical.
+inherits when it runs. Everything else — the event router, pipelines, the CLI, the API — is identical.
 Pick the posture that matches *who wrote your plugins and what they're allowed to touch*, then
 follow the linked how-to to stand it up.
 
@@ -123,7 +123,7 @@ where isolation matters most. This posture is **deploy-as-new** onto an FHS (Fil
 
 ## 3. Hybrid trust-tier (the recommended homelab shape)
 
-**What it is.** The same cap-only gateway as posture 2 — **one** instance, **one** event bus, so
+**What it is.** The same cap-only gateway as posture 2 — **one** instance, **one** event router, so
 native pipelines still chain across all your plugins. Plugins are **confined by default** (walled +
 vault, exactly as posture 2), *plus* a **credentialed `trusted` tier** that drops to **your real
 uid** and runs with **your real home** — so a vouched-for plugin can reach `~/.ssh`, `~/.config/gh`,
@@ -154,7 +154,7 @@ a second instance and you don't want root anywhere. This is the **recommended ho
 Current guidance: `run_as: <you>` for the trusted plugins now, with a per-plugin tier review later.
 
 **Field-proven.** Live on the ThinkPad homelab gateway, 2026-06-08: one cap-only gateway, three
-accounts, confined and credentialed plugins coexisting on one event bus — a trusted plugin cloned a
+accounts, confined and credentialed plugins coexisting on one event router — a trusted plugin cloned a
 repo into a directory only your uid can write (proving it ran as you), while confined plugins
 remained provably unable to reach your ssh key.
 

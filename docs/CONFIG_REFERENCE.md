@@ -39,7 +39,7 @@ Before starting, the system verifies all files against a monolithic `.checksums`
 
 ### 2.1 The Seal (`.checksums`)
 The `.checksums` file is a YAML manifest containing BLAKE3 hashes indexed by the **absolute path** of every authorized file.
-- **System Lock-in**: Moving the configuration directory breaks the seal.
+- **System Lock-in**: Moving the configuration directory breaks the lock.
 - **Authorization**: The `ductile config lock` command is the only way to update the manifest.
 
 ---

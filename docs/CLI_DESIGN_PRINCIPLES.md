@@ -14,7 +14,7 @@ Ductile is designed to be operated by both humans and LLMs. The CLI should speak
 
 ### 1.1 NOUN ACTION Hierarchy
 All commands MUST follow a strict `NOUN ACTION` pattern. 
-*   **Good:** `ductile job inspect`, `ductile config seal`
+*   **Good:** `ductile job inspect`, `ductile config lock`
 *   **Bad:** `ductile inspect-job`, `ductile lock-config`
 
 ### 1.2 LLM-First Affordances

@@ -96,7 +96,7 @@ The encoding and guards were shaped by a luminary grill (Hickey/Liskov/Armstrong
 
 - **One gateway, trust-tiered.** confined/untrusted plugins stay walled (vault, /opt code); trusted
   plugins run as the operator from `~/ductile/plugins` (code read via the `ductile` group). Pipelines
-  stay on one event bus.
+  stay on one event router.
 - **Secret zero still holds for the confined side.** The gateway-user owns the age key `0600`; confined
   accounts can't read it. A trusted plugin runs as the operator, who may be root-equivalent (docker) —
   so the boot-time, tier-aware *root-sidedoor audit* (kanban #111) warns loudly: a confined account

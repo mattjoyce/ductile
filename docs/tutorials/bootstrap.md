@@ -94,7 +94,7 @@ What `vault init` actually does — `vault.Init()` (`internal/vault/genesis.go:3
 
 ## 3. The management posture — a gateway that is deliberately closed
 
-Now seal and validate, then boot. A config with the API enabled and **zero**
+Now lock and validate, then boot. A config with the API enabled and **zero**
 `api.auth.tokens` is *not* an error when a vault is present — it is the recognized
 **bootstrap state** (#129):
 

@@ -318,7 +318,7 @@ api:
         scopes: ["*"]
 ```
 
-Now seal the config and attest the plugins. **Both locks are required** —
+Now lock the config and attest the plugins. **Both locks are required** —
 `config lock` re-hashes config files; `plugin lock` fingerprints plugin bytes
 so the vault can verify them at spawn (see [SECRETS.md](../SECRETS.md)).
 

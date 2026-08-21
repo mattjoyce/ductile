@@ -188,8 +188,8 @@ spent a word on.
 
 | Do not write | Write | Reason |
 |---|---|---|
-| event bus | event router, or event hub | [Glossary](GLOSSARY.md) and [Architecture](ARCHITECTURE.md) both state ductile has no event bus. Name the one you mean. |
-| seal | lock | `lock` is the command. `seal` appears as a leftover in several pages. |
+| event bus | event router, or event hub | [Glossary](GLOSSARY.md) and [Architecture](ARCHITECTURE.md) both state ductile has no event bus. The two are different components. Name the one you mean. |
+| seal | lock | `lock` is the command name, so it is also the verb. Reserve "seal" for nothing. |
 | daemon, service, server | gateway | One process, one name. `service` refers only to the systemd unit. |
 | user | account, or operator | `account` is the privsep OS user. `operator` is the human. |
 | worker | account, principal, or worker | Three unrelated things. Use the one you mean. |

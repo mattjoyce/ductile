@@ -24,7 +24,7 @@ flowchart TD
     B["Config resolution & load (with vault decrypt)<br/><small>runtime.go:916–937</small>"]
     C["PID lock — exactly one instance<br/><small>runtime.go:939</small>"]
     D["buildRuntime(): symlink scan → plugin discovery<br/><small>runtime.go:352–401</small>"]
-    E["Admission gates: integrity seal · doctor · strict decode<br/><small>runtime.go:443–499</small>"]
+    E["Admission gates: integrity check · doctor · strict decode<br/><small>runtime.go:443–499</small>"]
     F["SQLite open → pipelines compiled → config snapshot<br/><small>runtime.go:508–571</small>"]
     G["Queue · state stores · event hub · scheduler · admitter<br/><small>runtime.go:573–610</small>"]
     H["Boot posture decision + privsep boot gate<br/><small>runtime.go:641–714</small>"]
@@ -115,7 +115,7 @@ from the old bundled `strict_mode`). Each one can refuse the boot:
 
 | Gate | What it checks | Where |
 |---|---|---|
-| `verify_integrity_on_boot` | Recomputes checksums of every config file against the **.checksums seal** written by `config lock`. With `fail_on_drift`, any edit since the lock refuses the boot. | `runtime.go:460–466` |
+| `verify_integrity_on_boot` | Recomputes checksums of every config file against the **.checksums file** written by `config lock`. With `fail_on_drift`, any edit since the lock refuses the boot. | `runtime.go:460–466` |
 | `validate_config_on_boot` | Runs the **doctor** (`doctor.New(cfg, registry).Validate()`) — plugin refs, routes, webhooks, token scopes, hook cycles, schedules. Vault-aware: a from-scratch vault gateway with no api token yet is a legitimate bootstrap posture, not an error (#129). | `runtime.go:468–481` |
 | Strict decode | YAML decoding is lenient, so a typo'd key would be *silently dropped* — you'd believe a setting is active when it is not. Every dropped key is warned always; under `validate_config_on_boot` it is an admission **failure** (#26). | `runtime.go:491–499` |
 

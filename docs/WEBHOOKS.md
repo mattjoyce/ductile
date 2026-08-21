@@ -81,7 +81,7 @@ Response returns a `job_id` when accepted.
 
 ## Security & Integrity
 
-- `webhooks.yaml` is **high security** and must be sealed with `ductile config lock`.
+- `webhooks.yaml` is **high security** and must be locked with `ductile config lock`.
 - In `strict_mode: true`, tampering will prevent startup.
 - Use `secret_ref` for secret management in production; hold the secret in the vault (`ductile vault set`) — `tokens.yaml` is the migrating-out legacy. See `docs/SECRETS.md`.
 

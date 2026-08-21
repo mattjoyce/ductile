@@ -549,7 +549,7 @@ boot vault-operable posture + mint secrets over the admin socket →
 **The two steps operators miss — both fail loud, both cost a crash-loop:**
 
 - **`plugin lock --all` is separate from `config lock`.** Plugin attestation fingerprints
-  are *not* sealed by `config lock`. Without them, `verify_integrity_on_boot` rejects
+  are *not* locked by `config lock`. Without them, `verify_integrity_on_boot` rejects
   every plugin at startup. (They were deliberately decoupled — config integrity and
   plugin attestation are different concerns.)
 - **`validate_config_on_boot` surfaces dead config keys.** The strict admission gate
@@ -666,8 +666,8 @@ The sequence is forced by dependency, not preference:
 
 - **Genesis before `plugin lock`** — plugin fingerprints are keyed by the vault nonce that
   genesis seeds; you cannot attest plugins until the vault exists.
-- **`config lock` ≠ `plugin lock`** — deliberately decoupled, so sealing config does not
-  seal attestation and vice-versa.
+- **`config lock` ≠ `plugin lock`** — deliberately decoupled, so locking config does not
+  lock attestation and vice-versa.
 - **Migration is observability, not a gate** — `vault_audit` is additive and not a required
   table; run it so the audit log is complete from the first op, but the boot never hinges
   on it.

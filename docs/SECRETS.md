@@ -8,7 +8,7 @@ This guide covers the security features for hardening a Ductile deployment:
 
 It assumes the directory model and integrity preflight described in [CONFIG_REFERENCE.md](CONFIG_REFERENCE.md).
 
-> **Encryption at rest vs. the Vault — which do I want?** Encryption at rest protects *static config files* you author (a `tokens.yaml` you edit and re-seal). The Vault is a *running store* the daemon owns: secrets are set/rolled/revoked through its API, granted to named principals, and delivered to plugins over stdin — never sitting in a file you edit. Use config encryption for operator-managed static tokens; use the Vault for secrets with a lifecycle (rotation, revocation, per-plugin scoping).
+> **Encryption at rest vs. the Vault — which do I want?** Encryption at rest protects *static config files* you author (a `tokens.yaml` you edit and re-lock). The Vault is a *running store* the daemon owns: secrets are set/rolled/revoked through its API, granted to named principals, and delivered to plugins over stdin — never sitting in a file you edit. Use config encryption for operator-managed static tokens; use the Vault for secrets with a lifecycle (rotation, revocation, per-plugin scoping).
 
 ---
 
@@ -34,7 +34,7 @@ ductile secrets encrypt --recipient age1qz9... \
   --in tokens.yaml --out tokens.yaml.enc
 mv tokens.yaml.enc tokens.yaml
 
-# 3. Update the seal — the encrypted file's hash differs from the plaintext.
+# 3. Re-lock — the encrypted file's hash differs from the plaintext.
 ductile config lock
 
 # 4. Start normally. The gateway finds the key, decrypts in memory, then
@@ -100,7 +100,7 @@ ductile secrets rotate --key ~/.config/ductile/age.key \
   --recipient age1homeprimary... \
   --recipient age1newlab... \
   --file tokens.yaml
-ductile config lock   # the file changed; re-seal
+ductile config lock   # the file changed; re-lock
 ```
 
 Use rotation when adding or removing a host, or after retiring a compromised host key.
@@ -153,7 +153,7 @@ ductile secrets rotate --key PATH --recipient age1... [...] \
 
 The **Vault** is Ductile's owned secret store: a single whole-store age blob, held
 decrypted in memory at runtime by the daemon. Unlike the encrypted config bundles
-above (static files you author and re-seal), the Vault is a *running store* — secrets
+above (static files you author and re-lock), the Vault is a *running store* — secrets
 are created, rolled, and revoked through its API and delivered to plugins at dispatch
 time. It is the home for secrets that have a lifecycle.
 
@@ -291,7 +291,7 @@ records a keyed-BLAKE3 fingerprint of the plugin's bytes, keyed by the vault non
 compose time the daemon re-verifies the live plugin against that fingerprint and
 **refuses delivery (and raises a security event) on a mismatch** — so a swapped or
 tampered plugin cannot receive secrets. Attestation is decoupled from `config lock`
-(which seals config files only). See [OPERATOR_GUIDE.md](OPERATOR_GUIDE.md) and
+(which locks config files only). See [OPERATOR_GUIDE.md](OPERATOR_GUIDE.md) and
 `ductile plugin lock --help`.
 
 ### Backup and restore
