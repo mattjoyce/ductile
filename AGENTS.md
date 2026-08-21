@@ -97,7 +97,10 @@ Full technical reference: `docs/ARCHITECTURE.md`,
 ### 3b. Vocabulary
 
 These terms have specific meanings. Use them precisely; do not introduce
-synonyms.
+synonyms. The full controlled vocabulary — approved Technical Names, approved
+Technical Verbs, and the synonyms they replace — is
+[`docs/STE_DICTIONARY.md`](docs/STE_DICTIONARY.md). Adding a term to the code
+without an entry there is an incomplete change.
 
 | Term | Kind | Meaning |
 |---|---|---|

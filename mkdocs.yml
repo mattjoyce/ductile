@@ -158,6 +158,7 @@ nav:
       - Deployment Postures: DEPLOYMENT_POSTURES.md
       - Deployment: DEPLOYMENT.md
       - macOS Installation: MACOS_INSTALLATION.md
+      - CachyOS / Arch Cookbook: CACHYOS_COOKBOOK.md
       - Operator Guide: OPERATOR_GUIDE.md
       - Secrets & Spawn Hygiene: SECRETS.md
       - Health Check: HEALTH_CHECK.md
@@ -168,6 +169,7 @@ nav:
       - Config: CONFIG_REFERENCE.md
       - API: API_REFERENCE.md
       - CLI Design: CLI_DESIGN_PRINCIPLES.md
+      - Controlled Language (STE): STE_DICTIONARY.md
       - Database: DATABASE.md
       - Testing: TESTING.md
       - Versioning: VERSIONING.md

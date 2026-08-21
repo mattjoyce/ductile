@@ -214,7 +214,16 @@ at boot and **refuses to start** if they are wrong (fail-closed).
 
 Install once, as root:
 
+> **Preflight on non-Debian hosts (T15).** `ductile-accounts.sysusers.conf` pins numeric ids
+> (`984`, `1001`, `1002`). Distros allocate the sub-1000 range differently, and a `u` line with a
+> bare number claims *both* that uid and that gid. Resolve each id against `getent passwd` **and**
+> `getent group` before you run `systemd-sysusers`; a hit means you pick a different number, never
+> that you join the occupying group — on CachyOS, gid `984` is `uucp`, so joining it would hand
+> every plugin the serial ports. Some distros also ship without `/etc/sysusers.d`, which makes the
+> first `install` below fail. See the [CachyOS / Arch Cookbook §1](CACHYOS_COOKBOOK.md).
+
 ```bash
+sudo install -d -m0755 /etc/sysusers.d /etc/tmpfiles.d   # absent on some distros
 sudo install -m0644 deploy/systemd/ductile-accounts.sysusers.conf  /etc/sysusers.d/ductile-accounts.conf
 sudo install -m0644 deploy/systemd/ductile-accounts.tmpfiles.conf  /etc/tmpfiles.d/ductile-accounts.conf
 sudo systemd-sysusers                                              # create ductile + account users
