@@ -2,6 +2,24 @@
 
 A structured process for diagnosing plugin health in a running Ductile instance. Covers triage, job history analysis, failure inspection, manual testing, and remediation.
 
+!!! important "`plugin run`: flags go before the plugin name"
+    `plugin run` parses with Go's stdlib `flag`, which stops at the first non-flag argument. Put
+    every flag ahead of the plugin name. The wrong order prints the usage message and exits — with
+    **no error line saying what was wrong**, which reads like a broken plugin rather than a
+    malformed command.
+
+    ```bash
+    ductile plugin run <name> --command=health     # prints usage, does nothing
+    ductile plugin run --command=health <name>     # correct
+    ```
+
+    Two more defaults worth knowing before you diagnose the wrong thing:
+
+    - `--api-url` defaults to `http://localhost:8080`, but the shipped config listens on `8081`.
+      A `connection refused` here is the default, not a dead gateway.
+    - `--api-key` reads `DUCTILE_API_KEY`. Without either, you get a clear
+      `Error: API key required`.
+
 ---
 
 ## Quick Triage (3 commands)
@@ -26,7 +44,7 @@ for f in fails:
 "
 
 # 3. Run a specific plugin's health check
-ductile plugin run <plugin-name> health
+ductile plugin run --command=health <plugin-name>
 ```
 
 If step 2 shows failures, move to **Per-Plugin Investigation** below. If step 3 fails, move to **Configuration Issues**.
@@ -111,14 +129,14 @@ Test a plugin end-to-end without waiting for a trigger:
 
 ```bash
 # Run with default/no payload
-ductile plugin run <plugin-name> handle
+ductile plugin run --command=handle <plugin-name>
 
 # Run with a payload (useful for handle commands that need input)
 ductile api /plugin/<plugin-name>/handle -X POST \
   -b '{"payload": {"message": "test message"}}'
 
 # Run the health command to verify config
-ductile plugin run <plugin-name> health
+ductile plugin run --command=health <plugin-name>
 ```
 
 The `health` command validates the plugin's configuration (e.g. required API keys, webhook URLs) without performing any side effects. Use it after changing config.
@@ -279,8 +297,8 @@ ductile system status
 ductile system watch                          # live TUI
 
 # Plugin testing
-ductile plugin run <name> health
-ductile plugin run <name> handle
+ductile plugin run --command=health <name>
+ductile plugin run --command=handle <name>
 ductile api /plugin/<name>/handle -X POST -b '{"payload": {...}}'
 
 # Job history

@@ -27,6 +27,23 @@ recovery path.
 
 ## Steps
 
+!!! warning "If `verify_integrity_on_boot` is on, move `plugin lock` ahead of step 4"
+    The order below assumes the admission gates are **off** — the state a config has before you
+    harden it. The example `config/config.yaml` ships with
+    `service.admission.verify_integrity_on_boot: true`. With that gate on, the daemon refuses to
+    start at step 4, because no plugin fingerprints exist yet:
+
+    ```
+    integrity check failed (admission.verify_integrity_on_boot)
+      config reload rejected: plugin fingerprints missing from .checksums;
+      run 'ductile plugin lock --all' to authorize configured plugins
+    ```
+
+    Under `Restart=on-failure` this presents as a restart loop, not a single error. Run **both**
+    locks from step 7 before the first start, then run them again after step 6 changes the config.
+    The locks are idempotent, so repeating them is safe. See
+    [CachyOS Cookbook §2](CACHYOS_COOKBOOK.md) for the full corrected sequence.
+
 ```bash
 CFG=~/.config/ductile          # your config directory
 BIN=ductile                    # the installed binary (see platform sections)
@@ -76,6 +93,8 @@ printf '%s' "$API_TOKEN" | $BIN vault set --api-url "unix:///tmp/ductile-admin.s
 # 7. Seal config and plugins, in this order: `config lock` first (it writes the
 #    .checksums file that `plugin lock` extends), and both after genesis
 #    (attestation is keyed by the vault nonce).
+#    NOTE: if admission.verify_integrity_on_boot is on, these two locks must ALSO
+#    run before step 4 — the daemon will not boot without plugin fingerprints.
 $BIN config lock --config "$CFG"
 $BIN plugin lock --all --config "$CFG"        # prints a confirm code
 $BIN plugin lock --all <code> --config "$CFG"
