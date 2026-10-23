@@ -16,9 +16,9 @@ import (
 //	ductile plugin clearpass <name> --close                          commit now
 //	ductile plugin clearpass --list                                   show windows
 //
-// Opening needs a recorded fingerprint and no vault: it relaxes an attestation,
-// it computes nothing. Closing hashes the live bytes, so it needs the vault for
-// the nonce, exactly like `plugin lock`.
+// Opening and closing both need the vault, exactly like `plugin lock`: a window
+// is sealed under the fingerprint nonce so that a .checksums write without the
+// vault cannot open one, and closing hashes the live bytes with that nonce.
 func runPluginClearpass(args []string) int {
 	var configPath, configDir, note string
 	var window time.Duration
@@ -98,11 +98,22 @@ func runPluginClearpassOpen(dir string, cfg *config.Config, name string, window 
 		fmt.Fprintf(os.Stderr, "clearpass: %v; run 'ductile config lock' first\n", err)
 		return 1
 	}
-	updated, found := config.SetPluginClearpass(manifest.PluginFingerprints, name, &cp)
-	if !found {
+	recorded, ok := manifest.FindPluginFingerprint(name)
+	if !ok {
 		fmt.Fprintf(os.Stderr, "plugin %q has no recorded fingerprint; a clearpass relaxes an attestation, so attest it first with 'ductile plugin lock %s'\n", name, name)
 		return 1
 	}
+	nonce, err := fingerprintNonceForConfig(dir, cfg, nil)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "clearpass: %v\n", err)
+		return 1
+	}
+	cp, err = cp.Sealed(recorded, nonce)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "clearpass: %v\n", err)
+		return 1
+	}
+	updated, _ := config.SetPluginClearpass(manifest.PluginFingerprints, name, &cp)
 	if err := config.WritePluginFingerprints(dir, updated, false); err != nil {
 		fmt.Fprintf(os.Stderr, "clearpass: failed to write .checksums: %v\n", err)
 		return 1

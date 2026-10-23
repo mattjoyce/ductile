@@ -1,9 +1,13 @@
 package config
 
 import (
+	"crypto/subtle"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"time"
+
+	"github.com/zeebo/blake3"
 )
 
 // Clearpass is an operator's standing pre-authorisation to accept changed bytes
@@ -15,10 +19,18 @@ import (
 // The window lives in .checksums beside the fingerprint it relaxes, so `config
 // lock` carries it forward verbatim and `plugin lock` (the explicit commit)
 // replaces the whole record and thereby clears it. Timestamps are RFC3339 UTC.
+//
+// A window relaxes a keyed attestation, so it is keyed the same way: Seal is a
+// keyed-BLAKE3 MAC under the vault nonce over the plugin name, the recorded
+// hashes and the window's own fields. A record that fails Verify is not a
+// window at all: the verifier denies and the closer refuses to commit. Opening
+// one therefore needs the vault, exactly like `plugin lock`, and a writer who
+// can reach .checksums but not the vault cannot open one.
 type Clearpass struct {
 	OpenedAt string `yaml:"opened_at"`
 	Until    string `yaml:"until"`
 	Note     string `yaml:"note,omitempty"`
+	Seal     string `yaml:"seal"`
 }
 
 // MaxClearpass bounds a window. A standing exemption is not a clearpass; an
@@ -41,6 +53,47 @@ func NewClearpass(now time.Time, d time.Duration, note string) (Clearpass, error
 		Until:    opened.Add(d).Format(time.RFC3339),
 		Note:     note,
 	}, nil
+}
+
+// Sealed returns a copy of c sealed for fp under the vault nonce. The seal
+// binds the window to the attestation it relaxes, so a later `plugin lock`
+// (which replaces the record) or any edit to the window invalidates it.
+func (c Clearpass) Sealed(fp PluginFingerprint, nonce []byte) (Clearpass, error) {
+	mac, err := clearpassMAC(c, fp, nonce)
+	if err != nil {
+		return Clearpass{}, err
+	}
+	c.Seal = mac
+	return c, nil
+}
+
+// Verify reports whether c's seal is the MAC of its fields and fp's identity
+// under nonce. It is nil-safe and fails closed on any error.
+func (c *Clearpass) Verify(fp PluginFingerprint, nonce []byte) bool {
+	if c == nil || c.Seal == "" {
+		return false
+	}
+	want, err := clearpassMAC(*c, fp, nonce)
+	if err != nil {
+		return false
+	}
+	return subtle.ConstantTimeCompare([]byte(want), []byte(c.Seal)) == 1
+}
+
+func clearpassMAC(c Clearpass, fp PluginFingerprint, nonce []byte) (string, error) {
+	if len(nonce) != 32 {
+		return "", fmt.Errorf("clearpass seal: nonce must be 32 bytes, got %d", len(nonce))
+	}
+	h, err := blake3.NewKeyed(nonce)
+	if err != nil {
+		return "", fmt.Errorf("clearpass seal: %w", err)
+	}
+	// NUL-delimited so field boundaries cannot be forged by concatenation.
+	for _, field := range []string{"clearpass", fp.Name, fp.ManifestHash, fp.EntrypointHash, c.OpenedAt, c.Until, c.Note} {
+		_, _ = h.Write([]byte(field))
+		_, _ = h.Write([]byte{0})
+	}
+	return hex.EncodeToString(h.Sum(nil)), nil
 }
 
 // Deadline parses Until. A malformed deadline is an error, never an open window.

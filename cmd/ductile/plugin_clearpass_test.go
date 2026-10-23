@@ -29,26 +29,40 @@ func swapGmail(t *testing.T, dir string) {
 	}
 }
 
-// openClearpass records a window for gmail directly, with a chosen clock, so
-// tests can place "now" on either side of the deadline.
-func openClearpass(t *testing.T, dir string, opened time.Time, d time.Duration) config.Clearpass {
+// openClearpass records a sealed window for gmail directly, with a chosen
+// clock, so tests can place "now" on either side of the deadline.
+func openClearpass(t *testing.T, dir string, nonce fingerprintNonceSource, opened time.Time, d time.Duration) config.Clearpass {
 	t.Helper()
 	cp, err := config.NewClearpass(opened, d, "test")
 	if err != nil {
 		t.Fatal(err)
 	}
+	key, err := nonce.FingerprintNonce()
+	if err != nil {
+		t.Fatal(err)
+	}
+	cp, err = cp.Sealed(recordedGmail(t, dir), key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeClearpass(t, dir, &cp)
+	return cp
+}
+
+// writeClearpass stores cp for gmail as given, sealed or not.
+func writeClearpass(t *testing.T, dir string, cp *config.Clearpass) {
+	t.Helper()
 	m, err := config.LoadChecksums(dir)
 	if err != nil {
 		t.Fatal(err)
 	}
-	set, found := config.SetPluginClearpass(m.PluginFingerprints, "gmail", &cp)
+	set, found := config.SetPluginClearpass(m.PluginFingerprints, "gmail", cp)
 	if !found {
 		t.Fatal("fixture gmail must be attested first")
 	}
 	if err := config.WritePluginFingerprints(dir, set, false); err != nil {
 		t.Fatal(err)
 	}
-	return cp
 }
 
 func recordedGmail(t *testing.T, dir string) config.PluginFingerprint {
@@ -80,10 +94,10 @@ func TestVerifierToleratesMismatchInsideOpenClearpassAndReportsIt(t *testing.T) 
 	tmp := buildFingerprintFixture(t, true)
 	lockConfigAndPlugins(t, tmp, "gmail")
 	before := recordedGmail(t, tmp)
-	opened := time.Now()
-	openClearpass(t, tmp, opened, time.Hour)
-	swapGmail(t, tmp)
 	reg, v := buildRegistryAndVault(t, tmp)
+	opened := time.Now()
+	openClearpass(t, tmp, v, opened, time.Hour)
+	swapGmail(t, tmp)
 
 	var reports []clearpassSpawn
 	pv := newPluginIdentityVerifier(reg, tmp, v, nil)
@@ -112,8 +126,8 @@ func TestVerifierToleratesMismatchInsideOpenClearpassAndReportsIt(t *testing.T) 
 func TestVerifierMatchInsideWindowDoesNotReport(t *testing.T) {
 	tmp := buildFingerprintFixture(t, true)
 	lockConfigAndPlugins(t, tmp, "gmail")
-	openClearpass(t, tmp, time.Now(), time.Hour)
 	reg, v := buildRegistryAndVault(t, tmp)
+	openClearpass(t, tmp, v, time.Now(), time.Hour)
 
 	called := false
 	pv := newPluginIdentityVerifier(reg, tmp, v, nil)
@@ -129,10 +143,10 @@ func TestVerifierMatchInsideWindowDoesNotReport(t *testing.T) {
 func TestVerifierDeniesAfterWindowAndNamesIt(t *testing.T) {
 	tmp := buildFingerprintFixture(t, true)
 	lockConfigAndPlugins(t, tmp, "gmail")
-	opened := time.Now().Add(-3 * time.Hour)
-	cp := openClearpass(t, tmp, opened, time.Hour)
-	swapGmail(t, tmp)
 	reg, v := buildRegistryAndVault(t, tmp)
+	opened := time.Now().Add(-3 * time.Hour)
+	cp := openClearpass(t, tmp, v, opened, time.Hour)
+	swapGmail(t, tmp)
 
 	called := false
 	pv := newPluginIdentityVerifier(reg, tmp, v, nil)
@@ -155,10 +169,10 @@ func TestCloserCommitsExpiredWindowAndReports(t *testing.T) {
 	tmp := buildFingerprintFixture(t, true)
 	lockConfigAndPlugins(t, tmp, "gmail")
 	before := recordedGmail(t, tmp)
-	opened := time.Now().Add(-2 * time.Hour)
-	openClearpass(t, tmp, opened, time.Hour)
-	swapGmail(t, tmp)
 	reg, v := buildRegistryAndVault(t, tmp)
+	opened := time.Now().Add(-2 * time.Hour)
+	openClearpass(t, tmp, v, opened, time.Hour)
+	swapGmail(t, tmp)
 	st := openTestStore(t)
 	hub := events.NewHub(16)
 	sub, cancel := hub.Subscribe()
@@ -232,14 +246,14 @@ func TestCloserLeavesOpenWindowAloneAndCommitsUnchangedBytes(t *testing.T) {
 	closer := newClearpassCloser(reg, tmp, v, nil, nil, st)
 
 	// Open window: untouched.
-	openClearpass(t, tmp, time.Now(), time.Hour)
+	openClearpass(t, tmp, v, time.Now(), time.Hour)
 	closer.sweep(context.Background(), true)
 	if recordedGmail(t, tmp).Clearpass == nil {
 		t.Fatal("an open window must not be closed early")
 	}
 
 	// Expired window with no change and no spawn: committed as unchanged.
-	openClearpass(t, tmp, time.Now().Add(-2*time.Hour), time.Hour)
+	openClearpass(t, tmp, v, time.Now().Add(-2*time.Hour), time.Hour)
 	closer.sweep(context.Background(), false)
 	after := recordedGmail(t, tmp)
 	if after.Clearpass != nil || after.EntrypointHash != before.EntrypointHash {
@@ -325,12 +339,58 @@ func TestClearpassCLIOpenListCloseAndLockClears(t *testing.T) {
 	}
 
 	// plugin lock is the explicit commit and clears a window too.
-	openClearpass(t, tmp, time.Now(), time.Hour)
+	_, v := buildRegistryAndVault(t, tmp)
+	openClearpass(t, tmp, v, time.Now(), time.Hour)
 	code, stdout, stderr = captureRunPluginLock(t, []string{"--config-dir", tmp, "gmail"})
 	if code != 0 {
 		t.Fatalf("lock: %s", stderr)
 	}
 	if !strings.Contains(stdout, "Cleared the clearpass window") || recordedGmail(t, tmp).Clearpass != nil {
 		t.Fatalf("lock must clear the window and say so: %s", stdout)
+	}
+}
+
+// --- seal ---------------------------------------------------------------------
+
+// A window written without the vault is not a window: the verifier denies and
+// names the bad seal, and the closer will not commit under it even once it has
+// expired. This is what keeps a .checksums write from becoming an attestation.
+func TestUnsealedClearpassIsIgnoredByVerifierAndCloser(t *testing.T) {
+	tmp := buildFingerprintFixture(t, true)
+	lockConfigAndPlugins(t, tmp, "gmail")
+	before := recordedGmail(t, tmp)
+	reg, v := buildRegistryAndVault(t, tmp)
+
+	forged, _ := config.NewClearpass(time.Now().Add(-2*time.Hour), time.Hour, "forged")
+	writeClearpass(t, tmp, &forged)
+	swapGmail(t, tmp)
+
+	pv := newPluginIdentityVerifier(reg, tmp, v, nil)
+	pv.now = func() time.Time { return time.Now().Add(-90 * time.Minute) } // inside the forged window
+	called := false
+	pv.onClearpass = func(clearpassSpawn) { called = true }
+	err := pv.VerifyIdentity("gmail")
+	if err == nil || !strings.Contains(err.Error(), "seal does not verify") || called {
+		t.Fatalf("an unsealed window must deny and say why (called=%v): %v", called, err)
+	}
+
+	st := openTestStore(t)
+	closer := newClearpassCloser(reg, tmp, v, nil, nil, st)
+	closer.sweep(context.Background(), true) // the forged window has expired by real time
+	after := recordedGmail(t, tmp)
+	if after.EntrypointHash != before.EntrypointHash || after.Clearpass == nil {
+		t.Fatalf("the closer must not commit under an unsealed window: %+v", after)
+	}
+	if rows, _ := st.ListVaultAudit(context.Background(), "gmail", 5); len(rows) != 0 {
+		t.Fatalf("nothing was closed, nothing is audited: %+v", rows)
+	}
+
+	// A sealed window whose fields were edited afterwards is just as dead.
+	genuine := openClearpass(t, tmp, v, time.Now(), time.Hour)
+	genuine.Until = time.Now().Add(20 * time.Hour).UTC().Format(time.RFC3339)
+	writeClearpass(t, tmp, &genuine)
+	pv.now = time.Now
+	if err := pv.VerifyIdentity("gmail"); err == nil || !strings.Contains(err.Error(), "seal does not verify") {
+		t.Fatalf("an edited window must deny: %v", err)
 	}
 }

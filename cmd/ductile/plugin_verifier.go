@@ -38,7 +38,9 @@ type clearpassSpawn struct {
 // plugin, a missing nonce, or any hash mismatch all deny.
 //
 // The one deliberate relaxation is a clearpass: a mismatch inside an open window
-// passes and is reported, never silently. Outside the window the strict rule
+// passes and is reported, never silently. The window must carry a seal under
+// the same vault nonce that keys the fingerprint; an unsealed or tampered
+// record is ignored and named in the denial. Outside the window the strict rule
 // stands, and an expired window that the closer has not yet committed is named
 // in the denial so the operator sees why.
 type pluginIdentityVerifier struct {
@@ -109,6 +111,9 @@ func (v *pluginIdentityVerifier) VerifyIdentity(name string) (err error) {
 
 	now := v.now()
 	switch {
+	case recorded.Clearpass != nil && !recorded.Clearpass.Verify(recorded, nonce):
+		return fmt.Errorf("%w; a clearpass is recorded but its seal does not verify under the vault nonce, so it is ignored (re-open it with 'ductile plugin clearpass %s --for <d>' or lock with 'ductile plugin lock %s')",
+			mismatch, name, name)
 	case recorded.Clearpass.Open(now):
 		if v.onClearpass != nil {
 			v.onClearpass(clearpassSpawn{Plugin: name, Recorded: recorded, Live: live, Window: *recorded.Clearpass})

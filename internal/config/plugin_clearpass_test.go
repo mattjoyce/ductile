@@ -118,3 +118,43 @@ func TestClearpassRoundTripsAndLockClears(t *testing.T) {
 		t.Fatal("plugin lock replaces the record and so clears the window")
 	}
 }
+
+func TestClearpassSealBindsWindowAndFingerprint(t *testing.T) {
+	nonce := make([]byte, 32)
+	for i := range nonce {
+		nonce[i] = byte(i)
+	}
+	fp := PluginFingerprint{Name: "gmail", ManifestHash: "m1", EntrypointHash: "e1"}
+	cp, _ := NewClearpass(time.Now(), time.Hour, "swap")
+
+	if cp.Verify(fp, nonce) {
+		t.Fatal("an unsealed window never verifies")
+	}
+	sealed, err := cp.Sealed(fp, nonce)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !sealed.Verify(fp, nonce) {
+		t.Fatal("a sealed window verifies under its nonce and fingerprint")
+	}
+	other := make([]byte, 32)
+	if sealed.Verify(fp, other) {
+		t.Fatal("a different nonce must not verify")
+	}
+	if sealed.Verify(PluginFingerprint{Name: "gmail", ManifestHash: "m1", EntrypointHash: "e2"}, nonce) {
+		t.Fatal("a re-locked fingerprint invalidates the window")
+	}
+	edited := sealed
+	edited.Until = "2030-01-01T00:00:00Z"
+	if edited.Verify(fp, nonce) {
+		t.Fatal("an edited deadline invalidates the seal")
+	}
+	edited = sealed
+	edited.Note = "something else"
+	if edited.Verify(fp, nonce) {
+		t.Fatal("an edited note invalidates the seal")
+	}
+	if _, err := cp.Sealed(fp, nonce[:16]); err == nil {
+		t.Fatal("a short nonce is refused")
+	}
+}

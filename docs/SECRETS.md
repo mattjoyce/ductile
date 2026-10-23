@@ -296,7 +296,8 @@ tampered plugin cannot receive secrets. Attestation is decoupled from `config lo
 
 **Changing an attested plugin on a live gateway** uses a **clearpass**: `ductile plugin
 clearpass <name> --for 2h --note "why"` records, beside the fingerprint, that changed bytes
-for that one plugin are accepted until the deadline. A mismatch inside the window is delivered
+for that one plugin are accepted until the deadline. The record is sealed under the vault
+nonce (so it needs the vault to open, and a `.checksums` edit cannot forge one). A mismatch inside the window is delivered
 its secrets and *reported* (WARN with both hashes, `plugin.clearpass_spawn` event, audit row)
 rather than escalated; at the deadline the gateway commits the live bytes as the new
 attestation and says what it accepted (`plugin.clearpass_closed`, audit row

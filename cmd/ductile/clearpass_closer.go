@@ -145,8 +145,24 @@ func (c *clearpassCloser) sweep(ctx context.Context, announce bool) {
 		return
 	}
 	now := c.now()
+	var nonce []byte
 	for _, fp := range manifest.PluginFingerprints {
+		if fp.Clearpass == nil {
+			continue
+		}
+		if nonce == nil {
+			nonce, err = c.nonceSrc.FingerprintNonce()
+			if err != nil {
+				c.logger.Error("clearpass sweep cannot read the vault nonce", "error", err)
+				return
+			}
+		}
 		switch {
+		case !fp.Clearpass.Verify(fp, nonce):
+			// Never commit under a window the vault did not seal: that would let a
+			// .checksums write turn into an attestation of arbitrary bytes.
+			c.logger.Error("clearpass record does not verify under the vault nonce; ignored, the plugin stays denied until it is re-opened or locked",
+				"event", eventClearpassClosed, "plugin", fp.Name, "until", fp.Clearpass.Until)
 		case fp.Clearpass.Open(now):
 			if announce {
 				c.logger.Info("clearpass open: changed bytes for this plugin will be accepted and committed at close",
