@@ -84,7 +84,13 @@ func clearpassOpenDetail(cp config.Clearpass) string {
 // as its attestation. It is the one writer shared by the gateway closer and the
 // CLI `--close`, and by construction clears the window: MergePluginFingerprint
 // replaces the whole record and the new one carries no Clearpass.
-func commitClearpass(dir string, recorded config.PluginFingerprint, current config.ResolvedPlugin, nonce []byte) (clearpassCommit, error) {
+//
+// consume runs after the live bytes are hashed and before .checksums is
+// rewritten; it is where the caller records the window as closed. The order is
+// deliberate and fail-closed: a close that cannot be recorded commits nothing,
+// and a commit that fails after the record leaves a window the closer will
+// refuse as already closed, never one that can be replayed.
+func commitClearpass(dir string, recorded config.PluginFingerprint, current config.ResolvedPlugin, nonce []byte, consume func(clearpassCommit) error) (clearpassCommit, error) {
 	if recorded.Clearpass == nil {
 		return clearpassCommit{}, fmt.Errorf("plugin %q has no clearpass to close", recorded.Name)
 	}
@@ -92,15 +98,21 @@ func commitClearpass(dir string, recorded config.PluginFingerprint, current conf
 	if err != nil {
 		return clearpassCommit{}, fmt.Errorf("clearpass close: %w", err)
 	}
+	commit := clearpassCommit{Plugin: recorded.Name, Window: *recorded.Clearpass, Previous: recorded, Committed: live}
+	if consume != nil {
+		if err := consume(commit); err != nil {
+			return clearpassCommit{}, fmt.Errorf("clearpass close not recorded, so nothing was committed: %w", err)
+		}
+	}
 	manifest, err := config.LoadChecksums(dir)
 	if err != nil {
 		return clearpassCommit{}, fmt.Errorf("clearpass close: %w", err)
 	}
 	merged := config.MergePluginFingerprint(manifest.PluginFingerprints, live)
 	if err := config.WritePluginFingerprints(dir, merged, false); err != nil {
-		return clearpassCommit{}, fmt.Errorf("clearpass close: write .checksums: %w", err)
+		return clearpassCommit{}, fmt.Errorf("clearpass close: write .checksums (the window is already recorded as closed; re-open it or lock the plugin): %w", err)
 	}
-	return clearpassCommit{Plugin: recorded.Name, Window: *recorded.Clearpass, Previous: recorded, Committed: live}, nil
+	return commit, nil
 }
 
 // clearpassCloser is the gateway's side of a clearpass (card #144): it reports
@@ -209,9 +221,17 @@ var errClearpassNotCommittable = errors.New("clearpass not committed")
 // fails leaves the window in place: the verifier then denies the plugin and
 // names the expired window, and the next sweep tries again.
 func (c *clearpassCloser) closeOne(ctx context.Context, recorded config.PluginFingerprint) {
+	var observed int
+	var detail string
+	// The close row is written by consume, before .checksums changes.
+	consume := func(commit clearpassCommit) error {
+		observed = c.observedSpawns(ctx, commit)
+		detail = clearpassCloseDetail(commit, observed)
+		return c.appendAuditErr(auditOpClearpassClose, commit.Plugin, "ok", detail)
+	}
 	commit, err := c.admit(ctx, recorded)
 	if err == nil {
-		commit, err = c.commit(recorded)
+		commit, err = c.commit(recorded, consume)
 	}
 	if err != nil {
 		c.logger.Error("clearpass close failed; the plugin is denied until it is committed or locked",
@@ -219,8 +239,6 @@ func (c *clearpassCloser) closeOne(ctx context.Context, recorded config.PluginFi
 		c.appendAudit(auditOpClearpassClose, recorded.Name, "error", clearpassIDTag(recorded.Clearpass.ID)+" "+err.Error())
 		return
 	}
-	observed := c.observedSpawns(ctx, commit)
-	detail := clearpassCloseDetail(commit, observed)
 	c.logger.Info("clearpass closed: "+detail,
 		"event", eventClearpassClosed, "plugin", commit.Plugin, "changed", commit.Changed(), "observed_spawns", observed,
 		"entrypoint_previous", config.ShortHash(commit.Previous.EntrypointHash), "entrypoint_committed", config.ShortHash(commit.Committed.EntrypointHash),
@@ -230,7 +248,6 @@ func (c *clearpassCloser) closeOne(ctx context.Context, recorded config.PluginFi
 			"plugin": commit.Plugin, "changed": commit.Changed(), "observed_spawns": observed, "detail": detail,
 		})
 	}
-	c.appendAudit(auditOpClearpassClose, commit.Plugin, "ok", detail)
 }
 
 // admit decides whether an expired window may be committed: its deadline must
@@ -277,7 +294,7 @@ func (c *clearpassCloser) admit(ctx context.Context, recorded config.PluginFinge
 	return clearpassCommit{}, nil
 }
 
-func (c *clearpassCloser) commit(recorded config.PluginFingerprint) (clearpassCommit, error) {
+func (c *clearpassCloser) commit(recorded config.PluginFingerprint, consume func(clearpassCommit) error) (clearpassCommit, error) {
 	p, ok := c.registry.Get(recorded.Name)
 	if !ok {
 		return clearpassCommit{}, fmt.Errorf("plugin %q is not in the live registry", recorded.Name)
@@ -293,7 +310,7 @@ func (c *clearpassCloser) commit(recorded config.PluginFingerprint) (clearpassCo
 		ManifestPath:   filepath.Join(p.Path, "manifest.yaml"),
 		EntrypointPath: p.Entrypoint,
 	}
-	return commitClearpass(c.configDir, recorded, current, nonce)
+	return commitClearpass(c.configDir, recorded, current, nonce, consume)
 }
 
 // observedSpawns counts the window's tolerated spawns from the audit log, which
@@ -325,17 +342,26 @@ func (c *clearpassCloser) observedSpawns(ctx context.Context, commit clearpassCo
 	return n
 }
 
+// appendAudit is the best-effort form for rows that only describe what already
+// happened (a tolerated spawn, a refused close): a lost row is logged loudly,
+// it does not change the outcome.
 func (c *clearpassCloser) appendAudit(op, principal, outcome, detail string) {
+	if err := c.appendAuditErr(op, principal, outcome, detail); err != nil {
+		c.logger.Error("vault audit write failed", "op", op, "plugin", principal, "error", err)
+	}
+}
+
+// appendAuditErr returns the write error for rows that gate an action: the
+// close row consumes the window, so it must land before the commit.
+func (c *clearpassCloser) appendAuditErr(op, principal, outcome, detail string) error {
 	if c.audit == nil {
-		return
+		return errors.New("no audit log")
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	if err := c.audit.AppendVaultAudit(ctx, state.VaultAuditEvent{
+	return c.audit.AppendVaultAudit(ctx, state.VaultAuditEvent{
 		Op: op, Principal: principal, Actor: "core", Outcome: outcome, Detail: detail,
-	}); err != nil {
-		c.logger.Error("vault audit write failed", "op", op, "plugin", principal, "error", err)
-	}
+	})
 }
 
 // clearpassCloseDetail is the one-line account of a close, shared by the log,

@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -484,5 +485,48 @@ func TestUnsealedClearpassIsIgnoredByVerifierAndCloser(t *testing.T) {
 	pv.now = time.Now
 	if err := pv.VerifyIdentity("gmail"); err == nil || !strings.Contains(err.Error(), "seal does not verify") {
 		t.Fatalf("an edited window must deny: %v", err)
+	}
+}
+
+// failingAudit reads like the real log but refuses writes of one op, so a close
+// that cannot be recorded can be shown to commit nothing.
+type failingAudit struct {
+	*state.Store
+	refuse string
+}
+
+func (f failingAudit) AppendVaultAudit(ctx context.Context, ev state.VaultAuditEvent) error {
+	if ev.Op == f.refuse {
+		return errors.New("disk full")
+	}
+	return f.Store.AppendVaultAudit(ctx, ev)
+}
+
+func TestCloserCommitsNothingWhenTheCloseCannotBeRecorded(t *testing.T) {
+	tmp := buildFingerprintFixture(t, true)
+	lockConfigAndPlugins(t, tmp, "gmail")
+	before := recordedGmail(t, tmp)
+	reg, v := buildRegistryAndVault(t, tmp)
+	st := openTestStore(t)
+	openClearpassRecorded(t, tmp, v, st, time.Now().Add(-2*time.Hour), time.Hour)
+	swapGmail(t, tmp)
+
+	closer := newClearpassCloser(reg, tmp, v, nil, nil, failingAudit{Store: st, refuse: auditOpClearpassClose})
+	closer.sweep(context.Background(), false)
+	after := recordedGmail(t, tmp)
+	if after.Clearpass == nil || after.EntrypointHash != before.EntrypointHash {
+		t.Fatalf("an unrecorded close must commit nothing: %+v", after)
+	}
+
+	// With the log writable again the same window commits on the next sweep.
+	closer.audit = st
+	closer.sweep(context.Background(), false)
+	after = recordedGmail(t, tmp)
+	if after.Clearpass != nil || after.EntrypointHash == before.EntrypointHash {
+		t.Fatalf("once the close is recordable the window commits: %+v", after)
+	}
+	rows, _ := st.ListVaultAudit(context.Background(), "gmail", 1)
+	if len(rows) != 1 || rows[0].Op != auditOpClearpassClose || rows[0].Outcome != "ok" {
+		t.Fatalf("the close row lands before the commit: %+v", rows)
 	}
 }

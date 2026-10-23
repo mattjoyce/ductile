@@ -182,19 +182,20 @@ func runPluginClearpassClose(dir, configPath string, cfg *config.Config, name st
 		fmt.Fprintf(os.Stderr, "clearpass: %v\n", err)
 		return 1
 	}
-	commit, err := commitClearpass(dir, recorded, *target, nonce)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "%v\n", err)
-		return 1
-	}
 	// The CLI does not count spawns; the gateway's own close does. -1 prints as
 	// "observed spawns unknown". The close row is what stops the record from
-	// being committed again if it ever reappears.
-	detail := clearpassCloseDetail(commit, -1)
-	if err := appendClearpassAudit(cfg, state.VaultAuditEvent{
-		Op: auditOpClearpassClose, Principal: name, Actor: "cli", Outcome: "ok", Detail: detail,
-	}); err != nil {
-		fmt.Fprintf(os.Stderr, "warning: the window is committed but its close could not be recorded in the audit log: %v\n", err)
+	// being committed again if it ever reappears, so it is written first and a
+	// failure commits nothing.
+	var detail string
+	consume := func(commit clearpassCommit) error {
+		detail = clearpassCloseDetail(commit, -1)
+		return appendClearpassAudit(cfg, state.VaultAuditEvent{
+			Op: auditOpClearpassClose, Principal: name, Actor: "cli", Outcome: "ok", Detail: detail,
+		})
+	}
+	if _, err := commitClearpass(dir, recorded, *target, nonce, consume); err != nil {
+		fmt.Fprintf(os.Stderr, "%v\n", err)
+		return 1
 	}
 	fmt.Printf("Clearpass closed: %s.\n", detail)
 	return 0

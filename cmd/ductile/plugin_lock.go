@@ -110,6 +110,20 @@ func runPluginLockOne(dir, configPath string, cfg *config.Config, name string, d
 		return 1
 	}
 	merged := config.MergePluginFingerprint(existing.PluginFingerprints, fpNew)
+	prev, hadWindow := existing.FindPluginFingerprint(name)
+	hadWindow = hadWindow && prev.Clearpass != nil
+	if hadWindow && !dryRun {
+		// Lock supersedes the window: record its close BEFORE the record goes,
+		// so the gateway never commits that record if it reappears. A close that
+		// cannot be recorded stops the lock.
+		if err := appendClearpassAudit(cfg, state.VaultAuditEvent{
+			Op: auditOpClearpassClose, Principal: name, Actor: "cli", Outcome: "superseded",
+			Detail: clearpassIDTag(prev.Clearpass.ID) + " superseded by plugin lock",
+		}); err != nil {
+			fmt.Fprintf(os.Stderr, "plugin lock: could not record the superseded clearpass window in the audit log, so nothing was attested: %v\n", err)
+			return 1
+		}
+	}
 	if err := config.WritePluginFingerprints(dir, merged, dryRun); err != nil {
 		fmt.Fprintf(os.Stderr, "plugin lock: failed to write .checksums: %v\n", err)
 		return 1
@@ -119,15 +133,7 @@ func runPluginLockOne(dir, configPath string, cfg *config.Config, name string, d
 		return 0
 	}
 	fmt.Printf("Attested plugin %q (entrypoint %s, manifest %s).\n", name, shortFP(fpNew.EntrypointHash), shortFP(fpNew.ManifestHash))
-	if prev, ok := existing.FindPluginFingerprint(name); ok && prev.Clearpass != nil {
-		// Lock supersedes the window: record its close so the gateway never
-		// commits that record if it reappears.
-		if err := appendClearpassAudit(cfg, state.VaultAuditEvent{
-			Op: auditOpClearpassClose, Principal: name, Actor: "cli", Outcome: "superseded",
-			Detail: clearpassIDTag(prev.Clearpass.ID) + " superseded by plugin lock",
-		}); err != nil {
-			fmt.Fprintf(os.Stderr, "warning: could not record the superseded clearpass window in the audit log: %v\n", err)
-		}
+	if hadWindow {
 		fmt.Printf("Cleared the clearpass window that was open until %s.\n", prev.Clearpass.Until)
 	}
 	return 0
