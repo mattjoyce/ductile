@@ -49,6 +49,19 @@ func openClearpass(t *testing.T, dir string, nonce fingerprintNonceSource, opene
 	return cp
 }
 
+// openClearpassRecorded opens a sealed window and records it in the audit log
+// the way the CLI does, which is what the closer requires before it commits.
+func openClearpassRecorded(t *testing.T, dir string, nonce fingerprintNonceSource, st *state.Store, opened time.Time, d time.Duration) config.Clearpass {
+	t.Helper()
+	cp := openClearpass(t, dir, nonce, opened, d)
+	if err := st.AppendVaultAudit(context.Background(), state.VaultAuditEvent{
+		Op: auditOpClearpassOpen, Principal: "gmail", Actor: "cli", Outcome: "ok", Detail: clearpassOpenDetail(cp),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	return cp
+}
+
 // writeClearpass stores cp for gmail as given, sealed or not.
 func writeClearpass(t *testing.T, dir string, cp *config.Clearpass) {
 	t.Helper()
@@ -170,10 +183,10 @@ func TestCloserCommitsExpiredWindowAndReports(t *testing.T) {
 	lockConfigAndPlugins(t, tmp, "gmail")
 	before := recordedGmail(t, tmp)
 	reg, v := buildRegistryAndVault(t, tmp)
-	opened := time.Now().Add(-2 * time.Hour)
-	openClearpass(t, tmp, v, opened, time.Hour)
-	swapGmail(t, tmp)
 	st := openTestStore(t)
+	opened := time.Now().Add(-2 * time.Hour)
+	openClearpassRecorded(t, tmp, v, st, opened, time.Hour)
+	swapGmail(t, tmp)
 	hub := events.NewHub(16)
 	sub, cancel := hub.Subscribe()
 	defer cancel()
@@ -210,10 +223,12 @@ func TestCloserCommitsExpiredWindowAndReports(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var spawns, closes int
+	var opens, spawns, closes int
 	var closeDetail string
 	for _, r := range rows {
 		switch r.Op {
+		case auditOpClearpassOpen:
+			opens++
 		case auditOpClearpassSpawn:
 			spawns++
 		case auditOpClearpassClose:
@@ -221,8 +236,8 @@ func TestCloserCommitsExpiredWindowAndReports(t *testing.T) {
 			closeDetail = r.Detail
 		}
 	}
-	if spawns != 2 || closes != 1 {
-		t.Fatalf("audit must hold 2 spawns and 1 close, got %d/%d: %+v", spawns, closes, rows)
+	if opens != 1 || spawns != 2 || closes != 1 {
+		t.Fatalf("audit must hold 1 open, 2 spawns and 1 close, got %d/%d/%d: %+v", opens, spawns, closes, rows)
 	}
 	if !strings.Contains(closeDetail, "observed in 2 spawns") || !strings.Contains(closeDetail, "committed entrypoint") {
 		t.Fatalf("close detail must say what was accepted: %s", closeDetail)
@@ -246,22 +261,74 @@ func TestCloserLeavesOpenWindowAloneAndCommitsUnchangedBytes(t *testing.T) {
 	closer := newClearpassCloser(reg, tmp, v, nil, nil, st)
 
 	// Open window: untouched.
-	openClearpass(t, tmp, v, time.Now(), time.Hour)
+	openClearpassRecorded(t, tmp, v, st, time.Now(), time.Hour)
 	closer.sweep(context.Background(), true)
 	if recordedGmail(t, tmp).Clearpass == nil {
 		t.Fatal("an open window must not be closed early")
 	}
 
 	// Expired window with no change and no spawn: committed as unchanged.
-	openClearpass(t, tmp, v, time.Now().Add(-2*time.Hour), time.Hour)
+	openClearpassRecorded(t, tmp, v, st, time.Now().Add(-2*time.Hour), time.Hour)
 	closer.sweep(context.Background(), false)
 	after := recordedGmail(t, tmp)
 	if after.Clearpass != nil || after.EntrypointHash != before.EntrypointHash {
 		t.Fatalf("unchanged bytes commit to the same hash and the window clears: %+v", after)
 	}
 	rows, _ := st.ListVaultAudit(context.Background(), "gmail", 5)
-	if len(rows) != 1 || rows[0].Op != auditOpClearpassClose || !strings.Contains(rows[0].Detail, "unchanged") || !strings.Contains(rows[0].Detail, "never spawned") {
-		t.Fatalf("close must record unchanged, never spawned: %+v", rows)
+	if len(rows) != 3 || rows[0].Op != auditOpClearpassClose || !strings.Contains(rows[0].Detail, "unchanged") || !strings.Contains(rows[0].Detail, "never spawned") {
+		t.Fatalf("newest row is the close recording unchanged, never spawned: %+v", rows)
+	}
+}
+
+// The closer turns a window into an attestation only when the audit log saw it
+// opened and not yet closed, and only within a day of its deadline. A sealed
+// record replayed from a backup, or one already consumed, stays inert.
+func TestCloserRefusesReplayedUnrecordedAndStaleWindows(t *testing.T) {
+	tmp := buildFingerprintFixture(t, true)
+	lockConfigAndPlugins(t, tmp, "gmail")
+	before := recordedGmail(t, tmp)
+	reg, v := buildRegistryAndVault(t, tmp)
+	st := openTestStore(t)
+	closer := newClearpassCloser(reg, tmp, v, nil, nil, st)
+	swapGmail(t, tmp)
+
+	refused := func(why string) {
+		t.Helper()
+		closer.sweep(context.Background(), false)
+		after := recordedGmail(t, tmp)
+		if after.Clearpass == nil || after.EntrypointHash != before.EntrypointHash {
+			t.Fatalf("%s: must not commit: %+v", why, after)
+		}
+		rows, _ := st.ListVaultAudit(context.Background(), "gmail", 1)
+		if len(rows) != 1 || rows[0].Op != auditOpClearpassClose || rows[0].Outcome != "error" || !strings.Contains(rows[0].Detail, "not committed") {
+			t.Fatalf("%s: the refusal is audited as an error close: %+v", why, rows)
+		}
+	}
+
+	// 1. Sealed and expired, but the log never saw it opened.
+	openClearpass(t, tmp, v, time.Now().Add(-2*time.Hour), time.Hour)
+	refused("unrecorded window")
+
+	// 2. Opened and already closed, then the record reappears: a replay.
+	cp := openClearpassRecorded(t, tmp, v, st, time.Now().Add(-2*time.Hour), time.Hour)
+	if err := st.AppendVaultAudit(context.Background(), state.VaultAuditEvent{
+		Op: auditOpClearpassClose, Principal: "gmail", Actor: "core", Outcome: "ok", Detail: clearpassIDTag(cp.ID) + " closed earlier",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	writeClearpass(t, tmp, &cp)
+	refused("replayed window")
+
+	// 3. Opened, never closed, but its deadline passed more than a day ago.
+	openClearpassRecorded(t, tmp, v, st, time.Now().Add(-30*time.Hour), time.Hour)
+	refused("stale window")
+
+	// 4. The genuine case still commits.
+	openClearpassRecorded(t, tmp, v, st, time.Now().Add(-2*time.Hour), time.Hour)
+	closer.sweep(context.Background(), false)
+	after := recordedGmail(t, tmp)
+	if after.Clearpass != nil || after.EntrypointHash == before.EntrypointHash {
+		t.Fatalf("a recorded, fresh window commits: %+v", after)
 	}
 }
 
@@ -311,6 +378,25 @@ func TestClearpassCLIOpenListCloseAndLockClears(t *testing.T) {
 	if rec.Clearpass == nil || rec.Clearpass.Note != "card 208" || !rec.Clearpass.Open(time.Now()) {
 		t.Fatalf("open must record the window: %+v", rec.Clearpass)
 	}
+	auditRows := func() []state.VaultAuditRow {
+		cfg, err := config.Load(filepath.Join(tmp, "config.yaml"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		db, err := storage.OpenSQLite(context.Background(), cfg.State.Path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer func() { _ = db.Close() }()
+		rows, err := state.NewStore(db).ListVaultAudit(context.Background(), "gmail", 10)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return rows
+	}
+	if rows := auditRows(); len(rows) != 1 || rows[0].Op != auditOpClearpassOpen || !clearpassRowHasID(rows[0].Detail, rec.Clearpass.ID) {
+		t.Fatalf("open must write its audit row with the window id: %+v", rows)
+	}
 
 	code, stdout, _ = captureRunPluginClearpass(t, []string{"--config-dir", tmp, "--list"})
 	if code != 0 || !strings.Contains(stdout, "gmail") || !strings.Contains(stdout, "open") || !strings.Contains(stdout, "card 208") {
@@ -322,12 +408,15 @@ func TestClearpassCLIOpenListCloseAndLockClears(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("close: %s", stderr)
 	}
-	if !strings.Contains(stdout, "Clearpass closed: plugin \"gmail\" committed entrypoint") {
+	if !strings.Contains(stdout, "Clearpass closed: id=") || !strings.Contains(stdout, "plugin \"gmail\" committed entrypoint") {
 		t.Fatalf("close must report the commit: %s", stdout)
 	}
 	after := recordedGmail(t, tmp)
 	if after.Clearpass != nil || after.EntrypointHash == before.EntrypointHash {
 		t.Fatalf("close must commit and clear: %+v", after)
+	}
+	if rows := auditRows(); len(rows) != 2 || rows[0].Op != auditOpClearpassClose || !clearpassRowHasID(rows[0].Detail, rec.Clearpass.ID) {
+		t.Fatalf("close must write its audit row with the window id: %+v", rows)
 	}
 	if code, _, stderr := captureRunPluginClearpass(t, []string{"--config-dir", tmp, "gmail", "--close"}); code == 0 || !strings.Contains(stderr, "no clearpass to close") {
 		t.Fatalf("a second close has nothing to do: code=%d stderr=%s", code, stderr)
@@ -347,6 +436,9 @@ func TestClearpassCLIOpenListCloseAndLockClears(t *testing.T) {
 	}
 	if !strings.Contains(stdout, "Cleared the clearpass window") || recordedGmail(t, tmp).Clearpass != nil {
 		t.Fatalf("lock must clear the window and say so: %s", stdout)
+	}
+	if rows := auditRows(); rows[0].Op != auditOpClearpassClose || rows[0].Outcome != "superseded" {
+		t.Fatalf("lock must record the window as superseded: %+v", rows[0])
 	}
 }
 

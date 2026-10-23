@@ -1,6 +1,7 @@
 package config
 
 import (
+	"crypto/rand"
 	"crypto/subtle"
 	"encoding/hex"
 	"errors"
@@ -27,6 +28,10 @@ import (
 // one therefore needs the vault, exactly like `plugin lock`, and a writer who
 // can reach .checksums but not the vault cannot open one.
 type Clearpass struct {
+	// ID is random per window and part of the seal, so two windows with the
+	// same fields are distinct and the gateway's audit trail can tell a window
+	// it saw opened from a record replayed from a backup.
+	ID       string `yaml:"id"`
 	OpenedAt string `yaml:"opened_at"`
 	Until    string `yaml:"until"`
 	Note     string `yaml:"note,omitempty"`
@@ -47,8 +52,13 @@ func NewClearpass(now time.Time, d time.Duration, note string) (Clearpass, error
 	if d <= 0 || d > MaxClearpass {
 		return Clearpass{}, fmt.Errorf("%w: got %s", ErrClearpassDuration, d)
 	}
+	var id [16]byte
+	if _, err := rand.Read(id[:]); err != nil {
+		return Clearpass{}, fmt.Errorf("clearpass id: %w", err)
+	}
 	opened := now.UTC().Truncate(time.Second)
 	return Clearpass{
+		ID:       hex.EncodeToString(id[:]),
 		OpenedAt: opened.Format(time.RFC3339),
 		Until:    opened.Add(d).Format(time.RFC3339),
 		Note:     note,
@@ -89,7 +99,7 @@ func clearpassMAC(c Clearpass, fp PluginFingerprint, nonce []byte) (string, erro
 		return "", fmt.Errorf("clearpass seal: %w", err)
 	}
 	// NUL-delimited so field boundaries cannot be forged by concatenation.
-	for _, field := range []string{"clearpass", fp.Name, fp.ManifestHash, fp.EntrypointHash, c.OpenedAt, c.Until, c.Note} {
+	for _, field := range []string{"clearpass", fp.Name, fp.ManifestHash, fp.EntrypointHash, c.ID, c.OpenedAt, c.Until, c.Note} {
 		_, _ = h.Write([]byte(field))
 		_, _ = h.Write([]byte{0})
 	}

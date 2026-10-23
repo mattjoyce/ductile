@@ -2,9 +2,11 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/mattjoyce/ductile/internal/config"
@@ -21,8 +23,16 @@ const (
 	// gateway closed by committing the live bytes as the attestation.
 	eventClearpassClosed = "plugin.clearpass_closed"
 
+	auditOpClearpassOpen  = "clearpass_open"
 	auditOpClearpassSpawn = "clearpass_spawn"
 	auditOpClearpassClose = "clearpass_close"
+
+	// clearpassCommitGrace is how long after its deadline a window may still be
+	// committed by the closer. It covers a gateway that was down at the deadline
+	// for up to a day; beyond that the operator re-opens or locks. Together with
+	// the audit trail it bounds how old a replayed record could be and still
+	// turn into an attestation.
+	clearpassCommitGrace = config.MaxClearpass
 
 	// clearpassSweepEvery is how often the gateway looks for expired windows.
 	// A window is a matter of hours; a minute's lag at close is invisible.
@@ -53,6 +63,21 @@ type clearpassCommit struct {
 func (c clearpassCommit) Changed() bool {
 	return c.Previous.ManifestHash != c.Committed.ManifestHash ||
 		c.Previous.EntrypointHash != c.Committed.EntrypointHash
+}
+
+// clearpassIDTag is how every clearpass audit row begins, so the closer can
+// find a window's own rows: "id=<id> ...".
+func clearpassIDTag(id string) string { return "id=" + id }
+
+// clearpassRowHasID reports whether an audit row's detail is about window id.
+func clearpassRowHasID(detail, id string) bool {
+	tag := clearpassIDTag(id)
+	return detail == tag || strings.HasPrefix(detail, tag+" ")
+}
+
+// clearpassOpenDetail is the audit detail written when a window opens.
+func clearpassOpenDetail(cp config.Clearpass) string {
+	return fmt.Sprintf("%s until %s note=%q", clearpassIDTag(cp.ID), cp.Until, cp.Note)
 }
 
 // commitClearpass closes the named plugin's window by recording the live bytes
@@ -105,8 +130,8 @@ func newClearpassCloser(registry *plugin.Registry, configDir string, nonceSrc fi
 // operator asked for the window; the hashes are in the line so a swap the
 // operator did not intend is still visible.
 func (c *clearpassCloser) reportSpawn(s clearpassSpawn) {
-	detail := fmt.Sprintf("clearpass until %s: entrypoint recorded %s live %s, manifest recorded %s live %s",
-		s.Window.Until,
+	detail := fmt.Sprintf("%s clearpass until %s: entrypoint recorded %s live %s, manifest recorded %s live %s",
+		clearpassIDTag(s.Window.ID), s.Window.Until,
 		config.ShortHash(s.Recorded.EntrypointHash), config.ShortHash(s.Live.EntrypointHash),
 		config.ShortHash(s.Recorded.ManifestHash), config.ShortHash(s.Live.ManifestHash))
 	c.logger.Warn("plugin fingerprint mismatch at spawn accepted under an open clearpass",
@@ -174,15 +199,24 @@ func (c *clearpassCloser) sweep(ctx context.Context, announce bool) {
 	}
 }
 
+// errClearpassNotCommittable marks a window the closer will not turn into an
+// attestation: one it has no record of being opened, one already closed, or
+// one expired beyond the grace. It is not retried; the operator re-opens or
+// locks.
+var errClearpassNotCommittable = errors.New("clearpass not committed")
+
 // closeOne commits one expired window and reports the outcome. A commit that
 // fails leaves the window in place: the verifier then denies the plugin and
 // names the expired window, and the next sweep tries again.
 func (c *clearpassCloser) closeOne(ctx context.Context, recorded config.PluginFingerprint) {
-	commit, err := c.commit(recorded)
+	commit, err := c.admit(ctx, recorded)
+	if err == nil {
+		commit, err = c.commit(recorded)
+	}
 	if err != nil {
 		c.logger.Error("clearpass close failed; the plugin is denied until it is committed or locked",
 			"event", eventClearpassClosed, "plugin", recorded.Name, "until", recorded.Clearpass.Until, "error", err)
-		c.appendAudit(auditOpClearpassClose, recorded.Name, "error", err.Error())
+		c.appendAudit(auditOpClearpassClose, recorded.Name, "error", clearpassIDTag(recorded.Clearpass.ID)+" "+err.Error())
 		return
 	}
 	observed := c.observedSpawns(ctx, commit)
@@ -197,6 +231,50 @@ func (c *clearpassCloser) closeOne(ctx context.Context, recorded config.PluginFi
 		})
 	}
 	c.appendAudit(auditOpClearpassClose, commit.Plugin, "ok", detail)
+}
+
+// admit decides whether an expired window may be committed: its deadline must
+// be within the grace, and the audit trail must show it opened and not yet
+// closed. This is what stops a sealed record replayed from a backup, or one
+// already consumed, from attesting whatever is on disk.
+func (c *clearpassCloser) admit(ctx context.Context, recorded config.PluginFingerprint) (clearpassCommit, error) {
+	cp := recorded.Clearpass
+	deadline, err := cp.Deadline()
+	if err != nil {
+		return clearpassCommit{}, fmt.Errorf("%w: %v", errClearpassNotCommittable, err)
+	}
+	if late := c.now().Sub(deadline); late > clearpassCommitGrace {
+		return clearpassCommit{}, fmt.Errorf("%w: window expired %s ago, beyond the %s grace; re-open it or lock the plugin",
+			errClearpassNotCommittable, late.Truncate(time.Minute), clearpassCommitGrace)
+	}
+	if c.audit == nil {
+		return clearpassCommit{}, fmt.Errorf("%w: no audit log to confirm the window was opened", errClearpassNotCommittable)
+	}
+	rows, err := c.audit.ListVaultAudit(ctx, recorded.Name, clearpassAuditScan)
+	if err != nil {
+		return clearpassCommit{}, fmt.Errorf("%w: cannot read the audit log: %v", errClearpassNotCommittable, err)
+	}
+	opened, closed := false, false
+	for _, r := range rows {
+		if !clearpassRowHasID(r.Detail, cp.ID) {
+			continue
+		}
+		switch r.Op {
+		case auditOpClearpassOpen:
+			opened = true
+		case auditOpClearpassClose:
+			if r.Outcome != "error" {
+				closed = true
+			}
+		}
+	}
+	switch {
+	case closed:
+		return clearpassCommit{}, fmt.Errorf("%w: the audit log shows window %s already closed; a replayed record is not re-committed", errClearpassNotCommittable, cp.ID)
+	case !opened:
+		return clearpassCommit{}, fmt.Errorf("%w: the audit log has no record of window %s being opened", errClearpassNotCommittable, cp.ID)
+	}
+	return clearpassCommit{}, nil
 }
 
 func (c *clearpassCloser) commit(recorded config.PluginFingerprint) (clearpassCommit, error) {
@@ -273,12 +351,12 @@ func clearpassCloseDetail(commit clearpassCommit, observed int) string {
 		spawns = fmt.Sprintf("observed in %d spawns", observed)
 	}
 	if !commit.Changed() {
-		return fmt.Sprintf("plugin %q unchanged (entrypoint %s, manifest %s), %s; window %s to %s",
-			commit.Plugin, config.ShortHash(commit.Committed.EntrypointHash), config.ShortHash(commit.Committed.ManifestHash),
+		return fmt.Sprintf("%s plugin %q unchanged (entrypoint %s, manifest %s), %s; window %s to %s",
+			clearpassIDTag(commit.Window.ID), commit.Plugin, config.ShortHash(commit.Committed.EntrypointHash), config.ShortHash(commit.Committed.ManifestHash),
 			spawns, commit.Window.OpenedAt, commit.Window.Until)
 	}
-	return fmt.Sprintf("plugin %q committed entrypoint %s (was %s), manifest %s (was %s), %s; window %s to %s",
-		commit.Plugin,
+	return fmt.Sprintf("%s plugin %q committed entrypoint %s (was %s), manifest %s (was %s), %s; window %s to %s",
+		clearpassIDTag(commit.Window.ID), commit.Plugin,
 		config.ShortHash(commit.Committed.EntrypointHash), config.ShortHash(commit.Previous.EntrypointHash),
 		config.ShortHash(commit.Committed.ManifestHash), config.ShortHash(commit.Previous.ManifestHash),
 		spawns, commit.Window.OpenedAt, commit.Window.Until)

@@ -1,13 +1,31 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"os"
 	"time"
 
 	"github.com/mattjoyce/ductile/internal/config"
+	"github.com/mattjoyce/ductile/internal/state"
+	"github.com/mattjoyce/ductile/internal/storage"
 )
+
+// appendClearpassAudit writes one clearpass audit row from the CLI, opening the
+// state database the gateway uses (WAL, so a running gateway is fine). The
+// gateway's closer refuses to commit a window the log never saw opened, so a
+// failed open row fails the open.
+func appendClearpassAudit(cfg *config.Config, ev state.VaultAuditEvent) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	db, err := storage.OpenSQLite(ctx, cfg.State.Path)
+	if err != nil {
+		return fmt.Errorf("open state database: %w", err)
+	}
+	defer func() { _ = db.Close() }()
+	return state.NewStore(db).AppendVaultAudit(ctx, ev)
+}
 
 // runPluginClearpass implements `ductile plugin clearpass` (card #144): the
 // operator's bounded pre-authorisation to change one plugin's bytes.
@@ -114,6 +132,14 @@ func runPluginClearpassOpen(dir string, cfg *config.Config, name string, window 
 		return 1
 	}
 	updated, _ := config.SetPluginClearpass(manifest.PluginFingerprints, name, &cp)
+	// The open row goes first: the gateway commits only a window the log saw
+	// opened, so a record without its row is inert rather than dangerous.
+	if err := appendClearpassAudit(cfg, state.VaultAuditEvent{
+		Op: auditOpClearpassOpen, Principal: name, Actor: "cli", Outcome: "ok", Detail: clearpassOpenDetail(cp),
+	}); err != nil {
+		fmt.Fprintf(os.Stderr, "clearpass: cannot record the window in the audit log, so it was not opened: %v\n", err)
+		return 1
+	}
 	if err := config.WritePluginFingerprints(dir, updated, false); err != nil {
 		fmt.Fprintf(os.Stderr, "clearpass: failed to write .checksums: %v\n", err)
 		return 1
@@ -161,9 +187,16 @@ func runPluginClearpassClose(dir, configPath string, cfg *config.Config, name st
 		fmt.Fprintf(os.Stderr, "%v\n", err)
 		return 1
 	}
-	// The CLI holds no audit log, so it does not count spawns; the gateway's
-	// own close does. -1 prints as "observed spawns unknown".
-	fmt.Printf("Clearpass closed: %s.\n", clearpassCloseDetail(commit, -1))
+	// The CLI does not count spawns; the gateway's own close does. -1 prints as
+	// "observed spawns unknown". The close row is what stops the record from
+	// being committed again if it ever reappears.
+	detail := clearpassCloseDetail(commit, -1)
+	if err := appendClearpassAudit(cfg, state.VaultAuditEvent{
+		Op: auditOpClearpassClose, Principal: name, Actor: "cli", Outcome: "ok", Detail: detail,
+	}); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: the window is committed but its close could not be recorded in the audit log: %v\n", err)
+	}
+	fmt.Printf("Clearpass closed: %s.\n", detail)
 	return 0
 }
 
@@ -182,13 +215,13 @@ func runPluginClearpassList(dir string) int {
 		if shown == 0 {
 			fmt.Printf("%-24s  %-9s  %-20s  %-20s  %s\n", "PLUGIN", "STATE", "OPENED", "UNTIL", "NOTE")
 		}
-		state := "open"
+		status := "open"
 		if fp.Clearpass.Expired(now) {
-			state = "expired"
+			status = "expired"
 		} else if !fp.Clearpass.Open(now) {
-			state = "malformed"
+			status = "malformed"
 		}
-		fmt.Printf("%-24s  %-9s  %-20s  %-20s  %s\n", fp.Name, state, fp.Clearpass.OpenedAt, fp.Clearpass.Until, fp.Clearpass.Note)
+		fmt.Printf("%-24s  %-9s  %-20s  %-20s  %s\n", fp.Name, status, fp.Clearpass.OpenedAt, fp.Clearpass.Until, fp.Clearpass.Note)
 		shown++
 	}
 	if shown == 0 {

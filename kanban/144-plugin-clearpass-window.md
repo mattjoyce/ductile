@@ -36,7 +36,13 @@ time-boxed pre-authorisation recorded beside the fingerprint it relaxes.
   without the vault cannot open a window, an edited window is dead, and a `plugin lock`
   invalidates any stale one. The verifier ignores an unverified record and names it in
   the denial; the closer never commits under one. `config lock` carries the record
-  forward verbatim like the rest of the fingerprint.
+  forward verbatim like the rest of the fingerprint. Each window also has a random
+  `id` inside the seal, and opening writes a `clearpass_open` audit row; the closer
+  commits only a window the audit log saw opened and not yet closed, and only within
+  24h of its deadline, so a sealed record replayed from a backup stays inert. Residual:
+  an attacker who can write both `.checksums` and the state database, and holds a
+  sealed record less than two days old, is the same attacker who can read the age key
+  beside them; attestation notices change, it is not a wall against a local writer.
 - **Inside the window, at spawn:** the verifier compares as today. On a mismatch with an
   open window it tolerates the spawn, returns no error to either gate (secret delivery
   and the privsep downgrade both consult the same verifier), and reports through a

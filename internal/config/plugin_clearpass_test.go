@@ -14,8 +14,12 @@ func TestNewClearpassBoundsTheWindow(t *testing.T) {
 	if err != nil {
 		t.Fatalf("2h must open: %v", err)
 	}
-	if cp.OpenedAt != "2026-10-23T10:00:00Z" || cp.Until != "2026-10-23T12:00:00Z" || cp.Note != "card 208" {
+	if cp.OpenedAt != "2026-10-23T10:00:00Z" || cp.Until != "2026-10-23T12:00:00Z" || cp.Note != "card 208" || len(cp.ID) != 32 {
 		t.Fatalf("unexpected record: %+v", cp)
+	}
+	again, _ := NewClearpass(now, 2*time.Hour, "card 208")
+	if again.ID == cp.ID {
+		t.Fatal("every window has its own id")
 	}
 	for _, d := range []time.Duration{0, -time.Minute, MaxClearpass + time.Second} {
 		if _, err := NewClearpass(now, d, ""); !errors.Is(err, ErrClearpassDuration) {
@@ -153,6 +157,11 @@ func TestClearpassSealBindsWindowAndFingerprint(t *testing.T) {
 	edited.Note = "something else"
 	if edited.Verify(fp, nonce) {
 		t.Fatal("an edited note invalidates the seal")
+	}
+	edited = sealed
+	edited.ID = "00000000000000000000000000000000"
+	if edited.Verify(fp, nonce) {
+		t.Fatal("the id is part of the seal")
 	}
 	if _, err := cp.Sealed(fp, nonce[:16]); err == nil {
 		t.Fatal("a short nonce is refused")
