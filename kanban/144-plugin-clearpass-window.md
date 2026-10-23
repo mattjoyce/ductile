@@ -1,6 +1,6 @@
 ---
 id: 144
-status: doing
+status: review
 priority: High
 blocked_by: []
 tags: [plugin, attestation, vault, operability, security]
@@ -82,6 +82,25 @@ where the bytes are known in advance.
 6. Gate green: gofmt, vet, golangci-lint, gosec, `go test -race -count=1 -shuffle=on`.
 7. Exercised on the local Mac instance: open, change a plugin byte, spawn passes with the
    WARN line and audit row, close commits, strict rule resumes.
+
+## Done (2026-10-23, branch plugin/card144-clearpass, 33ff6a1..b09a461)
+
+- Built and gated (gofmt, goimports, vet, golangci-lint 0 issues, gosec clean,
+  `go test -race -shuffle=on` green on cmd/ductile and internal/config).
+- Exercised on a scratch local gateway with its own vault: accepted spawns reported with
+  both hashes, gateway closed the window on the clock ("committed X (was Y), observed in
+  N spawns"), strict spawn passed on the new bytes, a swap with no window was refused with
+  the SECURITY alert; CLI `--close` and `plugin lock` paths run too.
+- Installed on the Mac dev instance (v1.0.1-23-gb09a461) and verified with a no-change
+  window on echo: opened by CLI, closed by the gateway "unchanged, never spawned".
+- Review hardening after the first cut: window sealed under the vault nonce; per-window
+  id plus open/close audit trail checked before commit, 24h commit grace; close rows
+  written before the record changes, fail closed.
+- Out of scope, seen on the way: `internal/api` management-posture tests and
+  `internal/dispatch` TestSpawnPluginTimeoutKillsProcessGroup flake under -race -shuffle
+  on main (the latter is fixed on fix/ownership-supervisor-and-gates); pre-existing
+  errcheck and gosec G204 hits on untouched files; the fingerprint still covers manifest
+  and entrypoint only; no route from core events to a notifier plugin.
 
 ## Narrative
 
