@@ -294,6 +294,16 @@ tampered plugin cannot receive secrets. Attestation is decoupled from `config lo
 (which seals config files only). See [OPERATOR_GUIDE.md](OPERATOR_GUIDE.md) and
 `ductile plugin lock --help`.
 
+**Changing an attested plugin on a live gateway** uses a **clearpass**: `ductile plugin
+clearpass <name> --for 2h --note "why"` records, beside the fingerprint, that changed bytes
+for that one plugin are accepted until the deadline. A mismatch inside the window is delivered
+its secrets and *reported* (WARN with both hashes, `plugin.clearpass_spawn` event, audit row)
+rather than escalated; at the deadline the gateway commits the live bytes as the new
+attestation and says what it accepted (`plugin.clearpass_closed`, audit row
+`clearpass_close`), whether or not the plugin spawned. `--close` commits now; `plugin lock`
+also clears a window; `--list` shows them. Outside the window nothing is relaxed. Swap the
+plugin tree atomically (rename into place): a window accepts whatever bytes a spawn finds.
+
 ### Backup and restore
 
 `ductile system backup` (scope `config` or higher) includes the encrypted vault blob

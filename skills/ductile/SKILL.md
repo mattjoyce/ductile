@@ -128,6 +128,9 @@ ductile job logs [--json]                 # Query stored job logs
 ductile plugin list [--api-url URL] [--json]   # Discover loaded plugins
 ductile plugin run <name>                      # Manual execution
 ductile plugin lock <name>                     # Attest plugin bytes — REQUIRED before it receives vault secrets
+ductile plugin clearpass <name> --for 2h       # Accept changed bytes for one plugin until the deadline; gateway commits at close
+ductile plugin clearpass <name> --close        # Commit the live bytes now
+ductile plugin clearpass --list                # Show open/expired windows
 ```
 
 ### Vault & Secrets
@@ -149,6 +152,8 @@ ductile system vault-audit [--principal <p>]     # the append-only audit log (na
 ```
 
 **Onboarding a plugin to vault secrets = three ordered steps:** (1) `vault register-principal --name <p> --kind plugin`, (2) `vault set --name <s> --principal <p>` (grant each secret), (3) `plugin lock <p>` (attest its bytes). All three are required — an unattested plugin has no recorded keyed fingerprint, so compose-time identity verification fails and it receives **nothing**.
+
+**Changing an attested plugin on a live gateway:** `plugin clearpass <p> --for 2h --note "card N"`, then rename the new tree into place. Inside the window a mismatch is accepted and reported (WARN + `plugin.clearpass_spawn` + audit row); at the deadline the gateway commits the live bytes and reports (`plugin.clearpass_closed`). No staged attestation, no `/tmp` helper. `plugin lock <p>` or `--close` commits early.
 
 ### API (direct gateway calls)
 ```bash

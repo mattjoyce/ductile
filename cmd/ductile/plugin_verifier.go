@@ -16,6 +16,17 @@ type fingerprintNonceSource interface {
 	FingerprintNonce() ([]byte, error)
 }
 
+// clearpassSpawn describes one spawn the verifier let through on a fingerprint
+// mismatch because the plugin's clearpass window was open (card #144). It is
+// handed to the verifier's reporter so the runtime can log it, publish it and
+// record it; the verifier itself only decides.
+type clearpassSpawn struct {
+	Plugin   string
+	Recorded config.PluginFingerprint
+	Live     config.PluginFingerprint
+	Window   config.Clearpass
+}
+
 // pluginIdentityVerifier re-verifies a plugin's live bytes against its recorded
 // keyed fingerprint at spawn (ADR §3.3). It satisfies dispatch.PluginVerifier.
 //
@@ -25,18 +36,27 @@ type fingerprintNonceSource interface {
 // live registry, and keys the hash with the vault nonce. Fail-closed: an
 // unreadable .checksums, a plugin with no recorded fingerprint, an undiscoverable
 // plugin, a missing nonce, or any hash mismatch all deny.
+//
+// The one deliberate relaxation is a clearpass: a mismatch inside an open window
+// passes and is reported, never silently. Outside the window the strict rule
+// stands, and an expired window that the closer has not yet committed is named
+// in the denial so the operator sees why.
 type pluginIdentityVerifier struct {
 	registry  *plugin.Registry
 	configDir string
 	nonceSrc  fingerprintNonceSource
 	logger    *slog.Logger
+	now       func() time.Time
+	// onClearpass is called once per tolerated spawn. Nil means tolerate quietly
+	// at the verifier level; the runtime always wires a reporter.
+	onClearpass func(clearpassSpawn)
 }
 
 func newPluginIdentityVerifier(registry *plugin.Registry, configDir string, nonceSrc fingerprintNonceSource, logger *slog.Logger) *pluginIdentityVerifier {
 	if logger == nil {
 		logger = slog.Default()
 	}
-	return &pluginIdentityVerifier{registry: registry, configDir: configDir, nonceSrc: nonceSrc, logger: logger}
+	return &pluginIdentityVerifier{registry: registry, configDir: configDir, nonceSrc: nonceSrc, logger: logger, now: time.Now}
 }
 
 // VerifyIdentity implements dispatch.PluginVerifier. Compose-time re-hashing
@@ -78,5 +98,26 @@ func (v *pluginIdentityVerifier) VerifyIdentity(name string) (err error) {
 		ManifestPath:   filepath.Join(p.Path, "manifest.yaml"),
 		EntrypointPath: p.Entrypoint,
 	}
-	return config.VerifyResolvedPluginFingerprint(recorded, current, nonce)
+	live, err := config.ComputePluginFingerprint(current, nonce)
+	if err != nil {
+		return fmt.Errorf("plugin %q: re-verify failed to fingerprint live bytes: %w", name, err)
+	}
+	mismatch := config.MatchPluginFingerprint(recorded, live)
+	if mismatch == nil {
+		return nil
+	}
+
+	now := v.now()
+	switch {
+	case recorded.Clearpass.Open(now):
+		if v.onClearpass != nil {
+			v.onClearpass(clearpassSpawn{Plugin: name, Recorded: recorded, Live: live, Window: *recorded.Clearpass})
+		}
+		return nil
+	case recorded.Clearpass.Expired(now):
+		return fmt.Errorf("%w; clearpass expired at %s and is not yet committed (run 'ductile plugin clearpass %s --close' or 'ductile plugin lock %s')",
+			mismatch, recorded.Clearpass.Until, name, name)
+	default:
+		return mismatch
+	}
 }

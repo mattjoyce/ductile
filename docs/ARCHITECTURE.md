@@ -393,7 +393,10 @@ bytes, keyed by the vault's `core` nonce). At spawn the core re-verifies that fi
 **security event** — a possible binary swap — not a quiet denial: the job fails closed and the mismatch is
 escalated. Editing the manifest or entrypoint breaks the fingerprint and demands re-attestation. This is
 why attestation (`plugin lock`) is decoupled from config integrity (`config lock`): a lock taken for an
-unrelated config edit must never silently bless a swapped binary.
+unrelated config edit must never silently bless a swapped binary. The one deliberate relaxation is a
+**clearpass** (`plugin clearpass <name> --for <d>`): a per-plugin, time-boxed pre-authorisation recorded
+beside the fingerprint, under which a mismatch is accepted and reported and the gateway commits the live
+bytes at the deadline, saying what it accepted.
 
 Secrets themselves live in the **vault** — an age-encrypted store the daemon alone reads and writes (the
 sole-writer owner; see `docs/SECRETS.md` for the operator model and lifecycle). The daemon decrypts the

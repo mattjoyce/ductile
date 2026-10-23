@@ -81,6 +81,10 @@ ductile vault purge-principal  --name mailer # remove + strip its grants
 
 `--pattern manual` (default) takes the value from stdin; `--pattern auto` has the
 daemon mint it. A plugin must be `plugin lock`-ed before it receives any secret.
+To change an attested plugin on a running gateway, open a **clearpass** first:
+`ductile plugin clearpass <name> --for 2h --note "card N"`, rename the new tree into
+place, and let the gateway commit the bytes at the deadline (or `--close` to commit
+now). Each accepted spawn and the close are logged and audited with both hashes.
 Audit every change with **`ductile system vault-audit [--principal NAME]`**.
 Rotating the at-rest key is below.
 

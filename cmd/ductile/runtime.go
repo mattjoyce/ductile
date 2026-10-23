@@ -678,6 +678,10 @@ func buildRuntime(cfg *config.Config, configPath string, configSource string, re
 	// compose-time gate is off for vault-less deployments (and we avoid a typed-nil
 	// interface that would defeat the nil check in composePluginSecrets).
 	var pluginVerifier dispatch.PluginVerifier
+	// clearpass is the gateway's side of an operator's bounded pre-authorisation
+	// to change a plugin (card #144): it reports tolerated spawns and commits
+	// expired windows. It exists only alongside the verifier it relaxes.
+	var clearpass *clearpassCloser
 	// vaultOwner was resolved exactly once, above the admission gates (#134 —
 	// reusing the load-time decrypt when opts carried it, #43). Wire the
 	// compose-time surfaces from that single value.
@@ -686,7 +690,10 @@ func buildRuntime(cfg *config.Config, configPath string, configSource string, re
 		// §3.3: re-verify a principal's live bytes against its recorded keyed
 		// fingerprint right before delivering its secrets. The nonce comes from the
 		// same loaded vault that holds the secrets.
-		pluginVerifier = newPluginIdentityVerifier(registry, configDir, vaultOwner, logger)
+		verifier := newPluginIdentityVerifier(registry, configDir, vaultOwner, logger)
+		clearpass = newClearpassCloser(registry, configDir, vaultOwner, logger, hub, st)
+		verifier.onClearpass = clearpass.reportSpawn
+		pluginVerifier = verifier
 		logger.Info("vault secret delivery enabled (compose-time attestation on)")
 	}
 
@@ -807,6 +814,18 @@ func buildRuntime(cfg *config.Config, configPath string, configSource string, re
 		}()
 	} else {
 		logger.Warn("management posture: scheduler and dispatcher gated — no pipelines fire until the gateway activates")
+	}
+
+	// Clearpass windows close on the clock, not on a spawn, so the closer runs in
+	// every posture that has a vault: a window that expires while no pipeline
+	// fires still commits on time, and one that expired while the gateway was
+	// down commits at this boot.
+	if clearpass != nil {
+		rt.wg.Add(1)
+		go func() {
+			defer rt.wg.Done()
+			clearpass.run(rt.ctx, clearpassSweepEvery)
+		}()
 	}
 
 	if cfg.API.Enabled || relayReceiver != nil {

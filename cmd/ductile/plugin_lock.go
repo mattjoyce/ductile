@@ -118,6 +118,9 @@ func runPluginLockOne(dir, configPath string, cfg *config.Config, name string, d
 		return 0
 	}
 	fmt.Printf("Attested plugin %q (entrypoint %s, manifest %s).\n", name, shortFP(fpNew.EntrypointHash), shortFP(fpNew.ManifestHash))
+	if prev, ok := existing.FindPluginFingerprint(name); ok && prev.Clearpass != nil {
+		fmt.Printf("Cleared the clearpass window that was open until %s.\n", prev.Clearpass.Until)
+	}
 	return 0
 }
 

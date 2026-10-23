@@ -646,6 +646,10 @@ type PluginFingerprint struct {
 	EntrypointPath         string `yaml:"entrypoint_path"`
 	EntrypointResolvedPath string `yaml:"entrypoint_resolved_path,omitempty"`
 	EntrypointHash         string `yaml:"entrypoint_hash"`
+	// Clearpass, when set, is an operator's standing pre-authorisation to accept
+	// changed bytes for this plugin until a deadline (card #144). It is recorded
+	// beside the attestation it relaxes so the two can never drift apart.
+	Clearpass *Clearpass `yaml:"clearpass,omitempty"`
 }
 
 // PluginsFileConfig is the structure of plugins.yaml.
