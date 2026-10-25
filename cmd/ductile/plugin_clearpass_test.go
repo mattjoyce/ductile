@@ -636,6 +636,8 @@ func TestAdmitReadsTheTwoPhaseCloseTrail(t *testing.T) {
 		{"error then a new pending consumes", []string{closePending, closeError, closePending}, false},
 		{"superseded consumes", []string{closeSuperseded}, false},
 		{"lock failed reopens", []string{closeSuperseded, closeError}, true},
+		{"ok is final against a later pending and error", []string{closePending, closeOK, closePending, closeError}, false},
+		{"ok is final against a later superseded and error", []string{closeOK, closeSuperseded, closeError}, false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
