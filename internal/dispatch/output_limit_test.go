@@ -83,6 +83,7 @@ echo '{"status":"ok","result":"ok"}'
 
 func writeDispatchTestScript(t *testing.T, body string) string {
 	t.Helper()
+	requireScriptInterpreter(t, body)
 	path := filepath.Join(t.TempDir(), "plugin.sh")
 	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
 	if err != nil {

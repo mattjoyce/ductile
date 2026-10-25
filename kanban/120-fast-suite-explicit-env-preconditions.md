@@ -1,6 +1,6 @@
 ---
 id: 120
-status: doing
+status: review
 priority: Normal
 tags: [testing, fast-tier, preconditions, privsep]
 ---
@@ -38,3 +38,19 @@ assumption. The ETXTBSY flake is already handled separately (#115 / PR #123).
 - **Remaining:** the `bash`/`python3` named-skip guards on the `internal/e2e` / `internal/dispatch`
   exec tests. (Both binaries exist on the Mac + Dell, so these don't false-fail here yet — lower
   priority; do when curating the system tier or hardening CI images.)
+- 2026-10-25 (branch test/card120-interpreter-preconditions): **interpreter guard DONE.**
+  `requireScriptInterpreter` (`internal/dispatch` and `internal/e2e` `preconditions_test.go`)
+  reads a script's shebang and skips, naming the interpreter, when it is missing (absolute
+  path or `/usr/bin/env X`, flags after env tolerated). Called from the script writers
+  (`createTestPluginWithManifestExtra`, `writeDispatchTestScript`, e2e `createPlugin`) and
+  for the bundled echo and sys_exec entrypoints. A table test pins skip-only-when-missing.
+  TESTING.md §2 now points at the two in-code guards; `scripts/test-fast` NOTEs predicted
+  skips instead of warning of failures. The privsep tests write `/bin/sh` scripts and are
+  already root-gated, so they are left alone.
+- Verified: non-root on the Mac, `go test -race -shuffle=on` green for dispatch + e2e;
+  golangci-lint and gosec raise nothing on the changed lines. **Not verified:** the
+  root-without-bash/python3 run (no Docker on the Mac); one `golang:alpine` run as root
+  closes the Done-when.
+- Seen on the way, out of scope: gofmt drift in `internal/api/management_test.go` and
+  `internal/dispatch/sidedoor_audit_test.go`; 3 errcheck hits in `dispatcher_test.go`;
+  local gosec build too old for Go 1.25 export data ("could not import").

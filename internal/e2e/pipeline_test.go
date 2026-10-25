@@ -323,6 +323,7 @@ except Exception as e:
 
 func createPlugin(t *testing.T, dir, name, script string) {
 	t.Helper()
+	requireScriptInterpreter(t, script)
 
 	pDir := filepath.Join(dir, name)
 	if err := os.MkdirAll(pDir, 0755); err != nil {
