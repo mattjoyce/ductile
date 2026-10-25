@@ -28,13 +28,25 @@ func VerifyResolvedPluginFingerprint(recorded PluginFingerprint, current Resolve
 	if err != nil {
 		return fmt.Errorf("plugin %q: re-verify failed to fingerprint live bytes: %w", current.Name, err)
 	}
-	if currentFP.ManifestHash != recorded.ManifestHash {
+	return MatchPluginFingerprint(recorded, currentFP)
+}
+
+// MatchPluginFingerprint compares a freshly computed fingerprint against the
+// recorded one by hash alone, never by path: a tree renamed into place matches
+// the attestation taken from its staged copy. The error names which of the two
+// files differs and both short digests.
+func MatchPluginFingerprint(recorded, live PluginFingerprint) error {
+	if live.ManifestHash != recorded.ManifestHash {
 		return fmt.Errorf("plugin %q: manifest hash mismatch at %s (recorded %s, live %s)",
-			current.Name, currentFP.ManifestResolvedPath, shortHash(recorded.ManifestHash), shortHash(currentFP.ManifestHash))
+			live.Name, live.ManifestResolvedPath, shortHash(recorded.ManifestHash), shortHash(live.ManifestHash))
 	}
-	if currentFP.EntrypointHash != recorded.EntrypointHash {
+	if live.EntrypointHash != recorded.EntrypointHash {
 		return fmt.Errorf("plugin %q: entrypoint hash mismatch at %s (recorded %s, live %s)",
-			current.Name, currentFP.EntrypointResolvedPath, shortHash(recorded.EntrypointHash), shortHash(currentFP.EntrypointHash))
+			live.Name, live.EntrypointResolvedPath, shortHash(recorded.EntrypointHash), shortHash(live.EntrypointHash))
 	}
 	return nil
 }
+
+// ShortHash exposes the 12-char digest prefix used in diagnostics so callers
+// outside the package report hashes the same way the verifier does.
+func ShortHash(h string) string { return shortHash(h) }
