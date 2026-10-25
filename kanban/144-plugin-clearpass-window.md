@@ -1,6 +1,6 @@
 ---
 id: 144
-status: doing
+status: done
 priority: High
 blocked_by: []
 tags: [plugin, attestation, vault, operability, security]
@@ -160,3 +160,10 @@ Unraid holds config read-only until this lands and closes windows by hand.
 5. **Not yet exercised in the field:** `--close` from a one-shot with changed bytes (the
    CLI test covers it against a local fixture).
 - Also: refusals are audited once per window and kind, not every minute.
+
+## Closed (2026-10-25)
+
+Merged to master: 957b5e4 (clearpass), 99731e1 (two-phase close, read-only config),
+74bce4d (a committed window stays closed). Still not exercised in the field: `--close`
+from a writable one-shot with changed bytes (covered by the CLI test against a local
+fixture). Pick it up on the next real plugin swap on unraid.
