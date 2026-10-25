@@ -356,11 +356,13 @@ func (c *clearpassCloser) admit(ctx context.Context, recorded config.PluginFinge
 	if err != nil {
 		return clearpassCommit{}, fmt.Errorf("%w: cannot read the audit log: %v", errClearpassNotCommittable, err)
 	}
-	// Rows come newest first. The newest close row that changes state decides:
-	// pending, ok or superseded mean the window is consumed; error means a
-	// commit failed after pending and the window is open again. A refused row
-	// changes nothing, so it can never reopen a window.
-	opened, closed, decided := false, false, false
+	// Rows come newest first. An ok row is final: once a window was committed,
+	// no later row can reopen it, so a replayed record stays inert whatever is
+	// written after. Otherwise the newest state-changing close row decides:
+	// pending or superseded consume the window; error means a commit failed
+	// after one of them and the window is open again. A refused row changes
+	// nothing, so it can never reopen a window.
+	opened, closed, decided, committed := false, false, false, false
 	for _, r := range rows {
 		if !clearpassRowHasID(r.Detail, cp.ID) {
 			continue
@@ -369,6 +371,9 @@ func (c *clearpassCloser) admit(ctx context.Context, recorded config.PluginFinge
 		case auditOpClearpassOpen:
 			opened = true
 		case auditOpClearpassClose:
+			if r.Outcome == closeOK {
+				committed = true
+			}
 			if decided || r.Outcome == closeRefused {
 				continue
 			}
@@ -376,6 +381,7 @@ func (c *clearpassCloser) admit(ctx context.Context, recorded config.PluginFinge
 			closed = r.Outcome != closeError
 		}
 	}
+	closed = closed || committed
 	switch {
 	case closed:
 		return clearpassCommit{}, fmt.Errorf("%w: the audit log shows window %s already closed; a replayed record is not re-committed", errClearpassNotCommittable, cp.ID)
