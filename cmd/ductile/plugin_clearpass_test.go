@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -234,11 +235,19 @@ func TestCloserCommitsExpiredWindowAndReports(t *testing.T) {
 			spawns++
 		case auditOpClearpassClose:
 			closes++
-			closeDetail = r.Detail
+			if r.Outcome == closeOK {
+				closeDetail = r.Detail
+			}
 		}
 	}
-	if opens != 1 || spawns != 2 || closes != 1 {
-		t.Fatalf("audit must hold 1 open, 2 spawns and 1 close, got %d/%d/%d: %+v", opens, spawns, closes, rows)
+	if opens != 1 || spawns != 2 || closes != 2 {
+		t.Fatalf("audit must hold 1 open, 2 spawns and a pending+ok close, got %d/%d/%d: %+v", opens, spawns, closes, rows)
+	}
+	if rows[0].Op != auditOpClearpassClose || rows[0].Outcome != closeOK || rows[1].Outcome != closePending {
+		t.Fatalf("the close is pending then ok, newest first: %+v", rows[:2])
+	}
+	if strings.Contains(rows[1].Detail, "committed") {
+		t.Fatalf("a pending row never says committed: %s", rows[1].Detail)
 	}
 	if !strings.Contains(closeDetail, "observed in 2 spawns") || !strings.Contains(closeDetail, "committed entrypoint") {
 		t.Fatalf("close detail must say what was accepted: %s", closeDetail)
@@ -276,7 +285,7 @@ func TestCloserLeavesOpenWindowAloneAndCommitsUnchangedBytes(t *testing.T) {
 		t.Fatalf("unchanged bytes commit to the same hash and the window clears: %+v", after)
 	}
 	rows, _ := st.ListVaultAudit(context.Background(), "gmail", 5)
-	if len(rows) != 3 || rows[0].Op != auditOpClearpassClose || !strings.Contains(rows[0].Detail, "unchanged") || !strings.Contains(rows[0].Detail, "never spawned") {
+	if len(rows) != 4 || rows[0].Op != auditOpClearpassClose || !strings.Contains(rows[0].Detail, "unchanged") || !strings.Contains(rows[0].Detail, "never spawned") {
 		t.Fatalf("newest row is the close recording unchanged, never spawned: %+v", rows)
 	}
 }
@@ -301,8 +310,8 @@ func TestCloserRefusesReplayedUnrecordedAndStaleWindows(t *testing.T) {
 			t.Fatalf("%s: must not commit: %+v", why, after)
 		}
 		rows, _ := st.ListVaultAudit(context.Background(), "gmail", 1)
-		if len(rows) != 1 || rows[0].Op != auditOpClearpassClose || rows[0].Outcome != "error" || !strings.Contains(rows[0].Detail, "not committed") {
-			t.Fatalf("%s: the refusal is audited as an error close: %+v", why, rows)
+		if len(rows) != 1 || rows[0].Op != auditOpClearpassClose || rows[0].Outcome != closeRefused || !strings.Contains(rows[0].Detail, "not committed") {
+			t.Fatalf("%s: the refusal is audited as a refused close: %+v", why, rows)
 		}
 	}
 
@@ -416,7 +425,7 @@ func TestClearpassCLIOpenListCloseAndLockClears(t *testing.T) {
 	if after.Clearpass != nil || after.EntrypointHash == before.EntrypointHash {
 		t.Fatalf("close must commit and clear: %+v", after)
 	}
-	if rows := auditRows(); len(rows) != 2 || rows[0].Op != auditOpClearpassClose || !clearpassRowHasID(rows[0].Detail, rec.Clearpass.ID) {
+	if rows := auditRows(); len(rows) != 3 || rows[0].Outcome != closeOK || rows[1].Outcome != closePending || !clearpassRowHasID(rows[0].Detail, rec.Clearpass.ID) {
 		t.Fatalf("close must write its audit row with the window id: %+v", rows)
 	}
 	if code, _, stderr := captureRunPluginClearpass(t, []string{"--config-dir", tmp, "gmail", "--close"}); code == 0 || !strings.Contains(stderr, "no clearpass to close") {
@@ -528,5 +537,123 @@ func TestCloserCommitsNothingWhenTheCloseCannotBeRecorded(t *testing.T) {
 	rows, _ := st.ListVaultAudit(context.Background(), "gmail", 1)
 	if len(rows) != 1 || rows[0].Op != auditOpClearpassClose || rows[0].Outcome != "ok" {
 		t.Fatalf("the close row lands before the commit: %+v", rows)
+	}
+}
+
+// A gateway whose config directory is read-only (Unraid mounts it :ro) must
+// warn while a window is open, must not use the window up when it cannot
+// write, must not write a refusal row every sweep, and must commit once the
+// directory is writable again. Field test, card 144.
+func TestCloserOnReadOnlyConfigWarnsAndKeepsTheWindow(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root ignores directory permissions")
+	}
+	tmp := buildFingerprintFixture(t, true)
+	lockConfigAndPlugins(t, tmp, "gmail")
+	before := recordedGmail(t, tmp)
+	reg, v := buildRegistryAndVault(t, tmp)
+	st := openTestStore(t)
+	var logs strings.Builder
+	logger := slog.New(slog.NewTextHandler(&logs, nil))
+	closer := newClearpassCloser(reg, tmp, v, logger, nil, st)
+	swapGmail(t, tmp)
+
+	readOnly := func(on bool) {
+		t.Helper()
+		mode := os.FileMode(0o755)
+		if on {
+			mode = 0o555
+		}
+		if err := os.Chmod(tmp, mode); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Cleanup(func() { _ = os.Chmod(tmp, 0o755) })
+
+	// Open window on a read-only directory: a WARN naming --close.
+	cp := openClearpassRecorded(t, tmp, v, st, time.Now(), time.Hour)
+	readOnly(true)
+	closer.sweep(context.Background(), true)
+	if !strings.Contains(logs.String(), "cannot commit it") || !strings.Contains(logs.String(), "clearpass gmail --close") {
+		t.Fatalf("an open window on a read-only gateway must warn and name --close:\n%s", logs.String())
+	}
+
+	// Expired on a read-only directory: nothing committed, nothing consumed,
+	// one refused row however many sweeps.
+	readOnly(false)
+	cp.OpenedAt = time.Now().Add(-2 * time.Hour).UTC().Format(time.RFC3339)
+	cp.Until = time.Now().Add(-time.Hour).UTC().Format(time.RFC3339)
+	key, _ := v.FingerprintNonce()
+	cp, _ = cp.Sealed(recordedGmail(t, tmp), key)
+	writeClearpass(t, tmp, &cp)
+	readOnly(true)
+	closer.sweep(context.Background(), false)
+	closer.sweep(context.Background(), false)
+	closer.sweep(context.Background(), false)
+	if after := recordedGmail(t, tmp); after.Clearpass == nil || after.EntrypointHash != before.EntrypointHash {
+		t.Fatalf("a read-only gateway must not commit: %+v", after)
+	}
+	rows, _ := st.ListVaultAudit(context.Background(), "gmail", 10)
+	refused := 0
+	for _, r := range rows {
+		if r.Op == auditOpClearpassClose {
+			if r.Outcome != closeRefused {
+				t.Fatalf("an unwritable close records only a refusal, never pending or ok: %+v", r)
+			}
+			refused++
+		}
+	}
+	if refused != 1 {
+		t.Fatalf("one refused row across three sweeps, got %d: %+v", refused, rows)
+	}
+
+	// Writable again: the same window commits.
+	readOnly(false)
+	closer.sweep(context.Background(), false)
+	after := recordedGmail(t, tmp)
+	if after.Clearpass != nil || after.EntrypointHash == before.EntrypointHash {
+		t.Fatalf("once writable the window commits: %+v", after)
+	}
+}
+
+// The newest state-changing close row decides: pending/ok/superseded consume
+// the window, error reopens it, refused changes nothing.
+func TestAdmitReadsTheTwoPhaseCloseTrail(t *testing.T) {
+	tmp := buildFingerprintFixture(t, true)
+	lockConfigAndPlugins(t, tmp, "gmail")
+	reg, v := buildRegistryAndVault(t, tmp)
+
+	cases := []struct {
+		name     string
+		outcomes []string // close rows after the open, oldest first
+		want     bool     // admitted
+	}{
+		{"opened only", nil, true},
+		{"pending consumes", []string{closePending}, false},
+		{"pending then error reopens", []string{closePending, closeError}, true},
+		{"refused after error does not close", []string{closePending, closeError, closeRefused}, true},
+		{"refused after ok does not reopen", []string{closePending, closeOK, closeRefused}, false},
+		{"error then a new pending consumes", []string{closePending, closeError, closePending}, false},
+		{"superseded consumes", []string{closeSuperseded}, false},
+		{"lock failed reopens", []string{closeSuperseded, closeError}, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			st := openTestStore(t)
+			cp := openClearpassRecorded(t, tmp, v, st, time.Now().Add(-2*time.Hour), time.Hour)
+			for _, o := range tc.outcomes {
+				if err := st.AppendVaultAudit(context.Background(), state.VaultAuditEvent{
+					Op: auditOpClearpassClose, Principal: "gmail", Actor: "core", Outcome: o, Detail: clearpassIDTag(cp.ID) + " x",
+				}); err != nil {
+					t.Fatal(err)
+				}
+				time.Sleep(time.Millisecond) // keep ids and timestamps ordered
+			}
+			closer := newClearpassCloser(reg, tmp, v, nil, nil, st)
+			_, err := closer.admit(context.Background(), recordedGmail(t, tmp))
+			if got := err == nil; got != tc.want {
+				t.Fatalf("admitted=%v, want %v (err=%v)", got, tc.want, err)
+			}
+		})
 	}
 }

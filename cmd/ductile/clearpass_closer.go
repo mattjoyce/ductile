@@ -27,6 +27,19 @@ const (
 	auditOpClearpassSpawn = "clearpass_spawn"
 	auditOpClearpassClose = "clearpass_close"
 
+	// Outcomes of a clearpass_close row. A close is two-phase: "pending" is
+	// written before .checksums changes and consumes the window; "ok" is
+	// written only after the commit landed; "error" is written when the commit
+	// failed after "pending" and reopens the window for the next sweep.
+	// "superseded" is plugin lock clearing a window. "refused" records the
+	// closer declining to commit (replay, unrecorded, stale, unwritable) and
+	// changes nothing.
+	closePending    = "pending"
+	closeOK         = "ok"
+	closeError      = "error"
+	closeSuperseded = "superseded"
+	closeRefused    = "refused"
+
 	// clearpassCommitGrace is how long after its deadline a window may still be
 	// committed by the closer. It covers a gateway that was down at the deadline
 	// for up to a day; beyond that the operator re-opens or locks. Together with
@@ -85,12 +98,17 @@ func clearpassOpenDetail(cp config.Clearpass) string {
 // CLI `--close`, and by construction clears the window: MergePluginFingerprint
 // replaces the whole record and the new one carries no Clearpass.
 //
-// consume runs after the live bytes are hashed and before .checksums is
-// rewritten; it is where the caller records the window as closed. The order is
-// deliberate and fail-closed: a close that cannot be recorded commits nothing,
-// and a commit that fails after the record leaves a window the closer will
-// refuse as already closed, never one that can be replayed.
-func commitClearpass(dir string, recorded config.PluginFingerprint, current config.ResolvedPlugin, nonce []byte, consume func(clearpassCommit) error) (clearpassCommit, error) {
+// The close is two-phase in the audit log so a window is never left open to
+// replay and never used up by a write that did not happen:
+//
+//  1. probe that .checksums can be written; a read-only config directory stops
+//     here with nothing recorded, so the window is still there to close later;
+//  2. rec.pending writes the "pending" close row, which consumes the window; a
+//     close that cannot be recorded commits nothing;
+//  3. .checksums is rewritten; on failure rec.failed writes the "error" row,
+//     which reopens the window for the next attempt;
+//  4. rec.committed writes the "ok" row, the only one that says "committed".
+func commitClearpass(dir string, recorded config.PluginFingerprint, current config.ResolvedPlugin, nonce []byte, rec clearpassRecorder) (clearpassCommit, error) {
 	if recorded.Clearpass == nil {
 		return clearpassCommit{}, fmt.Errorf("plugin %q has no clearpass to close", recorded.Name)
 	}
@@ -99,20 +117,47 @@ func commitClearpass(dir string, recorded config.PluginFingerprint, current conf
 		return clearpassCommit{}, fmt.Errorf("clearpass close: %w", err)
 	}
 	commit := clearpassCommit{Plugin: recorded.Name, Window: *recorded.Clearpass, Previous: recorded, Committed: live}
-	if consume != nil {
-		if err := consume(commit); err != nil {
-			return clearpassCommit{}, fmt.Errorf("clearpass close not recorded, so nothing was committed: %w", err)
-		}
+	if err := config.ProbeChecksumsWritable(dir); err != nil {
+		return clearpassCommit{}, fmt.Errorf("%w: %v; close it from a writable one-shot with 'ductile plugin clearpass %s --close' before the deadline",
+			errClearpassUnwritable, err, recorded.Name)
 	}
 	manifest, err := config.LoadChecksums(dir)
 	if err != nil {
 		return clearpassCommit{}, fmt.Errorf("clearpass close: %w", err)
 	}
+	if err := rec.pending(commit); err != nil {
+		return clearpassCommit{}, fmt.Errorf("clearpass close not recorded, so nothing was committed: %w", err)
+	}
 	merged := config.MergePluginFingerprint(manifest.PluginFingerprints, live)
 	if err := config.WritePluginFingerprints(dir, merged, false); err != nil {
-		return clearpassCommit{}, fmt.Errorf("clearpass close: write .checksums (the window is already recorded as closed; re-open it or lock the plugin): %w", err)
+		werr := fmt.Errorf("clearpass close: write .checksums: %w", err)
+		rec.failed(commit, werr)
+		return clearpassCommit{}, werr
 	}
+	rec.committed(commit)
 	return commit, nil
+}
+
+// clearpassRecorder writes the audit rows of a two-phase close. pending must
+// succeed before .checksums changes; failed and committed describe what then
+// happened and are best-effort (a lost row is logged, never fatal).
+type clearpassRecorder struct {
+	pending   func(clearpassCommit) error
+	failed    func(clearpassCommit, error)
+	committed func(clearpassCommit)
+}
+
+// errClearpassUnwritable marks a close that could not start because the config
+// directory is read-only. Nothing is recorded, so the window stays closable.
+var errClearpassUnwritable = errors.New("clearpass cannot be committed here")
+
+// clearpassPendingDetail is the detail of a pending close row. It says what
+// will be committed, never that it was.
+func clearpassPendingDetail(commit clearpassCommit) string {
+	return fmt.Sprintf("%s plugin %q closing: will commit entrypoint %s (was %s), manifest %s (was %s)",
+		clearpassIDTag(commit.Window.ID), commit.Plugin,
+		config.ShortHash(commit.Committed.EntrypointHash), config.ShortHash(commit.Previous.EntrypointHash),
+		config.ShortHash(commit.Committed.ManifestHash), config.ShortHash(commit.Previous.ManifestHash))
 }
 
 // clearpassCloser is the gateway's side of a clearpass (card #144): it reports
@@ -128,6 +173,9 @@ type clearpassCloser struct {
 	hub       *events.Hub
 	audit     clearpassAudit
 	now       func() time.Time
+	// refused remembers which (window, reason) refusals were already audited.
+	// Only sweep touches it, and sweep runs on one goroutine.
+	refused map[string]bool
 }
 
 func newClearpassCloser(registry *plugin.Registry, configDir string, nonceSrc fingerprintNonceSource, logger *slog.Logger, hub *events.Hub, audit clearpassAudit) *clearpassCloser {
@@ -205,6 +253,11 @@ func (c *clearpassCloser) sweep(ctx context.Context, announce bool) {
 				c.logger.Info("clearpass open: changed bytes for this plugin will be accepted and committed at close",
 					"plugin", fp.Name, "until", fp.Clearpass.Until, "note", fp.Clearpass.Note)
 			}
+			if werr := config.ProbeChecksumsWritable(c.configDir); werr != nil {
+				c.logger.Warn("clearpass open but this gateway cannot commit it: the config directory is not writable; close it from a writable one-shot before the deadline, or the plugin is denied after it",
+					"event", eventClearpassClosed, "plugin", fp.Name, "until", fp.Clearpass.Until,
+					"close_with", "ductile plugin clearpass "+fp.Name+" --close", "error", werr)
+			}
 		case fp.Clearpass.Expired(now):
 			c.closeOne(ctx, fp)
 		}
@@ -218,25 +271,37 @@ func (c *clearpassCloser) sweep(ctx context.Context, announce bool) {
 var errClearpassNotCommittable = errors.New("clearpass not committed")
 
 // closeOne commits one expired window and reports the outcome. A commit that
-// fails leaves the window in place: the verifier then denies the plugin and
-// names the expired window, and the next sweep tries again.
+// fails before its pending row (read-only config, unreadable vault) or after
+// it (the .checksums write) leaves the window closable, so the next sweep
+// tries again; only a refusal from admit is final. Refusals and failures are
+// audited once per window and reason, not every minute.
 func (c *clearpassCloser) closeOne(ctx context.Context, recorded config.PluginFingerprint) {
 	var observed int
 	var detail string
-	// The close row is written by consume, before .checksums changes.
-	consume := func(commit clearpassCommit) error {
-		observed = c.observedSpawns(ctx, commit)
-		detail = clearpassCloseDetail(commit, observed)
-		return c.appendAuditErr(auditOpClearpassClose, commit.Plugin, "ok", detail)
+	id := recorded.Clearpass.ID
+	rec := clearpassRecorder{
+		pending: func(commit clearpassCommit) error {
+			return c.appendAuditErr(auditOpClearpassClose, commit.Plugin, closePending, clearpassPendingDetail(commit))
+		},
+		failed: func(commit clearpassCommit, err error) {
+			c.appendAudit(auditOpClearpassClose, commit.Plugin, closeError, clearpassIDTag(id)+" commit failed, window reopened: "+err.Error())
+		},
+		committed: func(commit clearpassCommit) {
+			observed = c.observedSpawns(ctx, commit)
+			detail = clearpassCloseDetail(commit, observed)
+			c.appendAudit(auditOpClearpassClose, commit.Plugin, closeOK, detail)
+		},
 	}
 	commit, err := c.admit(ctx, recorded)
 	if err == nil {
-		commit, err = c.commit(recorded, consume)
+		commit, err = c.commit(recorded, rec)
 	}
 	if err != nil {
 		c.logger.Error("clearpass close failed; the plugin is denied until it is committed or locked",
 			"event", eventClearpassClosed, "plugin", recorded.Name, "until", recorded.Clearpass.Until, "error", err)
-		c.appendAudit(auditOpClearpassClose, recorded.Name, "error", clearpassIDTag(recorded.Clearpass.ID)+" "+err.Error())
+		if errors.Is(err, errClearpassNotCommittable) || errors.Is(err, errClearpassUnwritable) {
+			c.auditRefusalOnce(recorded.Name, id, err)
+		}
 		return
 	}
 	c.logger.Info("clearpass closed: "+detail,
@@ -248,6 +313,26 @@ func (c *clearpassCloser) closeOne(ctx context.Context, recorded config.PluginFi
 			"plugin": commit.Plugin, "changed": commit.Changed(), "observed_spawns": observed, "detail": detail,
 		})
 	}
+}
+
+// auditRefusalOnce records a refusal the first time it is seen for a window,
+// so a window stuck on a read-only gateway does not write a row every minute.
+func (c *clearpassCloser) auditRefusalOnce(plugin, id string, err error) {
+	// Key on the kind of refusal, not its text: the text carries a probe file
+	// name and an age that change every sweep.
+	kind := "not-committable"
+	if errors.Is(err, errClearpassUnwritable) {
+		kind = "unwritable"
+	}
+	key := id + "\x00" + kind
+	if c.refused == nil {
+		c.refused = make(map[string]bool)
+	}
+	if c.refused[key] {
+		return
+	}
+	c.refused[key] = true
+	c.appendAudit(auditOpClearpassClose, plugin, closeRefused, clearpassIDTag(id)+" "+err.Error())
 }
 
 // admit decides whether an expired window may be committed: its deadline must
@@ -271,7 +356,11 @@ func (c *clearpassCloser) admit(ctx context.Context, recorded config.PluginFinge
 	if err != nil {
 		return clearpassCommit{}, fmt.Errorf("%w: cannot read the audit log: %v", errClearpassNotCommittable, err)
 	}
-	opened, closed := false, false
+	// Rows come newest first. The newest close row that changes state decides:
+	// pending, ok or superseded mean the window is consumed; error means a
+	// commit failed after pending and the window is open again. A refused row
+	// changes nothing, so it can never reopen a window.
+	opened, closed, decided := false, false, false
 	for _, r := range rows {
 		if !clearpassRowHasID(r.Detail, cp.ID) {
 			continue
@@ -280,9 +369,11 @@ func (c *clearpassCloser) admit(ctx context.Context, recorded config.PluginFinge
 		case auditOpClearpassOpen:
 			opened = true
 		case auditOpClearpassClose:
-			if r.Outcome != "error" {
-				closed = true
+			if decided || r.Outcome == closeRefused {
+				continue
 			}
+			decided = true
+			closed = r.Outcome != closeError
 		}
 	}
 	switch {
@@ -294,7 +385,7 @@ func (c *clearpassCloser) admit(ctx context.Context, recorded config.PluginFinge
 	return clearpassCommit{}, nil
 }
 
-func (c *clearpassCloser) commit(recorded config.PluginFingerprint, consume func(clearpassCommit) error) (clearpassCommit, error) {
+func (c *clearpassCloser) commit(recorded config.PluginFingerprint, rec clearpassRecorder) (clearpassCommit, error) {
 	p, ok := c.registry.Get(recorded.Name)
 	if !ok {
 		return clearpassCommit{}, fmt.Errorf("plugin %q is not in the live registry", recorded.Name)
@@ -310,7 +401,7 @@ func (c *clearpassCloser) commit(recorded config.PluginFingerprint, consume func
 		ManifestPath:   filepath.Join(p.Path, "manifest.yaml"),
 		EntrypointPath: p.Entrypoint,
 	}
-	return commitClearpass(c.configDir, recorded, current, nonce, consume)
+	return commitClearpass(c.configDir, recorded, current, nonce, rec)
 }
 
 // observedSpawns counts the window's tolerated spawns from the audit log, which

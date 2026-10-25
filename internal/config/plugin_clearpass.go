@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"os"
 	"time"
 
 	"github.com/zeebo/blake3"
@@ -154,6 +155,23 @@ func (c *Clearpass) Expired(now time.Time) bool {
 		return false
 	}
 	return !now.Before(until)
+}
+
+// ProbeChecksumsWritable reports whether .checksums in dir can be replaced, by
+// creating and removing a temporary file beside it the way the atomic writer
+// does. A gateway whose config directory is mounted read-only cannot commit a
+// clearpass window itself; the closer checks this before it consumes one.
+func ProbeChecksumsWritable(dir string) error {
+	f, err := os.CreateTemp(dir, ".checksums-probe-*")
+	if err != nil {
+		return fmt.Errorf("config directory %s is not writable: %w", dir, err)
+	}
+	name := f.Name()
+	_ = f.Close()
+	if err := os.Remove(name); err != nil {
+		return fmt.Errorf("config directory %s: remove probe: %w", dir, err)
+	}
+	return nil
 }
 
 // SetPluginClearpass returns a copy of existing with the named plugin's window

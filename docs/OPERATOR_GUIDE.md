@@ -85,6 +85,11 @@ To change an attested plugin on a running gateway, open a **clearpass** first:
 `ductile plugin clearpass <name> --for 2h --note "card N"`, rename the new tree into
 place, and let the gateway commit the bytes at the deadline (or `--close` to commit
 now). Each accepted spawn and the close are logged and audited with both hashes.
+A gateway whose config directory is **read-only** (the Unraid container mounts
+`/app/config` `:ro`) cannot close its own windows: it warns while a window is
+open, records one `refused` row at the deadline, and denies the plugin until the
+window is committed. Close it before the deadline with
+`ductile plugin clearpass <name> --close` from a writable one-shot.
 Audit every change with **`ductile system vault-audit [--principal NAME]`**.
 Rotating the at-rest key is below.
 
