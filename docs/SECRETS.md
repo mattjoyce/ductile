@@ -306,6 +306,11 @@ attestation and says what it accepted (`plugin.clearpass_closed`, audit row
 `clearpass_close`), whether or not the plugin spawned. `--close` commits now; `plugin lock`
 also clears a window; `--list` shows them. Outside the window nothing is relaxed. Swap the
 plugin tree atomically (rename into place): a window accepts whatever bytes a spawn finds.
+A close is two-phase in the audit log (`pending` before `.checksums` changes, then `ok`, or
+`error` if the write failed, which reopens the window), so a failed write never uses a
+window up and only an `ok` row says "committed". A gateway with a **read-only config
+directory** cannot commit a window: it warns while the window is open and the operator
+closes it with `--close` from a writable one-shot before the deadline.
 
 ### Backup and restore
 

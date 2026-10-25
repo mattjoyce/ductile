@@ -117,7 +117,7 @@ func runPluginLockOne(dir, configPath string, cfg *config.Config, name string, d
 		// so the gateway never commits that record if it reappears. A close that
 		// cannot be recorded stops the lock.
 		if err := appendClearpassAudit(cfg, state.VaultAuditEvent{
-			Op: auditOpClearpassClose, Principal: name, Actor: "cli", Outcome: "superseded",
+			Op: auditOpClearpassClose, Principal: name, Actor: "cli", Outcome: closeSuperseded,
 			Detail: clearpassIDTag(prev.Clearpass.ID) + " superseded by plugin lock",
 		}); err != nil {
 			fmt.Fprintf(os.Stderr, "plugin lock: could not record the superseded clearpass window in the audit log, so nothing was attested: %v\n", err)
@@ -126,6 +126,16 @@ func runPluginLockOne(dir, configPath string, cfg *config.Config, name string, d
 	}
 	if err := config.WritePluginFingerprints(dir, merged, dryRun); err != nil {
 		fmt.Fprintf(os.Stderr, "plugin lock: failed to write .checksums: %v\n", err)
+		if hadWindow && !dryRun {
+			// The superseded row already consumed the window; reopen it, since
+			// nothing was attested.
+			if aerr := appendClearpassAudit(cfg, state.VaultAuditEvent{
+				Op: auditOpClearpassClose, Principal: name, Actor: "cli", Outcome: closeError,
+				Detail: clearpassIDTag(prev.Clearpass.ID) + " plugin lock failed, window reopened: " + err.Error(),
+			}); aerr != nil {
+				fmt.Fprintf(os.Stderr, "warning: could not record the failed lock in the audit log: %v\n", aerr)
+			}
+		}
 		return 1
 	}
 	if dryRun {

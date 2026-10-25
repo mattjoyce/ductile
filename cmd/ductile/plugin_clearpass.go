@@ -187,13 +187,24 @@ func runPluginClearpassClose(dir, configPath string, cfg *config.Config, name st
 	// being committed again if it ever reappears, so it is written first and a
 	// failure commits nothing.
 	var detail string
-	consume := func(commit clearpassCommit) error {
-		detail = clearpassCloseDetail(commit, -1)
-		return appendClearpassAudit(cfg, state.VaultAuditEvent{
-			Op: auditOpClearpassClose, Principal: name, Actor: "cli", Outcome: "ok", Detail: detail,
-		})
+	row := func(outcome, d string) error {
+		return appendClearpassAudit(cfg, state.VaultAuditEvent{Op: auditOpClearpassClose, Principal: name, Actor: "cli", Outcome: outcome, Detail: d})
 	}
-	if _, err := commitClearpass(dir, recorded, *target, nonce, consume); err != nil {
+	rec := clearpassRecorder{
+		pending: func(commit clearpassCommit) error { return row(closePending, clearpassPendingDetail(commit)) },
+		failed: func(commit clearpassCommit, err error) {
+			if aerr := row(closeError, clearpassIDTag(commit.Window.ID)+" commit failed, window reopened: "+err.Error()); aerr != nil {
+				fmt.Fprintf(os.Stderr, "warning: could not record the failed close in the audit log: %v\n", aerr)
+			}
+		},
+		committed: func(commit clearpassCommit) {
+			detail = clearpassCloseDetail(commit, -1)
+			if aerr := row(closeOK, detail); aerr != nil {
+				fmt.Fprintf(os.Stderr, "warning: committed, but the close could not be recorded in the audit log: %v\n", aerr)
+			}
+		},
+	}
+	if _, err := commitClearpass(dir, recorded, *target, nonce, rec); err != nil {
 		fmt.Fprintf(os.Stderr, "%v\n", err)
 		return 1
 	}

@@ -1,6 +1,6 @@
 ---
 id: 144
-status: review
+status: doing
 priority: High
 blocked_by: []
 tags: [plugin, attestation, vault, operability, security]
@@ -102,9 +102,61 @@ where the bytes are known in advance.
   errcheck and gosec G204 hits on untouched files; the fingerprint still covers manifest
   and entrypoint only; no route from core events to a notifier plugin.
 
+## Field test on unraid (2026-10-26, v1.0.1-25-g957b5e4)
+
+Exercised on the unraid gateway with a real byte change on `owntracks` (a vault principal:
+on an unconfined gateway only the secret path re-verifies at spawn, so a non-principal like
+`echo` runs either way and shows nothing). Full timeline in unraid_admin
+`vault/Clearpass Test B450.md`.
+
+- **Open and spawn: pass.** Window opened from a writable one-shot; the changed `run.py` was
+  accepted at spawn with the WARN line and a `clearpass_spawn` row, and got its secrets.
+- **Gateway close: fails.** The live container mounts `/app/config` read-only, so the closer
+  cannot write `.checksums` (`failed to create checksums temp file`). The plugin is then
+  denied with the SECURITY line until `plugin lock`. Fail-closed, but the gateway never
+  commits on a read-only-config deployment, and nothing warns before the deadline.
+- **A failed write uses up the window.** `consume` writes the `clearpass_close ok` row before
+  the `.checksums` write, so `admit` reads the window as already closed on every later sweep
+  and the closer never retries. This contradicts the `closeOne` comment ("the next sweep tries
+  again"). The `error` row written afterwards does not undo it.
+- **The close row claims a commit that did not happen:** `committed entrypoint 5dc99b230ad6
+  (was 914bd908827e)`, 13 ms before the write failed.
+
+Changes requested:
+
+1. At boot and each sweep, WARN when a window is open and the config dir is not writable,
+   naming the window, the deadline and `--close`.
+2. Do not use up a window on a failed write: probe that `.checksums` can be written before
+   `consume`, or write the row as pending and let a later `error` row for the same id reopen it.
+   Keep the replay protection.
+3. Keep "committed" for a row written after `.checksums` changed.
+4. OPERATOR_GUIDE and SECRETS.md: a read-only-config gateway cannot close its own windows;
+   close with the CLI from a writable one-shot before the deadline.
+5. Not yet exercised anywhere: `--close` from a one-shot with changed bytes.
+
+Unraid holds config read-only until this lands and closes windows by hand.
+
 ## Narrative
 
 - **Source:** operating card 208 on the unraid gateway (importer tree swap, hand
   attestation, quiet refusal); the operator's own proposal of a time-boxed clearpass.
 - **Related:** #12 (keyed attestation), #25 (mismatch escalation), #93 (fingerprint-bound
   account grant). None of them give the operator a way to pre-authorise a change.
+
+### Fix (2026-10-26, branch plugin/card144-readonly-close)
+
+1. **Warn:** each sweep, an open window on a config directory that fails a write probe
+   logs a WARN naming the plugin, the deadline and `ductile plugin clearpass <name> --close`.
+2. **No window used up by a failed write:** the close is two-phase. The probe runs first
+   (a read-only directory stops with nothing recorded); then a `pending` row consumes the
+   window; then `.checksums` is written; a failed write records `error`, which reopens it.
+   `admit` reads the newest state-changing close row (`pending`/`ok`/`superseded` closed,
+   `error` open); `refused` rows change nothing, so a refusal can never reopen a replay.
+   `plugin lock` writes `error` after a failed write too.
+3. **"committed" only after the write:** the `pending` row says "closing: will commit";
+   the `ok` row is written after `.checksums` changed.
+4. **Docs:** OPERATOR_GUIDE and SECRETS.md say a read-only-config gateway cannot close
+   its own windows and how to close one from a writable one-shot.
+5. **Not yet exercised in the field:** `--close` from a one-shot with changed bytes (the
+   CLI test covers it against a local fixture).
+- Also: refusals are audited once per window and kind, not every minute.
