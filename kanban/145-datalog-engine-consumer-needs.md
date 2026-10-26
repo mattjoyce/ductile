@@ -1,8 +1,8 @@
 ---
 id: 145
-status: idea
+status: backlog
 priority: Normal
-tags: [shearline, datalog, auth, explain, config-check]
+tags: [shearline, tarski, auth, explain, config-check]
 ---
 
 # Ductile as a consumer of the Datalog engine (and of Shearline)
@@ -48,6 +48,42 @@ loaded config, the vault principal table and `.checksums`:
 - **Deterministic answer bytes,** so `config check --json` output can be golden-tested.
 - No aggregates, regex or arithmetic needed. `prefix/2` is enough; routing is exact-match.
 
-## Not now
+## Slice 1: token scopes through Shearline (design note, 2026-10-26)
 
-Nothing here blocks the cut or its first tag. Ductile adopts after Shearline v0.2.0.
+State when promoted: tarski v0.3.1 tagged and public; Shearline master requires it and its
+CHANGELOG names v0.2.1, but no v0.2.1 tag exists on GitHub or the module proxy yet (only
+v0.1.0, v0.2.0). `internal/auth/auth.go` is unchanged since 2026-05-24, so Shearline's
+`examples/ductile` transcription and its parity test (154 tokens x 19 rows) are current.
+Decided: adopt for the explainable 403 and the load-time refusal of unknown scopes, not for
+the gate itself, which already works.
+
+**Shape.**
+- `internal/auth` keeps `Authenticate` and `Principal`; token matching is not policy.
+- One route table in `internal/api` is the single source: `(method, path, action, capability,
+  narrowest scope)`. `requireScopes(scopes...)` becomes `require(action, capability)` and the
+  three in-handler checks (`handlePipelineTrigger`, write-class invoke in `handlePluginTrigger`,
+  `canSeeJobResults`) become `Decide` calls on the same table.
+- `normalizeScopes` becomes `Inherits` facts; `HasAnyScope` goes. The wildcard is a role that
+  inherits the four `:rw` scopes.
+- `buildRuntime` builds the `policy.Policy` from the resolved tokens next to `api.Config.Tokens`;
+  reload swaps it like everything else. `Load` failing (a token holding a scope no route names)
+  fails the build, as an unresolvable `secret_ref` does today.
+- A 403 body gains `why` as the compact JSON `tarski.Absence`. The caller is already
+  authenticated, so showing the grant table is acceptable for a personal gateway; note it in
+  API_REFERENCE.
+- Capability names end in `/` (`jobs/status/`) because grants are string prefixes with no
+  path semantics; `jobs/status` would silently cover a later `jobs/status/history`.
+- Scope-free endpoints and zero-scope tokens keep their current behaviour.
+- Port `TestParityWithDuctile` in as ductile's own regression against the old table before the
+  old code is deleted, then keep it as the pin on the route table.
+
+**Out of this slice.** Webhook `scopes/*.json` (a second principal class) and the config-time
+questions above, which import tarski directly; the go.mod diamond resolves to one tarski.
+
+**Blocked by.** Shearline v0.2.1 tagged and visible on the proxy (`go list -m -versions`).
+Names are contract (AGENTS.md section 2): the action/capability vocabulary gets reviewed before
+code, per the design-before-typing rule.
+
+## History
+
+Nothing here blocked the cut or its first tag. Ductile adopts after Shearline v0.2.1.
