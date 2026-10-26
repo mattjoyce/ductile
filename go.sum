@@ -18,8 +18,8 @@ github.com/hashicorp/golang-lru/v2 v2.0.7 h1:a+bsQ5rvGLjzHuww6tVxozPZFVghXaHOwFs
 github.com/hashicorp/golang-lru/v2 v2.0.7/go.mod h1:QeFd9opnmA6QUJc5vARoKUSoFhyfM2/ZepoAG6RGpeM=
 github.com/mattjoyce/shearline v0.2.1 h1:05URXWZPcKrMZ9h7Q9Yv1tvT+qxYrs/0dQrDrcjo+qw=
 github.com/mattjoyce/shearline v0.2.1/go.mod h1:TfoZTyAmQ+Nr8Cp21AyJxtVzdZcmMn96aG2EGKgn9IA=
-github.com/mattjoyce/tarski v0.3.1 h1:fe03eJaBRRbq3E29529okoLsPT60/fMjGIiAnvPEGO0=
-github.com/mattjoyce/tarski v0.3.1/go.mod h1:R8DkLAufPRC3QrbnegpT10dhu97F1GaVZbjzF30JcIM=
+github.com/mattjoyce/tarski v0.3.2 h1:rWJT+pkeOTZWT6UZeNLtFOUkinpmEe+e0LMIxe6JD8w=
+github.com/mattjoyce/tarski v0.3.2/go.mod h1:R8DkLAufPRC3QrbnegpT10dhu97F1GaVZbjzF30JcIM=
 github.com/mattn/go-isatty v0.0.20 h1:xfD0iDuEKnDkl03q4limB+vH+GxLEtL/jb4xVJSWWEY=
 github.com/mattn/go-isatty v0.0.20/go.mod h1:W+V8PltTTMOvKvAeJH7IuucS94S2C6jfK/D7dTCTo3Y=
 github.com/ncruces/go-strftime v1.0.0 h1:HMFp8mLCTPp341M/ZnA4qaf7ZlsbTc+miZjCLOFAw7w=

@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 
 	"github.com/mattjoyce/ductile/internal/auth"
@@ -70,10 +71,17 @@ func (s *Server) decide(ctx context.Context, action, capability string) auth.Dec
 }
 
 // writeForbidden is a 403 with the policy's reason attached when it has one.
+// The reason is marshalled first: if it cannot be encoded the 403 still goes
+// out with its message rather than an empty body, since respondJSON cannot
+// recover once the status line is written.
 func (s *Server) writeForbidden(w http.ResponseWriter, message string, d auth.Decision) {
 	resp := ErrorResponse{Error: message}
 	if d.Why.Relation != "" {
-		resp.Why = d.Why
+		if why, err := json.Marshal(d.Why); err == nil {
+			resp.Why = json.RawMessage(why)
+		} else {
+			s.logger.Error("policy refusal could not be encoded", "error", err)
+		}
 	}
 	respondJSON(w, http.StatusForbidden, resp)
 }
