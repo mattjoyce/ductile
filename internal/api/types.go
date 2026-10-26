@@ -99,9 +99,12 @@ type TimeoutResponse struct {
 	Message         string `json:"message"`
 }
 
-// ErrorResponse is returned on errors
+// ErrorResponse is returned on errors. Why is set on a 403 the policy refused:
+// the engine's account of the denial (rule walked, literal it stopped at, fact
+// it did not find), so a caller reads the reason from the response.
 type ErrorResponse struct {
 	Error string `json:"error"`
+	Why   any    `json:"why,omitempty"`
 }
 
 // BaggageOverlimitResponse is returned with HTTP 413 when a pipeline ingress

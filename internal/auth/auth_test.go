@@ -9,9 +9,9 @@ import (
 
 func TestAuthenticate(t *testing.T) {
 	tokens := []TokenConfig{
-		{Token: "valid-token-1", Scopes: []string{"read", "write"}},
-		{Token: "valid-token-2", Scopes: []string{"admin"}},
-		{Token: "plugin-token", Scopes: []string{"plugin:rw"}},
+		{Token: "valid-token-1", Scopes: []string{"jobs:ro"}},
+		{Name: "api-admin", Token: "valid-token-2", Scopes: []string{"*"}},
+		{Name: "  ", Token: "plugin-token", Scopes: []string{"plugin:rw"}},
 	}
 
 	tests := []struct {
@@ -22,29 +22,25 @@ func TestAuthenticate(t *testing.T) {
 		wantBool      bool
 	}{
 		{
-			name:      "valid token 1",
-			presented: "valid-token-1",
-			tokens:    tokens,
-			wantPrincipal: Principal{
-				Token: "valid-token-1",
-				Scopes: map[string]struct{}{
-					"read":  {},
-					"write": {},
-				},
-			},
-			wantBool: true,
+			name:          "unnamed token is named by position",
+			presented:     "valid-token-1",
+			tokens:        tokens,
+			wantPrincipal: Principal{Name: "tokens[0]"},
+			wantBool:      true,
 		},
 		{
-			name:      "valid token 2",
-			presented: "valid-token-2",
-			tokens:    tokens,
-			wantPrincipal: Principal{
-				Token: "valid-token-2",
-				Scopes: map[string]struct{}{
-					"admin": {},
-				},
-			},
-			wantBool: true,
+			name:          "named token keeps its name",
+			presented:     "valid-token-2",
+			tokens:        tokens,
+			wantPrincipal: Principal{Name: "api-admin"},
+			wantBool:      true,
+		},
+		{
+			name:          "blank name falls back to position",
+			presented:     "plugin-token",
+			tokens:        tokens,
+			wantPrincipal: Principal{Name: "tokens[2]"},
+			wantBool:      true,
 		},
 		{
 			name:          "invalid token",
@@ -66,21 +62,6 @@ func TestAuthenticate(t *testing.T) {
 			tokens:        []TokenConfig{},
 			wantPrincipal: Principal{},
 			wantBool:      false,
-		},
-		{
-			name:      "plugin rw scope expands to ro plus narrower P2-07 splits",
-			presented: "plugin-token",
-			tokens:    tokens,
-			wantPrincipal: Principal{
-				Token: "plugin-token",
-				Scopes: map[string]struct{}{
-					"plugin:rw":         {},
-					"plugin:ro":         {},
-					"plugin:catalog:ro": {},
-					"plugin:invoke:ro":  {},
-				},
-			},
-			wantBool: true,
 		},
 	}
 
@@ -173,180 +154,9 @@ func TestExtractBearerToken(t *testing.T) {
 	}
 }
 
-func TestNormalizeScopes(t *testing.T) {
-	tests := []struct {
-		name   string
-		scopes []string
-		want   map[string]struct{}
-	}{
-		{
-			name:   "empty",
-			scopes: []string{},
-			want:   map[string]struct{}{},
-		},
-		{
-			name:   "basic scopes",
-			scopes: []string{"read", "write"},
-			want: map[string]struct{}{
-				"read":  {},
-				"write": {},
-			},
-		},
-		{
-			name:   "with whitespace",
-			scopes: []string{"  read  ", "write ", ""},
-			want: map[string]struct{}{
-				"read":  {},
-				"write": {},
-			},
-		},
-		{
-			name:   "plugin rw expansion (full plugin tree)",
-			scopes: []string{"plugin:rw"},
-			want: map[string]struct{}{
-				"plugin:rw":         {},
-				"plugin:ro":         {},
-				"plugin:catalog:ro": {},
-				"plugin:invoke:ro":  {},
-			},
-		},
-		{
-			name:   "plugin ro is catalog-only (P2-07 split)",
-			scopes: []string{"plugin:ro"},
-			want: map[string]struct{}{
-				"plugin:ro":         {},
-				"plugin:catalog:ro": {},
-			},
-		},
-		{
-			name:   "plugin invoke ro is invoke-only",
-			scopes: []string{"plugin:invoke:ro"},
-			want: map[string]struct{}{
-				"plugin:invoke:ro": {},
-			},
-		},
-		{
-			name:   "jobs rw expansion (full jobs tree)",
-			scopes: []string{"jobs:rw"},
-			want: map[string]struct{}{
-				"jobs:rw":        {},
-				"jobs:ro":        {},
-				"jobs:status:ro": {},
-				"jobs:result:ro": {},
-				"jobs:logs:ro":   {},
-				"jobs:tree:ro":   {},
-			},
-		},
-		{
-			name:   "jobs ro is super-scope (D1 back-compat)",
-			scopes: []string{"jobs:ro"},
-			want: map[string]struct{}{
-				"jobs:ro":        {},
-				"jobs:status:ro": {},
-				"jobs:result:ro": {},
-				"jobs:logs:ro":   {},
-				"jobs:tree:ro":   {},
-			},
-		},
-		{
-			name:   "jobs status ro alone does not imply others (D1 narrowing)",
-			scopes: []string{"jobs:status:ro"},
-			want: map[string]struct{}{
-				"jobs:status:ro": {},
-			},
-		},
-		{
-			name:   "events rw expansion (full events tree)",
-			scopes: []string{"events:rw"},
-			want: map[string]struct{}{
-				"events:rw":         {},
-				"events:ro":         {},
-				"events:meta:ro":    {},
-				"events:payload:ro": {},
-			},
-		},
-		{
-			name:   "events ro is super-scope (D1)",
-			scopes: []string{"events:ro"},
-			want: map[string]struct{}{
-				"events:ro":         {},
-				"events:meta:ro":    {},
-				"events:payload:ro": {},
-			},
-		},
-		{
-			name:   "duplicate scopes",
-			scopes: []string{"read", "read"},
-			want: map[string]struct{}{
-				"read": {},
-			},
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if got := normalizeScopes(tt.scopes); !reflect.DeepEqual(got, tt.want) {
-				t.Errorf("normalizeScopes() = %v, want %v", got, tt.want)
-			}
-		})
-	}
-}
-
-func TestHasAnyScope(t *testing.T) {
-	tests := []struct {
-		name     string
-		scopes   map[string]struct{}
-		required []string
-		want     bool
-	}{
-		{
-			name:     "no required scopes",
-			scopes:   map[string]struct{}{"read": {}},
-			required: []string{},
-			want:     true,
-		},
-		{
-			name:     "has required scope",
-			scopes:   map[string]struct{}{"read": {}, "write": {}},
-			required: []string{"write"},
-			want:     true,
-		},
-		{
-			name:     "missing required scope",
-			scopes:   map[string]struct{}{"read": {}},
-			required: []string{"write"},
-			want:     false,
-		},
-		{
-			name:     "wildcard scope",
-			scopes:   map[string]struct{}{"*": {}},
-			required: []string{"admin"},
-			want:     true,
-		},
-		{
-			name:     "has one of required scopes",
-			scopes:   map[string]struct{}{"read": {}},
-			required: []string{"write", "read"},
-			want:     true,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			p := Principal{Scopes: tt.scopes}
-			if got := HasAnyScope(p, tt.required...); got != tt.want {
-				t.Errorf("HasAnyScope() = %v, want %v", got, tt.want)
-			}
-		})
-	}
-}
-
 func TestPrincipalContext(t *testing.T) {
 	ctx := context.Background()
-	p := Principal{
-		Token:  "test-token",
-		Scopes: map[string]struct{}{"test": {}},
-	}
+	p := Principal{Name: "test-token"}
 
 	// Test missing
 	_, ok := PrincipalFromContext(ctx)

@@ -730,7 +730,25 @@ Verifies local in-memory invariants.
 ## Error Codes
 
 - `401 Unauthorized`: Missing or invalid Bearer token.
-- `403 Forbidden`: Token is valid but lacks the necessary scope for the requested action.
+- `403 Forbidden`: Token is valid but lacks the necessary scope for the requested action. The
+  body carries `why`: the policy's own account of the refusal, as compact JSON naming the rule it
+  walked, the literal it stopped at and the fact it did not find. Principals are named by their
+  `secret_ref`, never by the token value. Example:
+
+  ```json
+  {"error":"insufficient scope",
+   "why":{"relation":"allow","goal":["status-reader","write","system/reload/"],"truncated":false,
+          "rules":[{"rule":{"set":"rbac/1","line":19,"text":"allow(P, A, R) :- permit(P, A, Pat), resource(R), prefix(Pat, R), not deny(P, A, R)."},
+                    "bound":{"A":"write","P":"status-reader","R":"system/reload/"},"failed":"permit(P, A, Pat)",
+                    "because":[{"relation":"permit","goal":["status-reader","write",null],"truncated":false,
+                                "rules":[{"rule":{"set":"rbac/1","line":16,"text":"permit(P, A, Pat) :- principal(P), action(A), holds(P, Role), grants(Role, A, Pat)."},
+                                          "bound":{"A":"write","P":"status-reader","Role":"jobs:status:ro"},"failed":"grants(Role, A, Pat)",
+                                          "because":[{"relation":"grants","goal":["jobs:status:ro","write",null],"truncated":false,"rules":[]}]}]}]}]}}
+  ```
+
+  Read bottom-up: the token holds `jobs:status:ro`, and no `grants` fact gives that role `write`
+  on `system/reload/`, so `permit` and then `allow` were not derived. The same structure prints as
+  indented text in tarski's `Absence.String()`.
 - `404 Not Found`: The requested plugin, command, or job ID does not exist.
 - `400 Bad Request`: Invalid JSON body or missing required fields.
 - `500 Internal Server Error`: An unexpected error occurred on the server.

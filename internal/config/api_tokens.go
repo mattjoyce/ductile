@@ -7,6 +7,9 @@ import "fmt"
 // distinct value from APIToken so resolution never overwrites the reference with
 // the secret (card #94 — provenance is preserved in cfg.API.Auth.Tokens).
 type ResolvedAPIToken struct {
+	// Name is the principal the token acts as: its secret_ref, which names
+	// the credential without being it, so it is safe in a 403's "why".
+	Name   string
 	Token  string
 	Scopes []string
 }
@@ -48,7 +51,7 @@ func ResolveAPITokens(cfg *Config) ([]ResolvedAPIToken, error) {
 			return nil, fmt.Errorf(
 				"api.auth.tokens[%d]: secret_ref %q resolved to an empty value", i, t.SecretRef)
 		}
-		resolved = append(resolved, ResolvedAPIToken{Token: secret, Scopes: t.Scopes})
+		resolved = append(resolved, ResolvedAPIToken{Name: t.SecretRef, Token: secret, Scopes: t.Scopes})
 	}
 
 	return resolved, nil

@@ -33,7 +33,7 @@ Three facts, verified in the code, anchor the model:
 
 - The `/vault/*` management routes are gated by their **own** authenticator (`authenticateVaultAdmin`,
   `internal/api/server.go`), **separate** from the config API tokens (`s.authenticate` /
-  `requireScopes`). An API token scoped `["*"]` reaches every gateway route but **cannot** write the
+  `require(action, capability)`, the Shearline policy). An API token scoped `["*"]` reaches every gateway route but **cannot** write the
   vault — vault-write is a different plane, not a scope.
 - The admin token is a **reserved** secret (`core-admin-token`, `internal/vault/reserved.go`). The
   generic data-plane `SetSecret` **refuses** reserved names (`internal/vault/lifecycle.go`) on *every*

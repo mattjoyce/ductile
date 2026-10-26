@@ -121,7 +121,7 @@ All return `{name, status}` (or the roll-principal shape) — never a secret val
 
 ## Error Codes
 - `401` — Missing or invalid token
-- `403` — Valid token, insufficient scope
+- `403` — Valid token, insufficient scope; body carries `why` (the policy rule and the missing fact)
 - `404` — Plugin / command / job not found
 - `400` — Invalid JSON or missing fields
 - `500` — Internal server error

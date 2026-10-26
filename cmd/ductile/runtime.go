@@ -878,10 +878,20 @@ func buildRuntime(cfg *config.Config, configPath string, configSource string, re
 			tokens = make([]auth.TokenConfig, 0, len(resolvedTokens))
 			for _, t := range resolvedTokens {
 				tokens = append(tokens, auth.TokenConfig{
+					Name:   t.Name,
 					Token:  t.Token,
 					Scopes: t.Scopes,
 				})
 			}
+		}
+		// The policy is built from the same tokens, in the same order, before
+		// the listener opens, and it fails the build the way an unresolvable
+		// secret_ref does: a token holding a scope no route grants, or two
+		// tokens sharing a principal name, never serves (card 145).
+		apiPolicy, err := auth.NewPolicy(tokens)
+		if err != nil {
+			logger.Error("API policy build failed", "error", err)
+			return nil, fmt.Errorf("api policy: %w", err)
 		}
 		binaryPath := ""
 		if execPath, err := os.Executable(); err == nil {
@@ -891,6 +901,7 @@ func buildRuntime(cfg *config.Config, configPath string, configSource string, re
 		apiConfig := api.Config{
 			Listen:            cfg.API.Listen,
 			Tokens:            tokens,
+			Policy:            apiPolicy,
 			MaxConcurrentSync: cfg.API.MaxConcurrentSync,
 			MaxSyncTimeout:    cfg.API.MaxSyncTimeout,
 			ConfigPath:        configPath,
