@@ -52,6 +52,7 @@ func TestEchoPlugin_DiscoveryAndProtocolOK(t *testing.T) {
 func TestEchoPlugin_ErrorMode(t *testing.T) {
 	root := repoRoot(t)
 	requireEntrypointInterpreter(t, root, "echo", "run.sh")
+	requireAnyCommand(t, "the echo plugin parses its config with jq or python3", "jq", "python3")
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
@@ -70,6 +71,7 @@ func TestEchoPlugin_ErrorMode(t *testing.T) {
 func TestEchoPlugin_ProtocolErrorMode(t *testing.T) {
 	root := repoRoot(t)
 	requireEntrypointInterpreter(t, root, "echo", "run.sh")
+	requireAnyCommand(t, "the echo plugin parses its config with jq or python3", "jq", "python3")
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 

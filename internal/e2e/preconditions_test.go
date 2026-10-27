@@ -61,3 +61,15 @@ func requireEntrypointInterpreter(t *testing.T, root, plugin, entrypoint string)
 	}
 	requireScriptInterpreter(t, string(data))
 }
+
+// requireAnyCommand skips if none of the named commands are found on PATH.
+// A skip is never a pass; the reason names the assumption.
+func requireAnyCommand(t *testing.T, why string, names ...string) {
+	t.Helper()
+	for _, name := range names {
+		if _, err := exec.LookPath(name); err == nil {
+			return
+		}
+	}
+	t.Skipf("requires one of %s on PATH: %s (assumes a JSON parser is installed)", strings.Join(names, ", "), why)
+}
