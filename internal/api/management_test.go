@@ -10,8 +10,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
-	"strings"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -79,6 +79,8 @@ func startManagementServer(t *testing.T, fv VaultManager) (*http.Client, func())
 	}
 
 	cleanup := func() {
+		// Close idle connections so a spare transport conn in StateNew doesn't block Shutdown for ~5s.
+		client.CloseIdleConnections()
 		cancel()
 		select {
 		case <-done:
