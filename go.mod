@@ -6,7 +6,7 @@ require (
 	filippo.io/age v1.3.1
 	github.com/go-chi/chi/v5 v5.2.5
 	github.com/google/uuid v1.6.0
-	github.com/mattjoyce/shearline v0.2.1
+	github.com/mattjoyce/shearline v0.3.0
 	github.com/mattjoyce/tarski v0.3.2
 	github.com/santhosh-tekuri/jsonschema/v6 v6.0.2
 	golang.org/x/sys v0.42.0
