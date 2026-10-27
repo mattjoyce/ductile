@@ -47,7 +47,7 @@ hides the cause rather than releasing the connection the test opened).
 
 ## Gate
 
-`~/.claude/skills/_POINTDEV/Tools/GateGo.sh` (gofmt, vet, `go test -race -shuffle=on ./...`, gosec).
+Repo-wide vet, `go test -race -shuffle=on ./...`, the 20x management run above, gosec medium, and gofmt on the files you change. Pre-existing gofmt drift elsewhere is out of scope.
 
 ## Out of scope
 
