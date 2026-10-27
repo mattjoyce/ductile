@@ -51,7 +51,7 @@ Repo-wide vet, `go test -race -shuffle=on ./...`, the 20x management run above, 
 
 ## Out of scope
 
-- Pre-existing goimports drift in `internal/api/management_test.go` (import order): leave it.
+- Formatting: run `gofmt -w internal/api/management_test.go` (it fixes the pre-existing import order there, which the gate checks because you touch the file). Format no other file.
 - Pre-existing gosec G204 at internal/dispatch/sidedoor_audit_unix.go:82: leave it.
 - Any other test or package.
 
