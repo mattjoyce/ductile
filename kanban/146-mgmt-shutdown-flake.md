@@ -39,11 +39,11 @@ hides the cause rather than releasing the connection the test opened).
 
 ## Acceptance
 
-- [ ] `startManagementServer`'s cleanup calls `client.CloseIdleConnections()` before `cancel()`, with a one-line comment naming the StateNew/Shutdown reason.
-- [ ] `git diff origin/main -- internal/api/management.go` is empty.
-- [ ] The 2s shutdown wait at management_test.go:85 is unchanged.
-- [ ] `go test -race -count=20 -run 'TestManagement|TestStartManagement' ./internal/api/` passes with zero failures (it fails on `main` today).
-- [ ] The gate passes.
+- [x] `startManagementServer`'s cleanup calls `client.CloseIdleConnections()` before `cancel()`, with a one-line comment naming the StateNew/Shutdown reason.
+- [x] `git diff origin/main -- internal/api/management.go` is empty.
+- [x] The 2s shutdown wait at management_test.go:85 is unchanged.
+- [x] `go test -race -count=20 -run 'TestManagement|TestStartManagement' ./internal/api/` passes with zero failures (it fails on `main` today).
+- [x] The gate passes.
 
 ## Gate
 
@@ -60,3 +60,10 @@ Do not tag, do not merge, do not push.
 ## History
 
 - 2026-10-27: card created; cause diagnosed from repeated failures on main.
+
+## Review 1 (2026-10-27): approved
+
+1. Diff checked against origin/main: `CloseIdleConnections()` before `cancel()` with the reason comment; import order gofmt'd; management.go untouched; 2s wait unchanged.
+2. Gate rerun by the main loop on 371a45c: vet, full race suite, 20x management run, gosec on internal/api all pass.
+3. Negative control: the same 20x run on unmodified origin/main fails 17 test cases; with the fix, 0 failures across 60 runs (40 in a separate scratch worktree, 20 in the gate).
+4. Opencode session: ses_e822252e8ffe2I9f3EfTrFxMlp. The implement commit's subject does not follow `<component>: <action> <what>`; fix by squash at merge (suggested subject: `api: close idle test connections before management shutdown`).
