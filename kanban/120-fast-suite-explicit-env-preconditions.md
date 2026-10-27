@@ -54,3 +54,23 @@ assumption. The ETXTBSY flake is already handled separately (#115 / PR #123).
 - Seen on the way, out of scope: gofmt drift in `internal/api/management_test.go` and
   `internal/dispatch/sidedoor_audit_test.go`; 3 errcheck hits in `dispatcher_test.go`;
   local gosec build too old for Go 1.25 export data ("could not import").
+
+## Review 1 (2026-10-27): one gap
+
+Rebased onto origin/main (a0ba9c7+). Shebang coverage checked: every named bash/python3 script in
+`internal/dispatch` and `internal/e2e` reaches a guarded helper; the remaining direct writes are
+`/bin/sh` shims (POSIX-guaranteed), left alone by design. Running the e2e test binary with
+`PATH=/bin:/sbin` (python3 and jq off PATH) skips every python3 test with the interpreter named.
+
+1. `TestEchoPlugin_ErrorMode` and `TestEchoPlugin_ProtocolErrorMode` (internal/e2e/echo_plugin_test.go)
+   FAIL under that PATH with `expected status=error, got "ok"`. Cause: `plugins/echo/run.sh` reads its
+   config with `jq`, else `python3`, else silently defaults to `ok` (run.sh:13-40). The shebang guard
+   cannot see that dependency. Fix, test-only: add `requireAnyCommand(t *testing.T, why string, names ...string)`
+   to `internal/e2e/preconditions_test.go` that skips with
+   `t.Skipf("requires one of %s on PATH: %s (assumes a JSON parser is installed)", strings.Join(names, ", "), why)`
+   when `exec.LookPath` finds none of them; call it as
+   `requireAnyCommand(t, "the echo plugin parses its config with jq or python3", "jq", "python3")` in
+   those two tests only (TestEchoPlugin_DiscoveryAndProtocolOK passes without them; leave it).
+   Do not change `plugins/echo/run.sh`.
+   Proof: `go test -c -o /tmp/e2e.test ./internal/e2e/ && (cd internal/e2e && env PATH=/bin:/sbin /tmp/e2e.test -test.count=1)`
+   reports no FAIL, and both tests show `--- SKIP` naming jq and python3.
