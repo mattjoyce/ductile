@@ -74,3 +74,15 @@ Rebased onto origin/main (a0ba9c7+). Shebang coverage checked: every named bash/
    Do not change `plugins/echo/run.sh`.
    Proof: `go test -c -o /tmp/e2e.test ./internal/e2e/ && (cd internal/e2e && env PATH=/bin:/sbin /tmp/e2e.test -test.count=1)`
    reports no FAIL, and both tests show `--- SKIP` naming jq and python3.
+
+## Review 2 (2026-10-27): approved
+
+1. Review 1 item 1 DONE: `requireAnyCommand` in internal/e2e/preconditions_test.go, called in the two
+   error-mode echo tests only; run.sh untouched. Under `PATH=/bin:/sbin` both show `--- SKIP` naming
+   jq and python3; DiscoveryAndProtocolOK still passes.
+2. Gate rerun by the main loop on a272184: vet, full race suite, the no-python3 e2e run all pass.
+3. opencode's first gate attempt reported a failing dispatch parallel test; five further
+   `go test -race -shuffle=on ./internal/dispatch/` runs were clean, so it is not reproduced and not
+   attributed to this change. Watch CI.
+4. Still open for Done-when: one run as root without bash/python3 (e.g. `golang:alpine`). Card stays
+   `doing` until that run.
