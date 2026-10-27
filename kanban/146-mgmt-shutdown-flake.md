@@ -1,6 +1,6 @@
 ---
 id: 146
-status: doing
+status: done
 priority: Normal
 tags: [test, flake, api, management]
 ---
@@ -60,6 +60,7 @@ Do not tag, do not merge, do not push.
 ## History
 
 - 2026-10-27: card created; cause diagnosed from repeated failures on main.
+- 2026-10-27: merged as PR #183 (`a0ba9c7`).
 
 ## Review 1 (2026-10-27): approved
 

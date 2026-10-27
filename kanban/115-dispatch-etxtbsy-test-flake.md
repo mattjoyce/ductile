@@ -1,6 +1,6 @@
 ---
 id: 115
-status: todo
+status: done
 priority: Medium
 tags: [test, dispatch, ci, flaky, tech-debt]
 ---
@@ -57,3 +57,7 @@ its own fd handling is fine; the race is cross-goroutine).
 ## Notes
 - PR #121 was merged via `--admin` over this flake (lint blocker was fixed separately in
   `d891f45`); this card tracks the remaining CI-reliability debt.
+
+## History
+
+- 2026-10-27: closed. Fixed by PR #123 (`357edaf`, spawn retries on ETXTBSY in internal/dispatch/subprocess_executor.go); the card was never moved.

@@ -1,6 +1,6 @@
 ---
-id: 143
-status: todo
+id: 147
+status: done
 priority: High
 tags: [release, semver, docs, ci]
 ---
@@ -56,3 +56,7 @@ artifact prints v1.0.0; both platforms bootstrapped from the published docs with
 - 2026-06-10: Matt ruled #132 doc-only and not a blocker (he'll write the nginx example).
   CHANGELOG v1.0.0 entry written and independently fact-checked. Only the tag (step 6) and the
   published-artifact credibility test (step 7) remain. (by @assistant)
+
+## History
+
+- 2026-10-27: closed; v1.0.0 and v1.0.1 are tagged and released. Renumbered from 143, which `143-review-hickey-armstrong-167-180-ownership` also held.
