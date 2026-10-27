@@ -47,11 +47,12 @@ hides the cause rather than releasing the connection the test opened).
 
 ## Gate
 
-Repo-wide vet, `go test -race -shuffle=on ./...`, the 20x management run above, gosec medium, and gofmt on the files you change. Pre-existing gofmt drift elsewhere is out of scope.
+Repo-wide vet, `go test -race -shuffle=on ./...`, the 20x management run above, gosec medium on internal/api, and gofmt on the files you change. Pre-existing gofmt drift elsewhere is out of scope.
 
 ## Out of scope
 
 - Pre-existing goimports drift in `internal/api/management_test.go` (import order): leave it.
+- Pre-existing gosec G204 at internal/dispatch/sidedoor_audit_unix.go:82: leave it.
 - Any other test or package.
 
 Do not tag, do not merge, do not push.
