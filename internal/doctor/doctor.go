@@ -268,74 +268,18 @@ func (d *Doctor) validateAPIConfig(r *Result) {
 	}
 }
 
-// validateTokenScopes checks that scope references resolve to real plugins/commands.
+// validateTokenScopes warns on a reserved scope. Every other scope question is
+// settled before doctor runs: config.validate refuses a scope the token policy
+// does not know.
 func (d *Doctor) validateTokenScopes(r *Result) {
 	for i, token := range d.cfg.API.Auth.Tokens {
 		for j, scope := range token.Scopes {
-			field := fmt.Sprintf("api.auth.tokens[%d].scopes[%d]", i, j)
 			if parent, reserved := auth.ReservedScope(scope); reserved {
+				field := fmt.Sprintf("api.auth.tokens[%d].scopes[%d]", i, j)
 				d.addWarning(r, "token_scopes", field,
 					fmt.Sprintf("scope %q is reserved and grants nothing yet; use %s", scope, parent))
-				continue
 			}
-			d.validateSingleScope(r, scope, field)
 		}
-	}
-}
-
-func (d *Doctor) validateSingleScope(r *Result, scope, field string) {
-	// Admin wildcard
-	if scope == "*" {
-		return
-	}
-
-	parts := strings.SplitN(scope, ":", 2)
-	if len(parts) < 2 {
-		d.addError(r, "token_scopes", field,
-			fmt.Sprintf("invalid scope %q (expected format: resource:access or action:resource:command)", scope))
-		return
-	}
-
-	first, second := parts[0], parts[1]
-
-	// Low-level: action:resource or action:resource:command
-	if first == "read" || first == "trigger" || first == "admin" {
-		// Valid low-level scope syntax
-		return
-	}
-
-	// Manifest-driven: plugin:ro, plugin:rw, plugin:allow:cmd, plugin:deny:cmd
-	pluginName := first
-	p, ok := d.registry.Get(pluginName)
-	if !ok {
-		// Check if it's a known non-plugin resource
-		if pluginName == "jobs" || pluginName == "events" || pluginName == "healthz" || pluginName == "queue" ||
-			pluginName == "system" || pluginName == "plugin" {
-			return
-		}
-		d.addError(r, "token_scopes", field,
-			fmt.Sprintf("scope %q references unknown plugin %q", scope, pluginName))
-		return
-	}
-
-	switch {
-	case second == "ro" || second == "rw":
-		// Valid
-	case strings.HasPrefix(second, "allow:"):
-		cmd := strings.TrimPrefix(second, "allow:")
-		if cmd != "*" && !p.SupportsCommand(cmd) {
-			d.addError(r, "token_scopes", field,
-				fmt.Sprintf("scope %q: plugin %q has no command %q", scope, pluginName, cmd))
-		}
-	case strings.HasPrefix(second, "deny:"):
-		cmd := strings.TrimPrefix(second, "deny:")
-		if cmd != "*" && !p.SupportsCommand(cmd) {
-			d.addWarning(r, "token_scopes", field,
-				fmt.Sprintf("scope %q: plugin %q has no command %q (deny is a no-op)", scope, pluginName, cmd))
-		}
-	default:
-		d.addError(r, "token_scopes", field,
-			fmt.Sprintf("scope %q: invalid access type %q (expected ro, rw, allow:cmd, or deny:cmd)", scope, second))
 	}
 }
 
