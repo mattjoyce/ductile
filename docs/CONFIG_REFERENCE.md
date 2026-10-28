@@ -452,6 +452,11 @@ A token whose scope list names anything else fails `config check` and refuses to
 known scopes in the error. An empty scope list authenticates but reaches only the scope-free
 discovery routes.
 
+`config check` also reports the token policy's cost: every token is decided against every
+capability once, and the costliest decision is printed against the policy engine's bounds
+(`token policy: worst decision ...`). A policy whose costliest decision uses more than half of
+either bound is refused at `config check` and at boot.
+
 ---
 
 ## 6. Environment Interpolation
