@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mattjoyce/ductile/internal/auth"
 	"github.com/mattjoyce/ductile/internal/config"
 	"github.com/mattjoyce/ductile/internal/plugin"
 )
@@ -272,6 +273,11 @@ func (d *Doctor) validateTokenScopes(r *Result) {
 	for i, token := range d.cfg.API.Auth.Tokens {
 		for j, scope := range token.Scopes {
 			field := fmt.Sprintf("api.auth.tokens[%d].scopes[%d]", i, j)
+			if parent, reserved := auth.ReservedScope(scope); reserved {
+				d.addWarning(r, "token_scopes", field,
+					fmt.Sprintf("scope %q is reserved and grants nothing yet; use %s", scope, parent))
+				continue
+			}
 			d.validateSingleScope(r, scope, field)
 		}
 	}

@@ -202,9 +202,9 @@ func TestKnownScopes_CoverTable(t *testing.T) {
 			t.Errorf("grant scope %q not known", g.scope)
 		}
 	}
-	for _, im := range implies {
+	for _, im := range inherits {
 		if !KnownScope(im[0]) || !KnownScope(im[1]) {
-			t.Errorf("implies row %v not known", im)
+			t.Errorf("inherits row %v not known", im)
 		}
 	}
 	if KnownScope("admin") || KnownScope("") {
@@ -213,5 +213,31 @@ func TestKnownScopes_CoverTable(t *testing.T) {
 	got := KnownScopes()
 	if !sort.StringsAreSorted(got) {
 		t.Errorf("KnownScopes() must be sorted: %v", got)
+	}
+}
+
+// The reserved set is derived, not listed: a scope is reserved when the lattice
+// names it and no grant is reachable from it. Today that is exactly the two
+// events payload-shaping scopes, each inherited from events:ro.
+func TestReservedScope(t *testing.T) {
+	var got []string
+	for _, s := range KnownScopes() {
+		parent, reserved := ReservedScope(s)
+		if !reserved {
+			continue
+		}
+		got = append(got, s)
+		if parent != "events:ro" {
+			t.Errorf("ReservedScope(%q) parent = %q, want events:ro", s, parent)
+		}
+	}
+	want := []string{"events:meta:ro", "events:payload:ro"}
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Fatalf("reserved scopes = %v, want %v", got, want)
+	}
+	for _, s := range []string{"*", "events:ro", "jobs:status:ro", "admin", ""} {
+		if _, reserved := ReservedScope(s); reserved {
+			t.Errorf("ReservedScope(%q) = reserved, want not", s)
+		}
 	}
 }

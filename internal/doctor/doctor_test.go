@@ -665,3 +665,20 @@ func TestValidate_UsesAliasDisabledStillCountsAsReferenced(t *testing.T) {
 	r := New(cfg, registryWith(triggerPlugin())).Validate()
 	assertNoWarningCategory(t, r, "unused")
 }
+
+func TestValidate_TokenScopeReservedWarns(t *testing.T) {
+	t.Parallel()
+	for _, scope := range []string{"events:meta:ro", "events:payload:ro"} {
+		cfg := validConfig()
+		cfg.API.Enabled = true
+		cfg.API.Listen = "localhost:8080"
+		cfg.API.Auth.Tokens = []config.APIToken{
+			{Token: "test-key", Scopes: []string{scope}},
+		}
+		r := New(cfg, registryWith(echoPlugin())).Validate()
+		if !r.Valid {
+			t.Fatalf("%s: a reserved scope must stay valid, got: %v", scope, r.Errors)
+		}
+		assertHasWarning(t, r, "token_scopes", "reserved and grants nothing yet; use events:ro")
+	}
+}

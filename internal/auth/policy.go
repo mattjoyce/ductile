@@ -40,13 +40,13 @@ const (
 	CapEventsStream    = "events/stream/"
 )
 
-// implies is the scope lattice: a scope and one scope it implies. A scope is a
+// inherits is the scope lattice: a scope and one scope it inherits. A scope is a
 // role; the wildcard is a role like any other, one that inherits the four
 // read-write scopes. The rows carry the decisions the scopes were split under:
 // P2-07 made plugin:ro catalog-only, so read-class invocation needs
 // plugin:invoke:ro explicitly; D1 made jobs:ro and events:ro back-compat
 // super-scopes over their narrower :ro scopes.
-var implies = [][2]string{
+var inherits = [][2]string{
 	{"*", "plugin:rw"}, {"*", "jobs:rw"}, {"*", "events:rw"}, {"*", "system:rw"},
 	{"plugin:rw", "plugin:ro"}, {"plugin:rw", "plugin:invoke:ro"},
 	{"plugin:ro", "plugin:catalog:ro"},
@@ -58,7 +58,7 @@ var implies = [][2]string{
 }
 
 // grant is one row of the capability table: the narrowest scope that reaches
-// an action on a capability. Wider scopes reach it through implies, so each
+// an action on a capability. Wider scopes reach it through inherits, so each
 // capability is written once, not once per scope.
 type grant struct {
 	scope, action, capability string
@@ -90,7 +90,7 @@ var grants = []grant{
 // have been a scope that silently granted nothing.
 var knownScopes = func() map[string]bool {
 	known := map[string]bool{}
-	for _, im := range implies {
+	for _, im := range inherits {
 		known[im[0]], known[im[1]] = true, true
 	}
 	for _, g := range grants {
@@ -112,6 +112,42 @@ func KnownScopes() []string {
 	}
 	sort.Strings(out)
 	return out
+}
+
+// reaches is every scope that leads to at least one grant, directly or through
+// the scopes it inherits.
+var reaches = func() map[string]bool {
+	out := map[string]bool{}
+	for _, g := range grants {
+		out[g.scope] = true
+	}
+	for changed := true; changed; {
+		changed = false
+		for _, im := range inherits {
+			if out[im[1]] && !out[im[0]] {
+				out[im[0]], changed = true, true
+			}
+		}
+	}
+	return out
+}()
+
+// ReservedScope reports whether s is a scope the lattice names but no
+// capability reaches, and the scope that inherits it. Such a scope is accepted
+// so existing tokens keep loading, but it grants nothing yet: events:meta:ro and
+// events:payload:ro are held for per-subscriber payload shaping. `config check`
+// warns on one so a token holding only it is not a silent 403 on every route.
+func ReservedScope(s string) (parent string, reserved bool) {
+	s = strings.TrimSpace(s)
+	if !knownScopes[s] || reaches[s] {
+		return "", false
+	}
+	for _, im := range inherits {
+		if im[1] == s {
+			return im[0], true
+		}
+	}
+	return "", true
 }
 
 // ErrUnknownScope marks a token scope the capability table gives no meaning to.
@@ -154,8 +190,8 @@ func NewPolicy(tokens []TokenConfig) (Policy, error) {
 }
 
 func standingFacts(tokens []TokenConfig) ([]tarski.Fact, error) {
-	out := make([]tarski.Fact, 0, len(implies)+len(grants)+len(tokens))
-	for _, im := range implies {
+	out := make([]tarski.Fact, 0, len(inherits)+len(grants)+len(tokens))
+	for _, im := range inherits {
 		out = append(out, policy.Inherits(im[0], im[1]))
 	}
 	for _, g := range grants {
