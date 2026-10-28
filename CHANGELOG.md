@@ -3,8 +3,8 @@
 ## Unreleased
 
 - **Token scopes are a policy (card 145):** `internal/auth` decides what a token may do
-  through [Shearline](https://github.com/mattjoyce/shearline) v0.2.1 over the
-  [tarski](https://github.com/mattjoyce/tarski) v0.3.1 Datalog engine. Scopes are roles,
+  through [Shearline](https://github.com/mattjoyce/shearline) v0.4.0 over the
+  [tarski](https://github.com/mattjoyce/tarski) v0.3.2 Datalog engine. Scopes are roles,
   the old implication map is `inherits` facts, and each route asks for an action on a
   capability (`read jobs/status/`). Three things an operator can see: a 403 now carries `why`
   (the rule walked and the fact not found, principals named by `secret_ref`); a token holding
