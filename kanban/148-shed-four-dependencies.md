@@ -87,6 +87,68 @@ card and get it reviewed before code.
 - SemVer: an existing `.checksums` stops verifying, so this is operator-visible. Fold it into
   the same major/minor decision as card 145's boot refusal.
 
+### Slice 3 design note (2026-10-28, for review; no code until approved)
+
+**What is stored and what compares it** (traced at `origin/main`):
+
+| Value | Stored | Compared later | On mismatch |
+|---|---|---|---|
+| file hash, `ComputeBlake3Hash` (`config/hash.go:31`) | `.checksums` `hashes`, bare hex | boot and reload (`integrity.go:67`), load of `webhooks.yaml` (`loader.go:647`) | boot refused for high-security files |
+| plugin fingerprint, `ComputeKeyedBlake3Hash` (`hash.go:48`) | `.checksums` `plugin_fingerprints[]`, bare hex; copied into `config_snapshots.plugin_fingerprints` | boot and reload (`plugin_fingerprint.go:188`), every spawn (`plugin_verifier.go:107`), `plugin lock --all` diff | enabled plugin: boot refused, spawn denied |
+| clearpass seal, `clearpassMAC` (`plugin_clearpass.go:94`) | `.checksums` `...clearpass.seal`, bare hex | spawn (`plugin_verifier.go:114`), closer (`clearpass_closer.go:246`) | treated as no window; closer refuses |
+| snapshot `config_hash`, `source_hash`, secret fingerprint (`configsnapshot/snapshot.go:485-532`) | `config_snapshots`, tagged `blake3:` / `secretfp_blake3:` | never re-verified; inspect only displays them | none |
+| pipeline fingerprint (`router/dsl/compiler.go:789`) | not stored | in-memory only | none |
+| `plugin lock --all` code (`plugin_lock.go:77`) | not stored | same invocation | command refuses |
+
+Only the three `.checksums` values need a migration. Snapshots are append-only history and
+already carry an algorithm tag; the DSL fingerprint and the confirmation code are recomputed
+every time.
+
+**Proposal**
+
+1. Plain hashes become `crypto/sha256`; the two keyed uses become `hmac.New(sha256.New, nonce)`
+   with the same 32-byte vault nonce and the same length check. Rename: `ComputeFileHash`,
+   `ComputeKeyedFileHash`. No `Blake3` in any name.
+2. `.checksums` goes to `version: 3`, and every value in it is tagged `sha256:` (file hashes,
+   both plugin hashes, the seal). The version says the file is new; the tag lets an error name
+   exactly which value is old, and matches the snapshot convention.
+3. Snapshots: new rows write `sha256:` and `secretfp_sha256:`, secret domain string `v2`.
+   Old rows stay as written. `inspect` may show one duplicate secret use across the upgrade
+   boundary (`mergeSecretUses` keys on the fingerprint): display only, accepted.
+4. DSL fingerprint and confirmation code: `sha256:` and first 5 hex of SHA-256. No migration.
+5. **Hard cut.** The new binary refuses a `version: 2` manifest at boot, reload and
+   `config check` with one error naming the fix:
+   `.checksums was written by an older ductile (BLAKE3); run 'ductile config lock' then 'ductile plugin lock --all'`.
+   No BLAKE3 verify path survives, so the dependency leaves in the same PR.
+6. **Plugins are re-authorized, never re-blessed automatically.** `config lock` on a v2 manifest
+   must not copy old plugin hashes forward (today `PreservePluginFingerprints` does, which would
+   leave every plugin mismatching). It drops them and tells the operator to run
+   `plugin lock --all`. That keeps the operator's confirmation code as the act that trusts the
+   current plugin bytes; an upgrade that silently rehashed whatever is on disk would also bless
+   a tampered plugin. The `--all` preview cannot diff across algorithms: it lists every plugin as
+   "re-hashed (sha256), no prior record to compare" instead of "changed".
+7. Open clearpass windows are invalidated (their seal no longer verifies). Check before code:
+   the closer refuses to commit on a bad seal, so confirm a v2 window cannot wedge it. The
+   v2-to-v3 `config lock` should drop clearpass records along with the fingerprints.
+8. Rollback: an old binary cannot read a v3 manifest. `config lock` already keeps a backup
+   (`config_manage.go:416`); the runbook says roll back by restoring that backup together with
+   the old binary.
+
+**Decisions for the principal**
+
+- Hard cut, as above (recommended), or keep a BLAKE3 read path for one release. The overlap
+  keeps the dependency for that release and adds a second verify path to the integrity code.
+  With three instances and a relock runbook that already exists, the cut is cheaper.
+- SemVer. An existing install refuses to boot until relocked: breaking, so a major under strict
+  SemVer. Card 145 also adds a boot refusal. Ship both in one release and choose its number once.
+
+**Out of scope, noticed:** `scopes_hash` in `docs/ARCHITECTURE.md` and `docs/CONFIG_REFERENCE.md`
+describes the retired `tokens.yaml` and nothing reads it.
+
+**Docs to update in the same PR:** AGENTS.md (3d, constraint 6), ARCHITECTURE, CONFIG_REFERENCE,
+GLOSSARY, OPERATOR_GUIDE (relock runbook gains `plugin lock --all`), SECRETS, REMOTE_EVENT_RELAY,
+`schemas/tokens.schema.json`, `skills/ductile/references/config.md`, the CLI skill template, CHANGELOG.
+
 ## Done
 
 - `go.mod` lists neither `go-chi/chi`, `zeebo/blake3`, nor `klauspost/cpuid`,
@@ -98,3 +160,4 @@ card and get it reviewed before code.
 
 - 2026-10-28: carded from the dependency survey.
 - 2026-10-28: slice 1 dropped (uuid stays via sqlite); slice 0 approved on `deps/card148.0-deadcode-tool-pin`.
+- 2026-10-28: slice 3 design note written, awaiting review.
