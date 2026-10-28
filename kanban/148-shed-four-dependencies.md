@@ -126,9 +126,10 @@ every time.
    algorithm, keeping its `enabled` flag. No `plugin lock --all` step. This trusts the plugin
    bytes on disk at upgrade time: accepted, the instances are trusted infrastructure (principal,
    2026-10-28). It prints the plugins it re-hashed.
-7. Open clearpass windows are invalidated (their seal no longer verifies). Check before code:
-   the closer refuses to commit on a bad seal, so confirm a v2 window cannot wedge it. The
-   v2-to-v3 `config lock` drops clearpass records.
+7. Open clearpass windows are invalidated; the v2-to-v3 `config lock` drops clearpass records.
+   Checked: no wedge. The closer treats a seal that does not verify as "ignored, plugin stays
+   denied" and logs it per sweep (`clearpass_closer.go:246`); it never fails hard. And the new
+   binary refuses a v2 manifest before the closer runs, so it never sees an old seal.
 8. Rollback: an old binary cannot read a v3 manifest. `config lock` already keeps a backup
    (`config_manage.go:416`); the runbook says roll back by restoring that backup together with
    the old binary.
@@ -136,8 +137,9 @@ every time.
 **Decisions for the principal**
 
 - Hard cut: **decided** (principal, 2026-10-28), with plugins re-hashed in place during the cut.
-- SemVer. An existing install refuses to boot until relocked: breaking, so a major under strict
-  SemVer. Card 145 also adds a boot refusal. Ship both in one release and choose its number once.
+- Version: **v1.1.0** (principal, 2026-10-28): no new capability, so not a major. Ships with card
+  145. The one-time relock is called out at the top of the CHANGELOG entry and in the boot error.
+  (Strict SemVer would make a boot refusal a major; the principal chose minor knowingly.)
 
 **Out of scope, noticed:** `scopes_hash` in `docs/ARCHITECTURE.md` and `docs/CONFIG_REFERENCE.md`
 describes the retired `tokens.yaml` and nothing reads it.
@@ -158,3 +160,4 @@ GLOSSARY, OPERATOR_GUIDE (upgrade note: one `config lock`), SECRETS, REMOTE_EVEN
 - 2026-10-28: carded from the dependency survey.
 - 2026-10-28: slice 1 dropped (uuid stays via sqlite); slice 0 approved on `deps/card148.0-deadcode-tool-pin`.
 - 2026-10-28: slice 3 design note written, awaiting review.
+- 2026-10-28: slice 3 design approved: hard cut, plugins re-hashed in place, ships in v1.1.0 with card 145.
