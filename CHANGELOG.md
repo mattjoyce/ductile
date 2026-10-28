@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- **Token scopes are a policy (card 145):** `internal/auth` decides what a token may do
+  through [Shearline](https://github.com/mattjoyce/shearline) v0.4.0 over the
+  [tarski](https://github.com/mattjoyce/tarski) v0.3.2 Datalog engine. Scopes are roles,
+  the old implication map is `inherits` facts, and each route asks for an action on a
+  capability (`read jobs/status/`). Three things an operator can see: a 403 now carries `why`
+  (the rule walked and the fact not found, principals named by `secret_ref`); a token holding
+  a scope no route grants fails `config check` and refuses to boot instead of silently granting
+  nothing; and the scope semantics live in one table, `internal/auth/policy.go`. Every
+  allow/deny is unchanged: a parity test holds the policy to the previous scope map on every
+  scope, every pair of scopes and every route.
 - **Integrity hashes move from BLAKE3 to SHA-256 (card 148):** `.checksums` is now version 3
   with `sha256:`-tagged values; plugin fingerprints and the clearpass seal are HMAC-SHA256 under
   the vault nonce. An existing install refuses its version 2 `.checksums` at boot with an error

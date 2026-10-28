@@ -421,11 +421,36 @@ api:
 ```
 
 ### 5.2 Token Scopes
-Scopes are explicit:
-- `*`: Full admin access.
-- `plugin:ro`, `plugin:rw`: Plugin and pipeline trigger access.
-- `jobs:ro`, `jobs:rw`: Job read/write access.
-- `events:ro`, `events:rw`: Event stream access.
+
+A scope is a role. Each API route asks the policy for an action (`read` or `write`) on a
+capability (`jobs/status/`, `plugin/invoke/`, …); the capability table in
+`internal/auth/policy.go` says which scope reaches it, and wider scopes reach it by implication.
+The policy is [Shearline](https://github.com/mattjoyce/shearline) over the
+[tarski](https://github.com/mattjoyce/tarski) engine; a refused request's 403 carries `why`
+(see API_REFERENCE § Error Codes).
+
+| Scope | Implies | Reaches |
+|---|---|---|
+| `*` | `plugin:rw`, `jobs:rw`, `events:rw`, `system:rw` | everything |
+| `plugin:rw` | `plugin:ro`, `plugin:invoke:ro` | write-class plugin commands, pipeline triggers |
+| `plugin:ro` | `plugin:catalog:ro` | catalog reads only (P2-07) |
+| `plugin:catalog:ro` | | `GET /plugin/{plugin}` |
+| `plugin:invoke:ro` | | read-class `POST /plugin/{plugin}/{command}` |
+| `jobs:rw` | `jobs:ro` | (no write routes yet; the full jobs tree) |
+| `jobs:ro` | `jobs:status:ro`, `jobs:result:ro`, `jobs:logs:ro`, `jobs:tree:ro` | back-compat super-scope (D1) |
+| `jobs:status:ro` | | `/job/{id}`, `/jobs`, `/scheduler/jobs`, `/analytics/*`, `/stopwatch/{plugin}` |
+| `jobs:result:ro` | | result, error and stderr fields of a job response |
+| `jobs:logs:ro` | | `/job-logs` |
+| `jobs:tree:ro` | | `/job/{id}/tree` |
+| `events:rw` | `events:ro` | |
+| `events:ro` | `events:meta:ro`, `events:payload:ro` | `GET /events` |
+| `events:meta:ro`, `events:payload:ro` | | reserved for per-subscriber shaping; grant nothing yet |
+| `system:rw` | `system:ro` | `POST /system/reload` |
+| `system:ro` | | `/topology`, `/config/view`, `/system/doctor`, `/system/selfcheck` |
+
+A token whose scope list names anything else fails `config check` and refuses to boot, with the
+known scopes in the error. An empty scope list authenticates but reaches only the scope-free
+discovery routes.
 
 ---
 

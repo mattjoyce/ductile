@@ -16,4 +16,4 @@ api:
 #      - secret_ref: core-api-token
 #        scopes: ["*"]
 #      - secret_ref: readonly-token
-#        scopes: ["plugin:ro", "job:ro", "state:ro"]
+#        scopes: ["plugin:ro", "jobs:ro"]   # unknown scopes fail config check

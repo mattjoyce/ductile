@@ -104,9 +104,8 @@ func (s *Server) handlePipelineTrigger(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	principal, _ := auth.PrincipalFromContext(r.Context())
-	if !auth.HasAnyScope(principal, "plugin:rw", "*") {
-		s.writeError(w, http.StatusForbidden, "insufficient scope to trigger pipeline")
+	if d := s.decide(r.Context(), auth.ActionWrite, auth.CapPipelineTrigger); !d.Allow {
+		s.writeForbidden(w, "insufficient scope to trigger pipeline", d)
 		return
 	}
 
@@ -387,15 +386,14 @@ func (s *Server) handlePluginTrigger(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	principal, _ := auth.PrincipalFromContext(r.Context())
 	cmdType, _ := plug.CommandTypeFor(commandName)
-	// P2-07: the route middleware already required plugin:invoke:ro / rw / *
-	// so a plain plugin:ro token cannot reach this handler. Write commands
-	// additionally require plugin:rw or wildcard — narrower read-only
-	// invocation tokens cannot trigger mutating commands.
+	// P2-07: the route asked the policy for read on plugin/invoke, so a plain
+	// plugin:ro token cannot reach this handler. A write-class command is the
+	// write action on the same capability, which the manifest decides and
+	// only plugin:rw (or the wildcard) holds.
 	if cmdType != plugin.CommandTypeRead {
-		if !auth.HasAnyScope(principal, "plugin:rw", "*") {
-			s.writeError(w, http.StatusForbidden, "insufficient scope")
+		if d := s.decide(r.Context(), auth.ActionWrite, auth.CapPluginInvoke); !d.Allow {
+			s.writeForbidden(w, "insufficient scope", d)
 			return
 		}
 	}
@@ -510,20 +508,13 @@ func (s *Server) handleGetJob(w http.ResponseWriter, r *http.Request) {
 // plugin produced — distinct from status/metadata fields (job_id, status,
 // timestamps, attempt count) which ride on jobs:status:ro / jobs:logs:ro.
 //
-// jobs:ro and jobs:rw imply jobs:result:ro via the auth normalize map;
-// wildcard always passes. Used by handleGetJob, handleGetJobTree, and
-// handleListJobLogs.
-func (s *Server) canSeeJobResults(p auth.Principal) bool {
-	return auth.HasAnyScope(p, "jobs:result:ro", "jobs:rw", "*")
-}
-
-// canSeeJobResultsFromCtx is a context-aware wrapper that consolidates the
-// "extract principal then ask" pattern used by three handlers. HasAnyScope
-// returns false on a zero-value Principal (empty scope map), so a missing
-// principal naturally maps to "cannot see results" — the strict default.
+// jobs:ro and jobs:rw reach jobs/result/ through the scope lattice; the
+// wildcard always passes. The field class is a capability like any other,
+// decided once per response. Used by handleGetJob, handleGetJobTree,
+// handleListJobLogs and the stopwatch sub-span path. A missing principal is
+// a deny, the strict default.
 func (s *Server) canSeeJobResultsFromCtx(ctx context.Context) bool {
-	p, _ := auth.PrincipalFromContext(ctx)
-	return s.canSeeJobResults(p)
+	return s.decide(ctx, auth.ActionRead, auth.CapJobsResult).Allow
 }
 
 var errRootBaggageClaims = errors.New("root baggage claims failed")

@@ -73,7 +73,12 @@ type PluginRegistry interface {
 type Config struct {
 	Listen string
 	// Tokens is a list of scoped bearer tokens.
-	Tokens            []auth.TokenConfig
+	Tokens []auth.TokenConfig
+	// Policy decides what each token may do. The runtime builds it from the
+	// same Tokens (auth.NewPolicy) so a token holding a scope nothing grants
+	// fails the build, not a request. When zero, New builds it from Tokens;
+	// if that fails the server keeps the zero Policy, which denies everything.
+	Policy            auth.Policy
 	MaxConcurrentSync int
 	MaxSyncTimeout    time.Duration
 	ConfigPath        string
@@ -124,6 +129,7 @@ type Server struct {
 	contextStore  EventContextStore
 	admitter      AdmissionGate
 	stopwatch     StopwatchReader
+	policy        auth.Policy
 	logger        *slog.Logger
 	server        *http.Server
 	startedAt     time.Time
@@ -157,6 +163,16 @@ func New(config Config, queue JobQueuer, registry PluginRegistry, router Pipelin
 	if config.MaxConcurrentSync <= 0 {
 		config.MaxConcurrentSync = 10
 	}
+	pol := config.Policy
+	if !pol.Loaded() {
+		var err error
+		if pol, err = auth.NewPolicy(config.Tokens); err != nil {
+			// Unreachable through the runtime, which builds the policy first
+			// and fails the boot; here the zero Policy stands and denies all.
+			logger.Error("API policy not loaded; every scoped route will refuse", "error", err)
+			pol = auth.Policy{}
+		}
+	}
 	return &Server{
 		config:        config,
 		queue:         queue,
@@ -166,6 +182,7 @@ func New(config Config, queue JobQueuer, registry PluginRegistry, router Pipelin
 		contextStore:  contextStore,
 		admitter:      admitter,
 		stopwatch:     stopwatch,
+		policy:        pol,
 		logger:        logger,
 		startedAt:     time.Now(),
 		events:        hub,
@@ -285,53 +302,41 @@ func (s *Server) setupRoutes() *chi.Mux {
 		r.Get("/.well-known/ai-plugin.json", s.handleWellKnownPlugin)
 		r.Get("/plugin/{plugin}/openapi.json", s.handleOpenAPIPlugin)
 
-		// P2-07: plugin:ro is now catalog-only. Invocation of read-class
-		// commands requires plugin:invoke:ro (or plugin:rw / *). Catalog
-		// reads accept plugin:catalog:ro (implied by both plugin:ro and
-		// plugin:rw) so existing tokens continue to discover plugins.
-		r.With(s.requireScopes("plugin:invoke:ro", "plugin:rw", "*")).Post("/plugin/{plugin}/{command}", s.handlePluginTrigger)
-		r.With(s.requireScopes("plugin:catalog:ro", "plugin:rw", "*")).Get("/plugin/{plugin}", s.handleGetPlugin)
-		// Topology surfaces operational metadata about how plugins are
-		// wired together via the compiled router routes — strictly more
-		// than plugin catalog metadata (a single plugin's manifest in
-		// isolation). Gated on system:ro alongside /config/view,
-		// /system/doctor, /system/selfcheck. Originally shipped under
-		// plugin:catalog:ro which plugin:ro implies via the P2-07
-		// normalize map; live audit caught that this gave plugin:ro
-		// tokens visibility into the full automation graph including
-		// pipeline edges, which exceeds the catalog-only intent.
-		r.With(s.requireScopes("system:ro", "system:rw", "*")).Get("/topology", s.handleTopology)
-		r.With(s.requireScopes("plugin:rw", "*")).Post("/pipeline/{pipeline}", s.handlePipelineTrigger)
-		// D1: each endpoint accepts its narrower scope as well as the back-compat
-		// super-scopes (jobs:ro / jobs:rw / wildcard). jobs:ro implies all
-		// four narrower scopes via the normalize map so existing tokens pass
-		// through unchanged. Operators who grant only a narrower scope (e.g.
-		// jobs:status:ro alone) reach the relevant endpoint and receive a
-		// shaped response — Result payloads are omitted unless they ALSO
-		// hold jobs:result:ro.
-		r.With(s.requireScopes("jobs:status:ro", "jobs:rw", "*")).Get("/job/{jobID}", s.handleGetJob)
-		r.With(s.requireScopes("jobs:tree:ro", "jobs:rw", "*")).Get("/job/{jobID}/tree", s.handleGetJobTree)
-		r.With(s.requireScopes("jobs:status:ro", "jobs:rw", "*")).Get("/jobs", s.handleListJobs)
-		r.With(s.requireScopes("jobs:logs:ro", "jobs:rw", "*")).Get("/job-logs", s.handleListJobLogs)
-		r.With(s.requireScopes("jobs:status:ro", "jobs:rw", "*")).Get("/scheduler/jobs", s.handleSchedulerJobs)
-		r.With(s.requireScopes("jobs:status:ro", "*")).Get("/analytics/summary", s.handleAnalyticsSummary)
-		r.With(s.requireScopes("jobs:status:ro", "*")).Get("/analytics/queue", s.handleQueueMetrics)
-		// Stopwatch percentile aggregation. Base latency stats need only
-		// jobs:status:ro (or its supersets); sub-span exposure via
-		// ?include_subs=true is gated INSIDE the handler on jobs:result:ro
-		// because subs_json carries plugin-supplied unvalidated content.
-		r.With(s.requireScopes("jobs:status:ro", "jobs:rw", "*")).Get("/stopwatch/{plugin}", s.handleStopwatch)
-		r.With(s.requireScopes("system:rw", "*")).Post("/system/reload", s.handleSystemReload)
-		r.With(s.requireScopes("system:ro", "system:rw", "*")).Get("/config/view", s.handleConfigView)
-		r.With(s.requireScopes("system:ro", "system:rw", "*")).Get("/system/doctor", s.handleDoctor)
-		r.With(s.requireScopes("system:ro", "system:rw", "*")).Get("/system/selfcheck", s.handleSelfcheck)
+		// Every operation route names the action and capability it asks the
+		// policy about; which scopes reach a capability is the capability
+		// table in internal/auth/policy.go, written once. A plugin command's
+		// write class is a second decision inside the handler (P2-07), and
+		// the result fields of a job response are shaped per token by a
+		// decision on jobs/result/ (D1).
+		r.With(s.require(auth.ActionRead, auth.CapPluginInvoke)).Post("/plugin/{plugin}/{command}", s.handlePluginTrigger)
+		r.With(s.require(auth.ActionRead, auth.CapPluginCatalog)).Get("/plugin/{plugin}", s.handleGetPlugin)
+		// Topology is the full automation graph, pipeline edges included,
+		// which exceeds the catalog-only intent of plugin:ro (live audit),
+		// so it is a system read alongside /config/view and /system/*.
+		r.With(s.require(auth.ActionRead, auth.CapSystemTopology)).Get("/topology", s.handleTopology)
+		r.With(s.require(auth.ActionWrite, auth.CapPipelineTrigger)).Post("/pipeline/{pipeline}", s.handlePipelineTrigger)
+		r.With(s.require(auth.ActionRead, auth.CapJobsStatus)).Get("/job/{jobID}", s.handleGetJob)
+		r.With(s.require(auth.ActionRead, auth.CapJobsTree)).Get("/job/{jobID}/tree", s.handleGetJobTree)
+		r.With(s.require(auth.ActionRead, auth.CapJobsStatus)).Get("/jobs", s.handleListJobs)
+		r.With(s.require(auth.ActionRead, auth.CapJobsLogs)).Get("/job-logs", s.handleListJobLogs)
+		r.With(s.require(auth.ActionRead, auth.CapJobsStatus)).Get("/scheduler/jobs", s.handleSchedulerJobs)
+		r.With(s.require(auth.ActionRead, auth.CapJobsStatus)).Get("/analytics/summary", s.handleAnalyticsSummary)
+		r.With(s.require(auth.ActionRead, auth.CapJobsStatus)).Get("/analytics/queue", s.handleQueueMetrics)
+		// Stopwatch percentile aggregation is a job-status read; sub-span
+		// exposure via ?include_subs=true is a jobs/result/ decision inside
+		// the handler because subs_json carries plugin-supplied content.
+		r.With(s.require(auth.ActionRead, auth.CapJobsStatus)).Get("/stopwatch/{plugin}", s.handleStopwatch)
+		r.With(s.require(auth.ActionWrite, auth.CapSystemReload)).Post("/system/reload", s.handleSystemReload)
+		r.With(s.require(auth.ActionRead, auth.CapSystemConfig)).Get("/config/view", s.handleConfigView)
+		r.With(s.require(auth.ActionRead, auth.CapSystemDoctor)).Get("/system/doctor", s.handleDoctor)
+		r.With(s.require(auth.ActionRead, auth.CapSystemSelfcheck)).Get("/system/selfcheck", s.handleSelfcheck)
 	})
 
 	// SSE endpoint — also accepts ?token= because EventSource cannot send
-	// Authorization headers. Scope check is otherwise identical.
+	// Authorization headers. The policy check is otherwise identical.
 	r.Group(func(r chi.Router) {
 		r.Use(s.authenticate(true))
-		r.With(s.requireScopes("events:ro", "events:rw", "*")).Get("/events", s.handleEvents)
+		r.With(s.require(auth.ActionRead, auth.CapEventsStream)).Get("/events", s.handleEvents)
 	})
 
 	// Vault management — gated by the vault's OWN resident admin token, not the

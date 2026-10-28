@@ -1,6 +1,6 @@
 ---
 id: 145
-status: backlog
+status: doing
 priority: Normal
 tags: [shearline, tarski, auth, explain, config-check]
 ---
@@ -80,9 +80,19 @@ the gate itself, which already works.
 **Out of this slice.** Webhook `scopes/*.json` (a second principal class) and the config-time
 questions above, which import tarski directly; the go.mod diamond resolves to one tarski.
 
-**Blocked by.** Shearline v0.2.1 tagged and visible on the proxy (`go list -m -versions`).
-Names are contract (AGENTS.md section 2): the action/capability vocabulary gets reviewed before
-code, per the design-before-typing rule.
+**Blocked by.** Was Shearline v0.2.1 on the proxy; tagged 2026-10-26 and in progress on
+`auth/card145-shearline-scopes`. Names are contract (AGENTS.md section 2): the
+action/capability vocabulary is in `internal/auth/policy.go` for review in the PR.
+
+**Built (2026-10-26).** `internal/auth/policy.go`: the lattice, the capability table,
+`NewPolicy`, `Decide`, `KnownScope`. `internal/api`: `require(action, capability)`, `decide`,
+`writeForbidden`, routes name capabilities, `ErrorResponse.Why`. `config.validate` refuses an
+unknown scope; `buildRuntime` builds the policy before the listener opens and names each
+principal by its `secret_ref`. `TestPolicy_ParityWithScopeMap` holds the policy to the old
+`normalizeScopes`/`HasAnyScope` on every scope, every pair and every route. One deviation from
+the note above: the single source is a capability table (action, capability, narrowest scope)
+and routes name a capability at registration, rather than a route table that registers routes;
+same information, and the chi registration stays readable.
 
 ## History
 

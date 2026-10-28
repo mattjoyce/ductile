@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mattjoyce/ductile/internal/auth"
 	"github.com/mattjoyce/ductile/internal/scheduleexpr"
 	"github.com/mattjoyce/ductile/internal/secrets"
 	"github.com/mattjoyce/ductile/internal/vault"
@@ -823,7 +824,17 @@ func validate(cfg *Config, hasVault bool) error {
 			}
 			// Empty scope list is valid: token authenticates but passes only
 			// scope-free endpoints (e.g. discovery). All operation endpoints
-			// require at least one matching scope via requireScopes.
+			// ask the policy, and a scope the policy cannot give meaning to is
+			// refused here so `config check` catches a typo before a restart
+			// (card 145): it used to be a scope that silently granted nothing.
+			for _, s := range tok.Scopes {
+				if strings.TrimSpace(s) == "" {
+					continue
+				}
+				if !auth.KnownScope(s) {
+					return fmt.Errorf("api.auth.tokens[%d]: unknown scope %q; known scopes: %s", i, s, strings.Join(auth.KnownScopes(), ", "))
+				}
+			}
 		}
 	}
 
