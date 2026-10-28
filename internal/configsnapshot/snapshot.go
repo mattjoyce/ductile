@@ -3,6 +3,7 @@ package configsnapshot
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
 	"encoding/json"
@@ -13,7 +14,6 @@ import (
 	"strings"
 	"time"
 
-	"crypto/sha256"
 	"github.com/google/uuid"
 	"github.com/mattjoyce/ductile/internal/config"
 	"gopkg.in/yaml.v3"

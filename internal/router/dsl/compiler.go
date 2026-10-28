@@ -1,6 +1,7 @@
 package dsl
 
 import (
+	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -8,7 +9,6 @@ import (
 	"strings"
 	"time"
 
-	"crypto/sha256"
 	"github.com/mattjoyce/ductile/internal/router/conditions"
 )
 
