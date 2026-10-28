@@ -79,6 +79,9 @@ func (realOSLookup) SudoNoPasswd(username string) (bool, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), sudoProbeTimeout)
 	defer cancel()
 
+	// #nosec G204 -- the program is the constant "sudo" and the argv is fixed; username
+	// comes from the passwd lookup of the gateway's own account uid, not from a request,
+	// and lands as one argv element after -U (no shell, so it cannot become a flag).
 	cmd := exec.CommandContext(ctx, "sudo", "-n", "-l", "-U", username)
 	cmd.Env = append(os.Environ(), "LC_ALL=C") // deterministic English error prose
 	out, runErr := cmd.CombinedOutput()
