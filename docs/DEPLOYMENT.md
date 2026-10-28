@@ -482,6 +482,16 @@ The prod Unraid instance (`192.168.20.4:8888`) is the boundary node for this net
 
 ## 8. Updating the Binary
 
+> **Privsep (enforcing) hosts use a different path.** The steps below are for the host-local
+> `--user` service. If the gateway runs as the system service `ductile` with config in
+> `/etc/ductile` (§5b), follow the *Redeploy / binary refresh* section of the
+> [privsep enforce runbook](runbooks/privsep-thinkpad-enforce.md) instead. It backs up first,
+> pre-flights the new binary against the live config, swaps with `deploy/install.sh`, and runs the
+> CLI as `sudo -u ductile`.
+>
+> **Check the release notes for a `.checksums` format change before you restart.** If there is one,
+> follow [section 8a](#8a-upgrading-across-a-checksums-format-change) instead of the steps below.
+
 When a new version is built:
 
 ```bash
