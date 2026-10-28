@@ -33,8 +33,10 @@ func (f fakeLookup) GroupNamesForUID(uid int) ([]string, error) {
 func (f fakeLookup) SudoNoPasswd(user string) (bool, error) {
 	return f.sudo[user], f.sudoErr[user]
 }
-func (f fakeLookup) WritablePathDirs(uid int) ([]string, error)   { return f.wpath[uid], f.wpathErr[uid] }
-func (f fakeLookup) WritableSetuidRoot(uid int) ([]string, error) { return f.wsetuid[uid], f.wsetuidErr[uid] }
+func (f fakeLookup) WritablePathDirs(uid int) ([]string, error) { return f.wpath[uid], f.wpathErr[uid] }
+func (f fakeLookup) WritableSetuidRoot(uid int) ([]string, error) {
+	return f.wsetuid[uid], f.wsetuidErr[uid]
+}
 
 func TestClassifySideDoor(t *testing.T) {
 	clean := sideDoorFindings{}
