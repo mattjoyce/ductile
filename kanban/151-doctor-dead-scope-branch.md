@@ -84,3 +84,14 @@ Card 145 is merged (`674d7d1`). Do the four steps in "Change" above, exactly, wi
 
 Gate: the default Go gate. Out of scope: everything outside `internal/doctor` and the docs hits.
 Do not tag, do not merge.
+
+## Review 1 (2026-10-28, approved)
+
+Round 1 commit `9d5e43b` (`or/deepseek/deepseek-v4.1-flash`, session `ses_e7df6b85bffeVyMDO2T7cDfwx2`),
+gate passed (harness). Step 1 evidence: all three `doctor.New` callers load via
+`config.LoadWithVault`, which runs `validate` at `loader.go:188`. `validateTokenScopes` is the spec
+text; `validateSingleScope` and the four tests are gone; the plugin-named-`jobs` test passes.
+Docs grep: four hits, all relay allowlists, none token scopes. Reviewer reran doctor and cmd tests
+under `-race`, goimports and golangci-lint on `internal/doctor`: clean.
+Noted, not fixed: `docs/ARCHITECTURE.md` section 9.4 still shows pre-policy scopes in a
+`scopes_file` example.
