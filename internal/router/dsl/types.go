@@ -267,7 +267,7 @@ type Pipeline struct {
 	CalledPipelines []string
 	MaxRouteDepth   int
 	CompiledRoutes  []CompiledRoute
-	Fingerprint     string // blake3:<hex> of normalized compiled form.
+	Fingerprint     string // sha256:<hex> of normalized compiled form.
 }
 
 // Set is a compiled collection of pipelines keyed by name.

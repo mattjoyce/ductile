@@ -78,7 +78,7 @@ tokens:
   - name: relay-lab-v1
     key: ${RELAY_LAB_V1_SECRET}
     scopes_file: scopes/relay-admin.json
-    scopes_hash: blake3:1111111111111111111111111111111111111111111111111111111111111111
+    scopes_hash: sha256:1111111111111111111111111111111111111111111111111111111111111111
 ```
 
 `relay-instances.yaml`
@@ -131,7 +131,7 @@ tokens:
   - name: relay-lab-v1
     key: ${RELAY_LAB_V1_SECRET}
     scopes_file: scopes/relay-admin.json
-    scopes_hash: blake3:1111111111111111111111111111111111111111111111111111111111111111
+    scopes_hash: sha256:1111111111111111111111111111111111111111111111111111111111111111
 ```
 
 `relay-ingress.yaml`

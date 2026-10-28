@@ -12,7 +12,7 @@
 ├── webhooks.yaml      [High Security] Webhook endpoints & secrets
 ├── scopes/            [High Security] Token scope definitions
 │   └── admin-cli.json
-└── .checksums         BLAKE3 hash manifest (managed by `config lock`)
+└── .checksums         SHA-256 hash manifest (managed by `config lock`)
 ```
 
 Only `config.yaml` is auto-loaded; everything else must be referenced via `include:`.
@@ -181,7 +181,7 @@ ductile config lock           # Update .checksums to authorize the new file stat
 ductile plugin lock <name>    # Re-attest the plugin's bytes (re-records its fingerprint)
 ```
 
-The `.checksums` file holds BLAKE3 hashes keyed by absolute path **and** the
+The `.checksums` file holds SHA-256 hashes keyed by absolute path **and** the
 recorded plugin fingerprints. `config lock` re-hashes the config files and
 *preserves* the plugin fingerprints; it does **not** re-attest plugin bytes — that
 is the separate `ductile plugin lock`. A plugin whose bytes changed without a

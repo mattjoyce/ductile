@@ -77,8 +77,8 @@ func TestCompileSpecsValidNestedPipeline(t *testing.T) {
 	if len(p.CalledPipelines) != 1 || p.CalledPipelines[0] != "process-audio" {
 		t.Fatalf("called pipelines = %v, want [process-audio]", p.CalledPipelines)
 	}
-	if !strings.HasPrefix(p.Fingerprint, "blake3:") {
-		t.Fatalf("fingerprint = %q, want prefix blake3:", p.Fingerprint)
+	if !strings.HasPrefix(p.Fingerprint, "sha256:") {
+		t.Fatalf("fingerprint = %q, want prefix sha256:", p.Fingerprint)
 	}
 
 	// Recompile to confirm deterministic pipeline fingerprint.

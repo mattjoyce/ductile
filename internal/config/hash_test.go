@@ -209,12 +209,12 @@ func TestWriteChecksumsAtomicOverwritesCleanly(t *testing.T) {
 	tmpDir := t.TempDir()
 	path := filepath.Join(tmpDir, ".checksums")
 
-	first := ChecksumManifest{Version: 2, GeneratedAt: "first", Hashes: map[string]string{"/a": "111"}}
+	first := ChecksumManifest{Version: 3, GeneratedAt: "first", Hashes: map[string]string{"/a": "111"}}
 	if err := writeChecksumsAtomic(path, first); err != nil {
 		t.Fatalf("first write failed: %v", err)
 	}
 
-	second := ChecksumManifest{Version: 2, GeneratedAt: "second", Hashes: map[string]string{"/a": "222"}}
+	second := ChecksumManifest{Version: 3, GeneratedAt: "second", Hashes: map[string]string{"/a": "222"}}
 	if err := writeChecksumsAtomic(path, second); err != nil {
 		t.Fatalf("second write failed: %v", err)
 	}

@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"os"
@@ -817,6 +818,50 @@ func runConfigHashUpdate(args []string) int {
 							fmt.Printf("  PRUNE [plugin] %s (no longer configured)\n", fp.Name)
 						}
 					}
+				}
+			} else if errors.Is(lerr, config.ErrChecksumsLegacy) {
+				// A version 2 manifest holds pre-SHA-256 values. Copying its plugin
+				// fingerprints forward would leave every plugin mismatching, so the
+				// one migration `config lock` performs re-hashes the plugins it
+				// recorded under SHA-256. The trusted-infrastructure bytes on disk
+				// are accepted here by design (card 148 slice 3).
+				names, nerr := config.LegacyPluginNames(dir)
+				if nerr != nil {
+					fmt.Fprintf(os.Stderr, "Failed to read legacy plugin fingerprints in %s: %v\n", dir, nerr)
+					return 1
+				}
+				resolved, rerr := resolveConfiguredPluginFingerprints(cfg, configPath)
+				if rerr != nil {
+					fmt.Fprintf(os.Stderr, "Failed to resolve configured plugins in %s: %v\n", dir, rerr)
+					return 1
+				}
+				legacy := make(map[string]bool, len(names))
+				for _, name := range names {
+					legacy[name] = true
+				}
+				var migrate []config.ResolvedPlugin
+				for _, rp := range resolved {
+					if legacy[rp.Name] {
+						migrate = append(migrate, rp)
+					}
+				}
+				if len(migrate) > 0 {
+					nonce, nerr := fingerprintNonceForConfig(dir, cfg, nil)
+					if nerr != nil {
+						fmt.Fprintf(os.Stderr, "config lock: migrating plugin fingerprints needs the vault nonce: %v\n", nerr)
+						return 1
+					}
+					fmt.Printf("Migrating .checksums in %s from BLAKE3 (version 2) to SHA-256 (version 3).\n", dir)
+					for _, rp := range migrate {
+						fp, ferr := config.ComputePluginFingerprint(rp, nonce)
+						if ferr != nil {
+							fmt.Fprintf(os.Stderr, "config lock: migrating plugin %q: %v\n", rp.Name, ferr)
+							return 1
+						}
+						fmt.Printf("  REHASH [plugin] %s (BLAKE3 -> SHA-256)\n", rp.Name)
+						preserved = append(preserved, fp)
+					}
+					sort.Slice(preserved, func(i, j int) bool { return preserved[i].Name < preserved[j].Name })
 				}
 			}
 			if err := config.GenerateChecksumsWithFingerprints(files, preserved, dryRun); err != nil {

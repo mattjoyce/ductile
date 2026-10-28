@@ -1574,7 +1574,7 @@ func contains(s, substr string) bool {
 		})()
 }
 
-// TestHashVerification tests BLAKE3 hash verification for scope files.
+// TestHashVerification tests SHA-256 hash verification for scope files.
 func TestHashVerification(t *testing.T) {
 	tmpDir := t.TempDir()
 

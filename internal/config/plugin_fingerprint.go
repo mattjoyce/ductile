@@ -22,7 +22,7 @@ type ResolvedPlugin struct {
 }
 
 // ComputePluginFingerprint reads the resolved plugin's manifest and entrypoint
-// files, hashes each with keyed BLAKE3 (using the vault fingerprint nonce), and
+// files, hashes each with HMAC-SHA256 (using the vault fingerprint nonce), and
 // returns a PluginFingerprint. Missing or unreadable files produce a hard error
 // — the operator cannot lock a plugin whose bytes cannot be read.
 //
@@ -58,11 +58,11 @@ func ComputePluginFingerprint(rp ResolvedPlugin, nonce []byte) (PluginFingerprin
 		return PluginFingerprint{}, fmt.Errorf("plugin %q: entrypoint is not executable: %s", rp.Name, entrypointResolved)
 	}
 
-	manifestHash, err := ComputeKeyedBlake3Hash(manifestResolved, nonce)
+	manifestHash, err := ComputeKeyedFileHash(manifestResolved, nonce)
 	if err != nil {
 		return PluginFingerprint{}, fmt.Errorf("plugin %q: hash manifest %s: %w", rp.Name, manifestResolved, err)
 	}
-	entrypointHash, err := ComputeKeyedBlake3Hash(entrypointResolved, nonce)
+	entrypointHash, err := ComputeKeyedFileHash(entrypointResolved, nonce)
 	if err != nil {
 		return PluginFingerprint{}, fmt.Errorf("plugin %q: hash entrypoint %s: %w", rp.Name, entrypointResolved, err)
 	}
@@ -80,8 +80,8 @@ func ComputePluginFingerprint(rp ResolvedPlugin, nonce []byte) (PluginFingerprin
 	}, nil
 }
 
-// GenerateChecksumsWithPlugins computes BLAKE3 hashes for every discovered
-// config file AND every resolved configured plugin, then writes a v2 manifest
+// GenerateChecksumsWithPlugins computes SHA-256 hashes for every discovered
+// config file AND every resolved configured plugin, then writes a v3 manifest
 // embedding plugin_fingerprints sorted by Name.
 //
 // When dryRun is true, no file is written but all hashing still runs so the

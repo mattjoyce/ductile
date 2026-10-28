@@ -620,18 +620,18 @@ type WebhookEndpoint struct {
 	MaxBodySize     string `yaml:"max_body_size"`
 }
 
-// ChecksumManifest stores BLAKE3 hashes for scope files (webhooks.yaml)
+// ChecksumManifest stores SHA-256 hashes for scope files (webhooks.yaml)
 // and plugin identity fingerprints (manifest.yaml + entrypoint bytes) for each
 // configured plugin when the operator runs `ductile config lock`.
 type ChecksumManifest struct {
 	Version            int                 `yaml:"version"`
 	GeneratedAt        string              `yaml:"generated_at"`
-	Hashes             map[string]string   `yaml:"hashes"` // filename -> BLAKE3 hash
+	Hashes             map[string]string   `yaml:"hashes"` // filename -> SHA-256 hash
 	PluginFingerprints []PluginFingerprint `yaml:"plugin_fingerprints,omitempty"`
 }
 
 // PluginFingerprint records the authorized identity of a configured plugin at
-// lock time. Manifest and entrypoint bytes are hashed with BLAKE3. Paths are
+// lock time. Manifest and entrypoint bytes are hashed with HMAC-SHA256. Paths are
 // stored post-symlink resolution (matching the plugin loader's trust policy).
 // Aliases (config `uses:` key) record the alias Name together with the base
 // plugin's paths, and Uses carries the base plugin name; non-aliases have an

@@ -66,6 +66,6 @@ Format: `<command> tier=<READ|WRITE> mut=<0|1> out=<human|json> [flags="<...>"] 
 ### Jobs & Execution
 - plugin.list tier=READ mut=0 out=human|json d="List available plugins and their commands via API."
 - plugin.run tier=WRITE mut=1 out=human|json flags="<name> [--command <c>] [--payload <json>]" d="Manually trigger a plugin command via API."
-- plugin.lock tier=WRITE mut=1 out=human flags="<name> | --all [--config <dir>]" d="Attest a plugin's bytes (keyed-BLAKE3, vault nonce). Required before it can receive vault secrets; re-verified at compose time."
+- plugin.lock tier=WRITE mut=1 out=human flags="<name> | --all [--config <dir>]" d="Attest a plugin's bytes (HMAC-SHA256, vault nonce). Required before it can receive vault secrets; re-verified at compose time."
 - job.inspect tier=READ mut=0 out=human|json flags="<job_id>" d="Retrieve logs, baggage, and execution details for a job."
 - job.logs tier=READ mut=0 out=human|json flags="[--plugin <p>] [--query <text>] [--limit <n>]" d="Query stored job logs for audit and troubleshooting."

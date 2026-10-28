@@ -287,7 +287,7 @@ emits a secret value over HTTP). There is deliberately no API route for this.
 ### Plugin attestation (secret delivery is gated)
 
 Before a plugin receives secrets it must be **attested**: `ductile plugin lock <name>`
-records a keyed-BLAKE3 fingerprint of the plugin's bytes, keyed by the vault nonce. At
+records an HMAC-SHA256 fingerprint of the plugin's bytes, keyed by the vault nonce. At
 compose time the daemon re-verifies the live plugin against that fingerprint and
 **refuses delivery (and raises a security event) on a mismatch** — so a swapped or
 tampered plugin cannot receive secrets. Attestation is decoupled from `config lock`

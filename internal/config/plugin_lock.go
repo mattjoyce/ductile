@@ -1,13 +1,12 @@
 package config
 
 import (
+	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
 	"path/filepath"
 	"sort"
 	"time"
-
-	"github.com/zeebo/blake3"
 )
 
 // FindPluginFingerprint returns the recorded fingerprint for a plugin by Name.
@@ -69,7 +68,7 @@ func MergePluginFingerprint(existing []PluginFingerprint, fp PluginFingerprint) 
 }
 
 // PluginFingerprintsCode derives the 5-character alphanumeric confirmation code
-// for `ductile plugin lock --all`. It is the first 5 hex chars of a BLAKE3 digest
+// for `ductile plugin lock --all`. It is the first 5 hex chars of a SHA-256 digest
 // over the proposed set's identity tuples (sorted by Name), so it is order-
 // independent and bound to exactly the bytes being authorized: any change to any
 // plugin's manifest/entrypoint hash yields a different code, and a stale code
@@ -79,7 +78,7 @@ func PluginFingerprintsCode(set []PluginFingerprint) string {
 	copy(sorted, set)
 	sortPluginFingerprintsByName(sorted)
 
-	h := blake3.New()
+	h := sha256.New()
 	for _, fp := range sorted {
 		// NUL-delimited so field boundaries cannot be forged by concatenation.
 		_, _ = h.Write([]byte(fp.Name + "\x00"))
@@ -156,19 +155,19 @@ func WritePluginFingerprints(configDir string, fingerprints []PluginFingerprint,
 	return writeChecksumsAtomic(filepath.Join(configDir, ".checksums"), *manifest)
 }
 
-// GenerateChecksumsWithFingerprints writes a v2 manifest embedding BLAKE3 hashes
+// GenerateChecksumsWithFingerprints writes a v3 manifest embedding SHA-256 hashes
 // for every discovered config file plus a PRECOMPUTED plugin fingerprint set. It
 // hashes no plugin bytes itself — the decoupled writer used by `config lock`
 // (which preserves the prior set) and by the commit step of `plugin lock`. The
 // fingerprint slice is written sorted by Name; an empty slice omits the section.
 func GenerateChecksumsWithFingerprints(files *ConfigFiles, fingerprints []PluginFingerprint, dryRun bool) error {
 	manifest := ChecksumManifest{
-		Version:     2,
+		Version:     3,
 		GeneratedAt: time.Now().UTC().Format(time.RFC3339),
 		Hashes:      make(map[string]string),
 	}
 	for _, path := range files.AllFiles() {
-		hash, err := ComputeBlake3Hash(path)
+		hash, err := ComputeFileHash(path)
 		if err != nil {
 			return fmt.Errorf("failed to hash %s: %w", path, err)
 		}

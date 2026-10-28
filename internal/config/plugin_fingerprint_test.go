@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-// testFPNonce returns a deterministic 32-byte nonce so keyed-BLAKE3 hashing is
+// testFPNonce returns a deterministic 32-byte nonce so HMAC-SHA256 hashing is
 // reproducible across a generate-then-verify pair within a single test.
 func testFPNonce() []byte {
 	k := make([]byte, 32)
@@ -64,8 +64,8 @@ func TestComputePluginFingerprintHappyPath(t *testing.T) {
 	if fp.ManifestResolvedPath != manifest || fp.EntrypointResolvedPath != entry {
 		t.Fatalf("unexpected resolved paths: %+v", fp)
 	}
-	if len(fp.ManifestHash) != 64 || len(fp.EntrypointHash) != 64 {
-		t.Fatalf("hashes not BLAKE3 hex (len != 64): %+v", fp)
+	if len(fp.ManifestHash) != 71 || len(fp.EntrypointHash) != 71 {
+		t.Fatalf("hashes not sha256-tagged hex (len != 71): %+v", fp)
 	}
 	if fp.ManifestHash == fp.EntrypointHash {
 		t.Fatal("manifest and entrypoint should hash differently given different bytes")

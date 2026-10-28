@@ -98,7 +98,7 @@ func TestBuildReportRendersConfigSnapshots(t *testing.T) {
 	ctx := context.Background()
 	enqueued := testSnapshot("cfg_enqueued", "startup", time.Date(2026, 4, 18, 1, 0, 0, 0, time.UTC))
 	started := testSnapshot("cfg_started", "reload", time.Date(2026, 4, 18, 2, 0, 0, 0, time.UTC))
-	started.SecretFingerprints = json.RawMessage(`[{"purpose":"webhooks.github.secret_ref","ref":"github_webhook_secret","source":"tokens.yaml","present":true,"fingerprint":"secretfp_blake3:test"}]`)
+	started.SecretFingerprints = json.RawMessage(`[{"purpose":"webhooks.github.secret_ref","ref":"github_webhook_secret","source":"tokens.yaml","present":true,"fingerprint":"secretfp_sha256:test"}]`)
 	if err := configsnapshot.Insert(ctx, db, enqueued); err != nil {
 		t.Fatalf("Insert(enqueued): %v", err)
 	}
@@ -163,14 +163,14 @@ func TestBuildReportRendersConfigSnapshots(t *testing.T) {
 }
 
 func testSnapshot(id, reason string, loadedAt time.Time) *configsnapshot.Snapshot {
-	sourceHash := "blake3:source"
+	sourceHash := "sha256:source"
 	sourcePath := "/tmp/config.yaml"
 	source := "explicit"
 	version := "test-version"
 	binaryPath := "/tmp/ductile"
 	return &configsnapshot.Snapshot{
 		ID:                 id,
-		ConfigHash:         "blake3:" + id,
+		ConfigHash:         "sha256:" + id,
 		SourceHash:         &sourceHash,
 		SourcePath:         &sourcePath,
 		Source:             &source,

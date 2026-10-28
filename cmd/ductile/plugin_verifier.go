@@ -62,7 +62,7 @@ func newPluginIdentityVerifier(registry *plugin.Registry, configDir string, nonc
 }
 
 // VerifyIdentity implements dispatch.PluginVerifier. Compose-time re-hashing
-// (LoadChecksums + two keyed-BLAKE3 file hashes) is a per-spawn cost on the hot
+// (LoadChecksums + two HMAC-SHA256 file hashes) is a per-spawn cost on the hot
 // dispatch path; a debug-level timing line makes it observable rather than
 // inferred, with no overhead at normal verbosity.
 func (v *pluginIdentityVerifier) VerifyIdentity(name string) (err error) {

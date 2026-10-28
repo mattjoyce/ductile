@@ -162,7 +162,7 @@ These are non-negotiable without explicit redesign:
    acceptable at this scale.
 5. **HMAC mandatory** — all webhook endpoints require HMAC-SHA256.
 6. **Integrity on high-security files** — `tokens.yaml`, `webhooks.yaml`,
-   `scopes/*.json` must pass BLAKE3 check or the system refuses to start.
+   `scopes/*.json` must pass SHA-256 check or the system refuses to start.
    Always run `ductile config lock` after editing these files.
 
 ---

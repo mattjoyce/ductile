@@ -178,7 +178,7 @@ Binding a secret-receiving plugin to its exact bytes. A plugin must be attested 
 
 ## Fingerprint
 
-The keyed hash (keyed-BLAKE3 over a plugin's manifest + entrypoint bytes, keyed by the `core` nonce) that `plugin lock` records and the core re-checks at spawn. Editing manifest or entrypoint changes the fingerprint and requires re-attestation.
+The keyed hash (HMAC-SHA256 over a plugin's manifest + entrypoint bytes, keyed by the `core` nonce) that `plugin lock` records and the core re-checks at spawn. Editing manifest or entrypoint changes the fingerprint and requires re-attestation.
 
 ## Nonce
 
@@ -192,7 +192,7 @@ The explicit act (`ductile plugin lock <name>`) that attests a plugin's bytes by
 
 An operator's bounded pre-authorisation to change one attested plugin
 (`ductile plugin clearpass <name> --for 2h`). Recorded in `.checksums` beside the fingerprint it
-relaxes and **sealed under the vault nonce** (keyed-BLAKE3 over the plugin name, the recorded hashes
+relaxes and **sealed under the vault nonce** (HMAC-SHA256 over the plugin name, the recorded hashes
 and the window), so opening one needs the vault like Plugin lock does and an unsealed or edited record
 is ignored. Inside the window a fingerprint mismatch at spawn is **accepted and reported** (a WARN with
 both hashes, a `plugin.clearpass_spawn` event, a `clearpass_spawn` audit row), not escalated. At the

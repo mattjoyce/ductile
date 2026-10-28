@@ -388,7 +388,7 @@ See card #36 (Manifest Command Type Metadata).
 - Plugins run as the same OS user as the core. Use systemd `User=ductile` to limit blast radius.
 
 **Secret delivery is gated by attestation.** A plugin receives no secrets until it is *attested*:
-`ductile plugin lock` records a keyed fingerprint (keyed-BLAKE3 over the plugin's manifest and entrypoint
+`ductile plugin lock` records a keyed fingerprint (HMAC-SHA256 over the plugin's manifest and entrypoint
 bytes, keyed by the vault's `core` nonce). At spawn the core re-verifies that fingerprint; a mismatch is a
 **security event** — a possible binary swap — not a quiet denial: the job fails closed and the mismatch is
 escalated. Editing the manifest or entrypoint breaks the fingerprint and demands re-attestation. This is
@@ -765,7 +765,7 @@ Retrieves the status and results of a previously triggered job.
 **Token registry** (`tokens.yaml`):
 - Multiple tokens with individual scope definitions
 - Each token references a scope file (JSON)
-- BLAKE3 hash ensures scope file integrity
+- SHA-256 hash ensures scope file integrity
 - Environment variable references for keys (never plaintext)
 
 **Scope types (current):**
@@ -780,12 +780,12 @@ tokens:
   - name: admin-cli
     key: ${ADMIN_API_KEY}
     scopes_file: scopes/admin-cli.json
-    scopes_hash: blake3:a3f8c2d9...
+    scopes_hash: sha256:a3f8c2d9...
 
   - name: github-integration
     key: ${GITHUB_API_KEY}
     scopes_file: scopes/github-integration.json
-    scopes_hash: blake3:b4e9d3c0...
+    scopes_hash: sha256:b4e9d3c0...
 ```
 
 **Example scope file (scopes/github-integration.json):**
@@ -803,7 +803,7 @@ tokens:
 **Authorization middleware:**
 1. Extract bearer token from `Authorization` header
 2. Lookup token in registry
-3. Load and verify scope file (BLAKE3 hash check)
+3. Load and verify scope file (SHA-256 hash check)
 4. Normalize implied read-from-write scopes
 5. Check if requested action matches any granted scope
 6. Return 403 if denied, proceed if allowed
@@ -1110,7 +1110,7 @@ For the complete configuration specification, including file formats, merge logi
 - **Include-Based Modularity:** Configuration is loaded from `config.yaml` plus any files or directories listed in `include:`.
 - **Multi-Root Plugin Discovery:** `plugin_roots` is the source of truth; roots are scanned in order and first match wins on duplicate plugin names.
 - **Pipeline Discovery Flow:** Pipelines are loaded from included YAML files (or include directories) that define `pipelines:` entries.
-- **Tiered Integrity:** High-security files (auth/webhooks) require a valid BLAKE3 hash in `.checksums` to start. Operational files (settings/routes) log warnings if hashes are missing or mismatched.
+- **Tiered Integrity:** High-security files (auth/webhooks) require a valid SHA-256 hash in `.checksums` to start. Operational files (settings/routes) log warnings if hashes are missing or mismatched.
 - **Monolithic Grafting:** At runtime, all included files are merged into a single internal configuration object following strict precedence rules (later entries override earlier ones).
 - **Environment Interpolation:** Secrets are injected via `${VAR}` placeholders, which are interpolated after hash verification but before parsing.
 - **Default Permissions:** Config directories are created with `0700`. Config files and lock files default to `0600`; operators may relax permissions explicitly for shared environments.
