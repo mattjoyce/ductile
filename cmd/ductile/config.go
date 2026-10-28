@@ -696,6 +696,11 @@ func runConfigCheck(args []string) int {
 	}
 
 	result := doc.Validate()
+	// Readability BEFORE integrity, deliberately. An unreadable .checksums makes
+	// the integrity check fail with a manifest error, and the operator goes to look
+	// at the manifest — which is fine. The permission problem underneath it is the
+	// one worth reporting first (#179).
+	appendReadabilityFindings(result, cfg, configPath)
 	appendIntegrityFindings(result, cfg, configPath)
 
 	switch format {
@@ -865,6 +870,75 @@ func runConfigHashUpdate(args []string) int {
 	}
 
 	return 0
+}
+
+// appendReadabilityFindings answers the question nothing in the tree asked (#179):
+// can the account that has to open these files actually open them?
+//
+// Every defect in the #167 sweep — #167, #169, #170, #171 — was a file that
+// existed, parsed, and hashed correctly, and simply could not be opened by the
+// gateway account. Existence and content were checked; readability was inferred.
+// The operator's first warning was a daemon that would not start, with a message
+// about the wrong thing.
+//
+// The write-side fixes each close one route to a wrong-owned file, and that list
+// has to be maintained forever. This closes the consequence of all of them at once,
+// including routes nobody has thought of: a hand-edited file, a restored backup, a
+// botched migration, a future writer that forgets to negotiate. It does not care
+// how the file came to be wrong, which is what makes it durable.
+//
+// These are errors rather than warnings because an unopenable artifact is not a
+// matter of taste — the gateway will fail on it. `config check ... # MUST be clean`
+// is the pre-flight gate in docs/runbooks/privsep-thinkpad-enforce.md, and it has
+// to mean this.
+func appendReadabilityFindings(result *doctor.Result, cfg *config.Config, configPath string) {
+	if result == nil || cfg == nil {
+		return
+	}
+	configDir := resolveConfigDir(configPath)
+	// Ask on behalf of the gateway account, NOT the process running the check.
+	// `config check` is routinely run under sudo, and root can open anything — so
+	// asking "can I open this?" would report clean on precisely the boxes that will
+	// not boot, which is #167's own failure mode moved one layer up.
+	gateway := config.GatewayAccount(configDir)
+	// A clean result proves nothing when the account we evaluated as is root,
+	// because root bypasses the permission model entirely. That is not a corner
+	// case: `/etc/ductile` owned root:ductile mode 0750 is ordinary distro
+	// packaging, and an Ansible `file` task defaults to root:root. On those hosts
+	// every finding silently disappears — the check reports clean and is believed,
+	// which is precisely the failure this whole family is about. Say so out loud
+	// rather than pass quietly.
+	if gateway.UID == 0 {
+		result.Warnings = append(result.Warnings, doctor.Issue{
+			Category: "readability",
+			Field:    configDir,
+			Message: fmt.Sprintf(
+				"readability was evaluated as %s: root bypasses file permissions, so a clean result here does not prove the service account can open these files — chown %s to the account the gateway runs as, or run this check as that account",
+				gateway, configDir),
+		})
+	}
+	for _, f := range config.CheckReadability(config.ServiceReadArtifacts(configDir, cfg, gateway)) {
+		// A POSIX ACL can grant exactly the access the mode bits deny — it is the
+		// standard fix for a privileged writer and a limited reader, which is
+		// ductile's own shape. Where one is present the mode bits cannot decide, and
+		// a hard error would fail a `config check` that gates a deploy on an install
+		// that boots perfectly. Say what is unknown instead of guessing.
+		if f.Indeterminate {
+			result.Warnings = append(result.Warnings, doctor.Issue{
+				Category: "readability",
+				Field:    f.Path,
+				Message: fmt.Sprintf("%s may be unreadable by the %s account (%s), but an ACL on the path may grant access the permission bits deny — confirm by running this check as that account",
+					f.Role, f.Account, f.Detail),
+			})
+			continue
+		}
+		result.Valid = false
+		result.Errors = append(result.Errors, doctor.Issue{
+			Category: "readability",
+			Field:    f.Path,
+			Message:  fmt.Sprintf("%s unreadable by the %s account: %s", f.Role, f.Account, f.Detail),
+		})
+	}
 }
 
 // appendIntegrityFindings gives `config check` the half of boot admission it was
