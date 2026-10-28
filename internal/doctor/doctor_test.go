@@ -157,65 +157,29 @@ func TestValidate_UsesIndirectCycle(t *testing.T) {
 	assertHasError(t, r, "plugin_refs", "circular")
 }
 
-func TestValidate_TokenScopeValidPlugin(t *testing.T) {
+// TestValidate_TokenScopePluginNamedLikeResource pins the latent bug closed: a
+// plugin actually named "jobs" must not be consulted by doctor's scope check. A
+// resource-named scope like jobs:status:ro is the token policy's business (it is
+// settled in config.validate before doctor runs), never a plugin command lookup.
+func TestValidate_TokenScopePluginNamedLikeResource(t *testing.T) {
 	t.Parallel()
 	cfg := validConfig()
 	cfg.API.Enabled = true
 	cfg.API.Listen = "localhost:8080"
 	cfg.API.Auth.Tokens = []config.APIToken{
-		{Token: "test-key", Scopes: []string{"echo:ro"}},
+		{Token: "test-key", Scopes: []string{"jobs:status:ro"}},
 	}
-	d := New(cfg, registryWith(echoPlugin()))
+	jobsPlugin := echoPlugin()
+	jobsPlugin.Name = "jobs"
+	d := New(cfg, registryWith(echoPlugin(), jobsPlugin))
 	r := d.Validate()
 	if !r.Valid {
-		t.Fatalf("expected valid, got: %v", r.Errors)
+		t.Fatalf("expected valid, got errors: %v", r.Errors)
 	}
-}
-
-func TestValidate_TokenScopeUnknownPlugin(t *testing.T) {
-	t.Parallel()
-	cfg := validConfig()
-	cfg.API.Enabled = true
-	cfg.API.Listen = "localhost:8080"
-	cfg.API.Auth.Tokens = []config.APIToken{
-		{Token: "test-key", Scopes: []string{"nonexistent:ro"}},
-	}
-	d := New(cfg, registryWith(echoPlugin()))
-	r := d.Validate()
-	if r.Valid {
-		t.Fatal("expected invalid")
-	}
-	assertHasError(t, r, "token_scopes", "nonexistent")
-}
-
-func TestValidate_TokenScopeInvalidCommand(t *testing.T) {
-	t.Parallel()
-	cfg := validConfig()
-	cfg.API.Enabled = true
-	cfg.API.Listen = "localhost:8080"
-	cfg.API.Auth.Tokens = []config.APIToken{
-		{Token: "test-key", Scopes: []string{"echo:allow:bogus"}},
-	}
-	d := New(cfg, registryWith(echoPlugin()))
-	r := d.Validate()
-	if r.Valid {
-		t.Fatal("expected invalid")
-	}
-	assertHasError(t, r, "token_scopes", "bogus")
-}
-
-func TestValidate_TokenScopeLowLevel(t *testing.T) {
-	t.Parallel()
-	cfg := validConfig()
-	cfg.API.Enabled = true
-	cfg.API.Listen = "localhost:8080"
-	cfg.API.Auth.Tokens = []config.APIToken{
-		{Token: "test-key", Scopes: []string{"read:jobs", "trigger:echo:poll", "admin:*"}},
-	}
-	d := New(cfg, registryWith(echoPlugin()))
-	r := d.Validate()
-	if !r.Valid {
-		t.Fatalf("expected valid, got: %v", r.Errors)
+	for _, e := range r.Errors {
+		if e.Category == "token_scopes" {
+			t.Fatalf("did not expect a token_scopes error, got: %v", e)
+		}
 	}
 }
 
