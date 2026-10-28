@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- **Integrity hashes move from BLAKE3 to SHA-256 (card 148):** `.checksums` is now version 3
+  with `sha256:`-tagged values; plugin fingerprints and the clearpass seal are HMAC-SHA256 under
+  the vault nonce. An existing install refuses its version 2 `.checksums` at boot with an error
+  naming the fix: run `ductile config lock` once, which re-hashes config files and every recorded
+  plugin. Open clearpass windows are dropped. Drops `github.com/zeebo/blake3` and
+  `github.com/klauspost/cpuid/v2`.
 - **Chore:** drop the `tool` directive for deadcode; run it pinned with `go run` (see CONTRIBUTING.md). `go.mod` no longer pulls `x/tools`, `x/mod`, `x/sync` or `x/telemetry`.
 
 ## 2026-06-30 — v1.0.1

@@ -56,10 +56,10 @@ func TestBuildRedactsSecretsAndHashesSecretChanges(t *testing.T) {
 	if !strings.Contains(string(first.SanitizedConfig), "[redacted:api.auth.tokens[0].token]") {
 		t.Fatalf("sanitized config did not redact API token: %s", first.SanitizedConfig)
 	}
-	if !strings.HasPrefix(first.ConfigHash, "blake3:") {
+	if !strings.HasPrefix(first.ConfigHash, "sha256:") {
 		t.Fatalf("ConfigHash = %q", first.ConfigHash)
 	}
-	if first.SourceHash == nil || !strings.HasPrefix(*first.SourceHash, "blake3:") {
+	if first.SourceHash == nil || !strings.HasPrefix(*first.SourceHash, "sha256:") {
 		t.Fatalf("SourceHash = %v", first.SourceHash)
 	}
 

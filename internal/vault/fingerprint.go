@@ -5,7 +5,7 @@ import (
 	"fmt"
 )
 
-// FingerprintNonce returns the 32-byte keying material for keyed-BLAKE3 plugin
+// FingerprintNonce returns the 32-byte keying material for HMAC-SHA256 plugin
 // attestation. The nonce is held on the reserved `core` principal, seeded at
 // genesis, and never delivered to a plugin.
 //

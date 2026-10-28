@@ -64,7 +64,7 @@ func VerifyIntegrity(configDir string, files *ConfigFiles) (*IntegrityResult, er
 			continue
 		}
 
-		actualHash, err := ComputeBlake3Hash(path)
+		actualHash, err := ComputeFileHash(path)
 		if err != nil {
 			msg := fmt.Sprintf("failed to hash %s: %v", path, err)
 			if tier == TierHighSecurity {

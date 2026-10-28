@@ -192,7 +192,11 @@ Use the `config` noun for surgical administration:
 -   **Set a value safely:** `ductile config set plugins.echo.enabled=false --apply`.
 
 ### Operational Integrity (Lock & Check)
-To prevent unauthorized modifications to sensitive files (like `tokens.yaml` or `webhooks.yaml`), Ductile uses **BLAKE3** hash verification. For webhook setup and signing examples, see [WEBHOOKS.md](WEBHOOKS.md).
+To prevent unauthorized modifications to sensitive files (like `tokens.yaml` or `webhooks.yaml`), Ductile uses **SHA-256** hash verification. For webhook setup and signing examples, see [WEBHOOKS.md](WEBHOOKS.md).
+
+Upgrading from a release that used BLAKE3: the gateway refuses the old `.checksums` (version 2)
+and names the fix. Run `ductile config lock` once; it re-hashes the config files and every
+recorded plugin under SHA-256 and drops any open clearpass window.
 
 1.  **Authorize changes:** After editing config files, update the hashes:
     ```bash

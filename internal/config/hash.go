@@ -1,15 +1,22 @@
 package config
 
 import (
+	"crypto/hmac"
+	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"time"
 
-	"github.com/zeebo/blake3"
 	"gopkg.in/yaml.v3"
 )
+
+// ErrChecksumsLegacy marks a .checksums manifest written by an older ductile
+// (version 2, BLAKE3). It is refused; one 'ductile config lock' migrates it.
+var ErrChecksumsLegacy = errors.New("checksums were written by an older ductile (BLAKE3, version 2); run 'ductile config lock' to re-lock under SHA-256")
 
 // HashUpdateFileResult captures checksum generation outcome for a scope file.
 type HashUpdateFileResult struct {
@@ -27,25 +34,25 @@ type HashUpdateReport struct {
 	Files        []HashUpdateFileResult
 }
 
-// ComputeBlake3Hash computes the BLAKE3 hash of a file.
-func ComputeBlake3Hash(filePath string) (string, error) {
+// ComputeFileHash returns the SHA-256 of a file as "sha256:<hex>".
+func ComputeFileHash(filePath string) (string, error) {
 	// #nosec G304 -- config paths are operator-controlled local inputs.
 	data, err := os.ReadFile(filePath)
 	if err != nil {
 		return "", fmt.Errorf("failed to read file: %w", err)
 	}
 
-	hash := blake3.Sum256(data)
-	return hex.EncodeToString(hash[:]), nil
+	hash := sha256.Sum256(data)
+	return "sha256:" + hex.EncodeToString(hash[:]), nil
 }
 
-// ComputeKeyedBlake3Hash computes the keyed BLAKE3 hash of a file using a
+// ComputeKeyedFileHash computes the HMAC-SHA256 of a file using a
 // 32-byte key — the vault fingerprint nonce. Keyed hashing makes a plugin
 // fingerprint unforgeable without the key: an attacker who cannot read the
 // vault cannot produce a matching .checksums entry (closes ADR Threat B for a
 // non-key-holder). The key MUST be exactly 32 bytes; a wrong-length key is a
 // hard error rather than a silent fall-through to an unkeyed digest.
-func ComputeKeyedBlake3Hash(filePath string, key []byte) (string, error) {
+func ComputeKeyedFileHash(filePath string, key []byte) (string, error) {
 	if len(key) != 32 {
 		return "", fmt.Errorf("keyed hash: key must be 32 bytes, got %d", len(key))
 	}
@@ -54,17 +61,14 @@ func ComputeKeyedBlake3Hash(filePath string, key []byte) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("failed to read file: %w", err)
 	}
-	h, err := blake3.NewKeyed(key)
-	if err != nil {
-		return "", fmt.Errorf("keyed hash: %w", err)
-	}
+	h := hmac.New(sha256.New, key)
 	_, _ = h.Write(data)
-	return hex.EncodeToString(h.Sum(nil)), nil
+	return "sha256:" + hex.EncodeToString(h.Sum(nil)), nil
 }
 
-// VerifyFileHash verifies a file against an expected BLAKE3 hash.
+// VerifyFileHash verifies a file against an expected SHA-256 hash.
 func VerifyFileHash(filePath, expectedHash string) error {
-	actualHash, err := ComputeBlake3Hash(filePath)
+	actualHash, err := ComputeFileHash(filePath)
 	if err != nil {
 		return fmt.Errorf("failed to compute hash: %w", err)
 	}
@@ -79,10 +83,10 @@ func VerifyFileHash(filePath, expectedHash string) error {
 
 // GenerateChecksumsWithReport computes scope file hashes and optionally writes .checksums.
 // When dryRun is true, it computes hashes and returns report details without writing files.
-// Writes v2 manifests with absolute path keys.
+// Writes v3 manifests with absolute path keys.
 func GenerateChecksumsWithReport(configDir string, scopeFiles []string, dryRun bool) (*HashUpdateReport, error) {
 	manifest := ChecksumManifest{
-		Version:     2,
+		Version:     3,
 		GeneratedAt: time.Now().UTC().Format(time.RFC3339),
 		Hashes:      make(map[string]string),
 	}
@@ -114,7 +118,7 @@ func GenerateChecksumsWithReport(configDir string, scopeFiles []string, dryRun b
 			continue
 		}
 
-		hash, err := ComputeBlake3Hash(filePath)
+		hash, err := ComputeFileHash(filePath)
 		if err != nil {
 			return nil, fmt.Errorf("failed to hash %s: %w", filename, err)
 		}
@@ -156,7 +160,8 @@ func writeChecksumsAtomic(path string, manifest ChecksumManifest) error {
 }
 
 // LoadChecksums reads the .checksums file from a config directory.
-// Only v2 manifests (absolute path keys) are supported.
+// Only v3 manifests (absolute path keys, SHA-256 values) are supported; a v2
+// manifest is refused with ErrChecksumsLegacy so one `config lock` can migrate it.
 func LoadChecksums(configDir string) (*ChecksumManifest, error) {
 	checksumPath := filepath.Join(configDir, ".checksums")
 
@@ -177,24 +182,55 @@ func LoadChecksums(configDir string) (*ChecksumManifest, error) {
 		return nil, fmt.Errorf("failed to parse checksums: %w", err)
 	}
 
-	if manifest.Version != 2 {
+	if manifest.Version == 2 {
+		return nil, fmt.Errorf("%s: %w", checksumPath, ErrChecksumsLegacy)
+	}
+	if manifest.Version != 3 {
 		return nil, fmt.Errorf("unsupported checksums version: %d", manifest.Version)
 	}
 
 	return &manifest, nil
 }
 
-// GenerateChecksumsFromDiscovery computes BLAKE3 hashes for all discovered files
-// and writes a v2 manifest with absolute path keys.
+// LegacyPluginNames returns the plugin names recorded in a version 2 .checksums
+// manifest, sorted. It exists only for the `config lock` migration: a version 3
+// manifest is not legacy and is refused.
+func LegacyPluginNames(configDir string) ([]string, error) {
+	checksumPath := filepath.Join(configDir, ".checksums")
+
+	// #nosec G304 -- config paths are operator-controlled local inputs.
+	data, err := os.ReadFile(checksumPath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read checksums: %w", err)
+	}
+
+	var manifest ChecksumManifest
+	if err := yaml.Unmarshal(data, &manifest); err != nil {
+		return nil, fmt.Errorf("failed to parse checksums: %w", err)
+	}
+	if manifest.Version != 2 {
+		return nil, fmt.Errorf("%s: not a legacy version 2 checksums manifest (got version %d)", checksumPath, manifest.Version)
+	}
+
+	names := make([]string, 0, len(manifest.PluginFingerprints))
+	for _, fp := range manifest.PluginFingerprints {
+		names = append(names, fp.Name)
+	}
+	sort.Strings(names)
+	return names, nil
+}
+
+// GenerateChecksumsFromDiscovery computes SHA-256 hashes for all discovered files
+// and writes a v3 manifest with absolute path keys.
 func GenerateChecksumsFromDiscovery(files *ConfigFiles, dryRun bool) error {
 	manifest := ChecksumManifest{
-		Version:     2,
+		Version:     3,
 		GeneratedAt: time.Now().UTC().Format(time.RFC3339),
 		Hashes:      make(map[string]string),
 	}
 
 	for _, path := range files.AllFiles() {
-		hash, err := ComputeBlake3Hash(path)
+		hash, err := ComputeFileHash(path)
 		if err != nil {
 			return fmt.Errorf("failed to hash %s: %w", path, err)
 		}

@@ -8,8 +8,8 @@ import (
 	"strings"
 	"time"
 
+	"crypto/sha256"
 	"github.com/mattjoyce/ductile/internal/router/conditions"
-	"github.com/zeebo/blake3"
 )
 
 // CompileSpecs compiles pipeline DSL definitions into validated DAGs.
@@ -786,8 +786,8 @@ func fingerprintPipeline(p *Pipeline) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("marshal pipeline fingerprint input: %w", err)
 	}
-	sum := blake3.Sum256(body)
-	return "blake3:" + hex.EncodeToString(sum[:]), nil
+	sum := sha256.Sum256(body)
+	return "sha256:" + hex.EncodeToString(sum[:]), nil
 }
 
 func sortEdges(edges []Edge) {

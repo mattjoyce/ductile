@@ -28,7 +28,7 @@
           },
           "scopes_hash": {
             "type": "string",
-            "description": "BLAKE3 hash of the scopes file for integrity verification."
+            "description": "SHA-256 hash of the scopes file for integrity verification."
           },
           "created_at": {
             "type": "string",

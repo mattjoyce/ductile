@@ -13,9 +13,9 @@ import (
 	"strings"
 	"time"
 
+	"crypto/sha256"
 	"github.com/google/uuid"
 	"github.com/mattjoyce/ductile/internal/config"
-	"github.com/zeebo/blake3"
 	"gopkg.in/yaml.v3"
 )
 
@@ -483,8 +483,8 @@ func secretUsePresent(purpose, ref, source, value string, present bool) SecretUs
 }
 
 func secretFingerprint(purpose, value string) string {
-	sum := blake3.Sum256([]byte("ductile config secret fingerprint v1\x00" + purpose + "\x00" + value))
-	return "secretfp_blake3:" + hex.EncodeToString(sum[:])
+	sum := sha256.Sum256([]byte("ductile config secret fingerprint v2\x00" + purpose + "\x00" + value))
+	return "secretfp_sha256:" + hex.EncodeToString(sum[:])
 }
 
 func currentSemantics() map[string]any {
@@ -507,7 +507,7 @@ func sourceHash(sourceFiles map[string]*yaml.Node) (string, error) {
 		return "", nil
 	}
 	sort.Strings(paths)
-	hasher := blake3.New()
+	hasher := sha256.New()
 	for _, path := range paths {
 		cleaned := filepath.Clean(path)
 		// #nosec G304 -- config source paths are operator-controlled local inputs.
@@ -520,7 +520,7 @@ func sourceHash(sourceFiles map[string]*yaml.Node) (string, error) {
 		_, _ = hasher.Write(data)
 		_, _ = hasher.Write([]byte{0})
 	}
-	return "blake3:" + hex.EncodeToString(hasher.Sum(nil)), nil
+	return "sha256:" + hex.EncodeToString(hasher.Sum(nil)), nil
 }
 
 func hashCanonical(value any) (string, error) {
@@ -528,8 +528,8 @@ func hashCanonical(value any) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	sum := blake3.Sum256(data)
-	return "blake3:" + hex.EncodeToString(sum[:]), nil
+	sum := sha256.Sum256(data)
+	return "sha256:" + hex.EncodeToString(sum[:]), nil
 }
 
 func canonicalJSON(value any) ([]byte, error) {

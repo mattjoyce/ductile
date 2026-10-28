@@ -38,7 +38,7 @@ Before starting, the system verifies all files against a monolithic `.checksums`
 | **Operational** | `config.yaml`, `routes.yaml`, `relay-instances.yaml`, `relay-ingress.yaml` | **Warn & Continue**: Logs a warning but loads the file (Unless `service.admission.fail_on_drift: true` is set, in which case it is a **Hard Fail**). |
 
 ### 2.1 The Seal (`.checksums`)
-The `.checksums` file is a YAML manifest containing BLAKE3 hashes indexed by the **absolute path** of every authorized file.
+The `.checksums` file is a YAML manifest containing SHA-256 hashes indexed by the **absolute path** of every authorized file.
 - **System Lock-in**: Moving the configuration directory breaks the seal.
 - **Authorization**: The `ductile config lock` command is the only way to update the manifest.
 
@@ -316,7 +316,7 @@ tokens:
   - name: admin-cli
     key: ${ADMIN_API_KEY}
     scopes_file: scopes/admin-cli.json
-    scopes_hash: blake3:a3f8c2d9...
+    scopes_hash: sha256:a3f8c2d9...
 ```
 
 ---
