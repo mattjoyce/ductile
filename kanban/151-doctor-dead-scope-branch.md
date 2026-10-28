@@ -46,3 +46,41 @@ depends_on: [145]
 ## History
 
 - 2026-10-28: carded from the card 145 policy-name review.
+
+## Build spec (2026-10-28, for opencode)
+
+Card 145 is merged (`674d7d1`). Do the four steps in "Change" above, exactly, with these details:
+
+- Step 1 evidence: in your summary, name for each of the three `doctor.New` callers the load
+  function it uses and the line in `internal/config/loader.go` where that path calls `validate`.
+- Step 2: `validateTokenScopes` becomes, in full:
+  ```go
+  // validateTokenScopes warns on a reserved scope. Every other scope question is
+  // settled before doctor runs: config.validate refuses a scope the token policy
+  // does not know.
+  func (d *Doctor) validateTokenScopes(r *Result) {
+  	for i, token := range d.cfg.API.Auth.Tokens {
+  		for j, scope := range token.Scopes {
+  			if parent, reserved := auth.ReservedScope(scope); reserved {
+  				field := fmt.Sprintf("api.auth.tokens[%d].scopes[%d]", i, j)
+  				d.addWarning(r, "token_scopes", field,
+  					fmt.Sprintf("scope %q is reserved and grants nothing yet; use %s", scope, parent))
+  			}
+  		}
+  	}
+  }
+  ```
+  Delete `validateSingleScope`. Remove any import that becomes unused.
+- Step 2 tests to delete: `TestValidate_TokenScopeValidPlugin`, `TestValidate_TokenScopeUnknownPlugin`,
+  `TestValidate_TokenScopeInvalidCommand`, `TestValidate_TokenScopeLowLevel`. Keep
+  `TestValidate_TokenScopeReservedWarns`. If deleting a test leaves a helper unused, delete it.
+- Step 3 test name: `TestValidate_TokenScopePluginNamedLikeResource`: register a plugin named `jobs`
+  (build it the way `echoPlugin()` is built, with name `jobs`), token scopes `["jobs:status:ro"]`,
+  assert `r.Valid` and no `token_scopes` error.
+- Step 4: `git grep -n -E 'allow:|deny:|:allow|:deny' -- docs skills cmd/ductile/templates` and fix
+  only text that documents token scopes; leave anything about other features alone. List each hit
+  and what you did with it.
+- CHANGELOG: none (the release entry is written separately).
+
+Gate: the default Go gate. Out of scope: everything outside `internal/doctor` and the docs hits.
+Do not tag, do not merge.
