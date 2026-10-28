@@ -81,6 +81,7 @@ func createTestPlugin(t *testing.T, pluginsDir, name, script string) *plugin.Plu
 
 func createTestPluginWithManifestExtra(t *testing.T, pluginsDir, name, script, manifestExtra string) *plugin.Plugin {
 	t.Helper()
+	requireScriptInterpreter(t, script)
 
 	pluginDir := filepath.Join(pluginsDir, name)
 	if err := os.MkdirAll(pluginDir, 0755); err != nil {

@@ -46,22 +46,19 @@ To preserve velocity, the fast inner loop should **not require Docker** and shou
 
 ### Environment requirements for the fast suite
 
-`go test ./...` is mostly hermetic, but a few packages couple to the host environment.
-Run the fast suite as a **non-root user** with **`bash` and `python3` on `PATH`**:
+`go test ./...` is mostly hermetic. The few tests that depend on the host state that
+dependence in code and skip, naming the assumption, when the host does not meet it. A skip
+is never a pass: for full coverage run as a **non-root user** with **`bash` and `python3`
+on `PATH`**.
 
-- Some `internal/vault` tests force a persist failure with `chmod 0500` on a directory
-  and assert the write is rejected. **root bypasses file permissions**, so the injected
-  failure never fires under root. This precondition is now enforced *in code*:
-  `requireWritablePermsEnforced` (`internal/vault/preconditions_test.go`) `t.Skip`s these
-  tests under euid 0 with the assumption named — so root sees an explicit skip, not a
-  false "expected a save failure". (A skip is never a pass; run as non-root for coverage.)
-- The `internal/e2e` and `internal/dispatch` plugin-spawn tests exec real plugin
-  entrypoints, which need `bash` (and `python3` for the `sys_exec`/python plugins).
-  Without them you get `env: can't execute 'bash'` and spurious failures.
+- `requireWritablePermsEnforced` (`internal/vault/preconditions_test.go`) skips the
+  `chmod 0500` persist-failure tests under euid 0, because root bypasses file permissions.
+- `requireScriptInterpreter` (`internal/dispatch` and `internal/e2e`
+  `preconditions_test.go`) skips a plugin-spawn test when its script's shebang
+  interpreter is missing, such as `bash` or `python3` on a slim CI image.
 
-If you must run the suite in a container, base it on an image that has `bash`/`python3`
-and run as a non-root user — mirror the Dockerfile's **runtime** stage, not its builder
-stage. `scripts/test-fast` prints a warning when these preconditions are not met.
+In a container, mirror the Dockerfile's **runtime** stage, not its builder stage, and run
+as a non-root user.
 
 ---
 

@@ -1,14 +1,15 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Preflight: a few packages couple to the host environment (see docs/TESTING.md
-# "Environment requirements for the fast suite"). Warn early rather than fail cryptically.
+# Host-dependent tests skip with the assumption named rather than fail (see
+# docs/TESTING.md "Environment requirements for the fast suite"). Say so up front
+# when this run will skip some of them.
 if [[ "$(id -u)" -eq 0 ]]; then
-  echo "==> test-fast: WARNING — running as root; internal/vault chmod-based 'save failure' tests will fail (root bypasses file permissions). Run as a non-root user."
+  echo "==> test-fast: NOTE running as root; internal/vault permission tests will skip."
 fi
 for dep in bash python3; do
   command -v "$dep" >/dev/null 2>&1 || \
-    echo "==> test-fast: WARNING — '$dep' not on PATH; internal/e2e and internal/dispatch plugin-spawn tests will fail."
+    echo "==> test-fast: NOTE '$dep' not on PATH; plugin-spawn tests that need it will skip."
 done
 
 echo "==> test-fast: go test ./..."

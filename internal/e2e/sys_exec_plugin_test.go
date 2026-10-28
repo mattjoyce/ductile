@@ -118,6 +118,7 @@ func TestSysExecPlugin_LogIncludesUpstreamPipelinePlugin(t *testing.T) {
 
 	root := repoRoot(t)
 	script := filepath.Join(root, "plugins", "sys_exec", "run.py")
+	requireEntrypointInterpreter(t, root, "sys_exec", "run.py")
 	event := &protocol.Event{Type: "test.event", Payload: map[string]any{}}
 
 	req := &protocol.Request{
@@ -190,6 +191,7 @@ func runSysExec(t *testing.T, command string, cfg map[string]any, payload map[st
 
 	root := repoRoot(t)
 	script := filepath.Join(root, "plugins", "sys_exec", "run.py")
+	requireEntrypointInterpreter(t, root, "sys_exec", "run.py")
 	event := &protocol.Event{Type: "test.event", Payload: payload}
 
 	req := &protocol.Request{
