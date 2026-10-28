@@ -162,3 +162,4 @@ GLOSSARY, OPERATOR_GUIDE (upgrade note: one `config lock`), SECRETS, REMOTE_EVEN
 - 2026-10-28: slice 1 dropped (uuid stays via sqlite); slice 0 approved on `deps/card148.0-deadcode-tool-pin`.
 - 2026-10-28: slice 3 design note written, awaiting review.
 - 2026-10-28: slice 3 design approved: hard cut, plugins re-hashed in place, ships in v1.1.0 with card 145.
+- 2026-10-28: slices 0 (#185) and 3 (#186) merged, slice 3 field-tested on the thinkpad (migrated, boots, plugins spawn); ship in v1.1.0. Slice 2 (chi) remains.

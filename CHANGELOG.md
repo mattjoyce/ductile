@@ -1,24 +1,115 @@
 # Changelog
 
-## Unreleased
+## 2026-10-28 — v1.1.0
 
-- **Token scopes are a policy (card 145):** `internal/auth` decides what a token may do
+A release about trust at the edges. Integrity hashes move from BLAKE3 to SHA-256 and API token
+scopes become an explicit policy (both need one operator step, below). Changing an attested plugin
+on a live gateway gets a first-class, bounded procedure (`ductile plugin clearpass`). And the
+privilege-separation sweep (#167-#181) makes the gateway's own files verifiably readable by the
+account that has to open them, and makes `config check` tell the truth about it.
+
+- **Upgrade: run `ductile config lock` once (cards 148, 145):** two things need an operator.
+  First, `.checksums` is now version 3 (SHA-256). A gateway that finds a version 2 file refuses to
+  boot with `checksums were written by an older ductile (BLAKE3, version 2); run 'ductile config
+  lock' to re-lock under SHA-256`. One `ductile config lock` migrates it: it re-hashes the config
+  files and every plugin recorded in the old manifest (it prints `REHASH [plugin] <name>`), so a
+  plugin-bearing install needs the vault available for the nonce. Open clearpass windows are
+  dropped by the migration. Second, a token holding a scope no route grants is now refused
+  (`api.auth.tokens[N]: unknown scope "x"; known scopes: ...`): `ductile config check` fails and
+  the gateway will not boot. Before, an unknown scope silently granted nothing. Two tokens sharing
+  a principal name are refused the same way. Check your `api.auth.tokens` scopes before restarting.
+- **Token scopes are a policy (card 145, #187):** `internal/auth` decides what a token may do
   through [Shearline](https://github.com/mattjoyce/shearline) v0.4.0 over the
-  [tarski](https://github.com/mattjoyce/tarski) v0.3.2 Datalog engine. Scopes are roles,
-  the old implication map is `inherits` facts, and each route asks for an action on a
-  capability (`read jobs/status/`). Three things an operator can see: a 403 now carries `why`
-  (the rule walked and the fact not found, principals named by `secret_ref`); a token holding
-  a scope no route grants fails `config check` and refuses to boot instead of silently granting
-  nothing; and the scope semantics live in one table, `internal/auth/policy.go`. Every
-  allow/deny is unchanged: a parity test holds the policy to the previous scope map on every
-  scope, every pair of scopes and every route.
-- **Integrity hashes move from BLAKE3 to SHA-256 (card 148):** `.checksums` is now version 3
-  with `sha256:`-tagged values; plugin fingerprints and the clearpass seal are HMAC-SHA256 under
-  the vault nonce. An existing install refuses its version 2 `.checksums` at boot with an error
-  naming the fix: run `ductile config lock` once, which re-hashes config files and every recorded
-  plugin. Open clearpass windows are dropped. Drops `github.com/zeebo/blake3` and
+  [tarski](https://github.com/mattjoyce/tarski) v0.3.2 Datalog engine. Scopes are roles, the old
+  implication map is `inherits` facts, and each route asks for an action on a capability (`read
+  jobs/status/`). Visible changes: a 403 now carries `why` (the rule walked and the fact not found,
+  principals named by `secret_ref`); `config check` warns when a token holds a reserved scope that
+  grants nothing yet and names the scope to use instead; the scope semantics live in one table,
+  `internal/auth/policy.go`. Every allow and deny is unchanged: a parity test holds the policy to
+  the previous scope map on every scope, every pair of scopes and every route.
+- **The token policy reports its cost margin (card 150, #190):** `ductile config check` decides
+  every token against every capability once and prints the costliest decision against the policy
+  engine's bounds as its last line (`token policy: worst decision 125/4194304 steps (0.0%), ...`;
+  JSON: `policy_margin`), and the gateway logs the same at boot (`API policy cost margin`). A
+  policy whose costliest decision uses more than half of either bound is refused at both.
+- **Integrity hashes move from BLAKE3 to SHA-256 (card 148, #186):** `.checksums` values are
+  `sha256:`-tagged; plugin fingerprints and the clearpass seal are HMAC-SHA256 under the vault
+  nonce. Migration is the one-lock step above. Drops `github.com/zeebo/blake3` and
   `github.com/klauspost/cpuid/v2`.
-- **Chore:** drop the `tool` directive for deadcode; run it pinned with `go run` (see CONTRIBUTING.md). `go.mod` no longer pulls `x/tools`, `x/mod`, `x/sync` or `x/telemetry`.
+- **`ductile plugin clearpass`, a bounded pre-authorisation to change an attested plugin (card 144):**
+  replacing a plugin's bytes on a live gateway used to mean staging a copy, attesting it elsewhere,
+  locking, swapping and hoping a heartbeat did not fire into a mismatch. Now
+  `ductile plugin clearpass <name> --for 2h [--note TEXT]` records, beside the plugin's fingerprint
+  in `.checksums`, that changed bytes are accepted until a deadline (at most 24h). Inside the
+  window a mismatch is tolerated and reported (a WARN with both hashes, a `plugin.clearpass_spawn`
+  event and a `clearpass_spawn` audit row) instead of refused. At the deadline the gateway commits
+  the live bytes as the new attestation and says what it accepted (`plugin.clearpass_closed`, a
+  `clearpass_close` audit row); it sweeps at boot and once a minute. `--close` commits now,
+  `--list` shows windows, and `plugin lock` also clears a window. Hardening: opening a window needs
+  the vault (the record is sealed under the vault nonce, and an unsealed or edited record is
+  ignored and named in the denial); each window has an id and the gateway commits only a window
+  the audit log saw opened (`clearpass_open`) and not yet closed, so a replayed or backed-up record
+  cannot be committed; a close is recorded before `.checksums` changes and fails closed if it
+  cannot be recorded. A close on a read-only config directory commits nothing and leaves the
+  window closable (the gateway warns each sweep and names `--close`), and a committed window stays
+  closed. Opening a window requires the plugin to have a fingerprint already (`ductile plugin lock`
+  first).
+- **`config check` now covers the integrity half of boot admission (#174):** it used to run only
+  validation and could report clean on an install that would not boot. It now verifies
+  `.checksums` following the config's own policy: skipped, and reported as skipped, when
+  `verify_integrity_on_boot` is false, and drift is fatal only where `fail_on_drift` makes it
+  fatal at boot. It can newly fail only a config that would also fail to boot.
+- **The gateway checks it can read its own files (#179, #181):** `config check` and boot now
+  report a file that exists, is well-formed and correctly hashed, but cannot be opened by the
+  account the gateway runs as: `.checksums`, the state database and its WAL and shared-memory
+  files. The service account is taken from the config directory's owner. Findings arrive as
+  `[readability]` errors naming the owner and mode, and keep the kernel's `permission denied`.
+  At boot the check asks the kernel without opening the file, so ACLs and capabilities
+  count and a live SQLite database keeps its locks; a failure on a path with a POSIX ACL (Linux)
+  is a warning in `config check`, not an error. When the config directory is itself root-owned,
+  `config check` warns that a clean result as root proves nothing. An unreadable `.checksums`
+  does not block a boot that has `verify_integrity_on_boot: false`.
+- **Privsep ownership: files written under `sudo` are owned for the service account (#167, #169,
+  #170, #171, #177):** `sudo ductile config lock` used to leave `.checksums` root-owned and
+  unreadable by the daemon. The directory now decides the owner of every file ductile replaces,
+  never the file being replaced, so re-running `config lock` repairs an install already broken
+  this way. Applies to `.checksums`, `config.yaml`, `routes.yaml`, `webhooks.yaml`, plugin configs
+  (and their `.bak` sidecars), the vault blob and, through `rotate-key`, the age key. The state
+  database and its `-wal` and `-shm` files are now created mode 0600 and inherit the state
+  directory's owner, so a `sudo ductile job list` no longer leaves root-owned sidecars the daemon
+  cannot write. `config set` persists atomically (temp, fsync, chown, rename), so a crash can no
+  longer leave `config.yaml` truncated. A vault age key owned by the wrong account is now
+  refused with the ownership named. Ownership changes the process is not allowed to make are
+  best-effort for unprivileged runs (Docker bind mounts, NFS, user namespaces) and fatal only as root.
+- **Integrity failures say what actually failed (#167, #172, #173):** an unreadable, unparseable
+  or wrong-version `.checksums` was reported as "no .checksums manifest found" (whose remedy,
+  `config lock`, reproduced the fault), and a reload rejection asserted "unlocked changes
+  detected" for at least five different causes. The real cause is now returned. A manifest that
+  is present but unusable is a hard failure; an absent one still means integrity was never
+  enabled. Plugin attestation no longer silently skips when the manifest is unreadable, and the
+  config snapshot marks each configured plugin unavailable with the cause rather than showing a
+  clean plugin table.
+- **`ductile config check` no longer reports bundled plugins reached via `uses:` as unused
+  (#168):** the "plugin ... discovered but not referenced in config" warning now follows `uses:`
+  aliases.
+- **New bundled plugin `restic_backup`:** runs `restic backup` of configured paths to a
+  rest-server repo from a nightly `poll`, with a primary and fallback repo URL, secrets read
+  from an `env_file` rather than baggage, and a `health` command (`restic cat config`).
+  Config keys: `env_file`, `paths` (required); `excludes`, `host`, `tag`.
+- **Docs:** a Docker project tutorial (`docs/tutorials/docker-project.md`); the idiom count is
+  corrected to eight in `docs/index.md`.
+- **Internal:** doctor drops the scope grammar that predates the token policy, which
+  `config.validate` now settles first (card 151, #188); a backup-manifest test parses YAML
+  instead of substring-matching an all-digit uid (#189); a privsep ownership fixture joins the
+  system-tier gate, CI runs the config, vault, storage and cmd packages as root (with a
+  user-namespace step for the refused-chown case) and
+  compiles `internal/fsown` for non-unix targets, whose sibling file now builds; plugin-spawn
+  tests skip with the missing interpreter named (#184); management-socket tests close idle
+  connections before shutdown to remove a flake (#183); gosec/gofmt fixes in the dispatch
+  tests; `deadcode` is run pinned with `go run` instead of a `tool` directive, so `go.mod` no
+  longer pulls `x/tools`, `x/mod`, `x/sync` or `x/telemetry` (see CONTRIBUTING.md); `graphify-out/`
+  is gitignored.
+
 
 ## 2026-06-30 — v1.0.1
 

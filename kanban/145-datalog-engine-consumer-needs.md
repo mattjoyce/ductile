@@ -1,6 +1,6 @@
 ---
 id: 145
-status: doing
+status: done
 priority: Normal
 tags: [shearline, tarski, auth, explain, config-check]
 ---
@@ -97,3 +97,4 @@ same information, and the chi registration stays readable.
 ## History
 
 Nothing here blocked the cut or its first tag. Ductile adopts after Shearline v0.2.1.
+- 2026-10-28: done, ships in v1.1.0.

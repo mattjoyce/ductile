@@ -1,6 +1,6 @@
 ---
 id: 150
-status: backlog
+status: done
 priority: Normal
 tags: [shearline, auth, config-check, observability]
 depends_on: [145]
@@ -151,3 +151,4 @@ Measured (TestPolicyMargin, 2 tokens x 14 capability rows):
 Margin limit 50%; the real policy uses about 0.1% of the byte bound.
 
 Deferred: `system status` exposure of the margin (follow-up).
+- 2026-10-28: done, ships in v1.1.0.

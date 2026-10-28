@@ -1,6 +1,6 @@
 ---
 id: 151
-status: backlog
+status: done
 priority: Low
 tags: [doctor, auth, config-check, cleanup]
 depends_on: [145]
@@ -95,3 +95,4 @@ Docs grep: four hits, all relay allowlists, none token scopes. Reviewer reran do
 under `-race`, goimports and golangci-lint on `internal/doctor`: clean.
 Noted, not fixed: `docs/ARCHITECTURE.md` section 9.4 still shows pre-policy scopes in a
 `scopes_file` example.
+- 2026-10-28: done, ships in v1.1.0.
