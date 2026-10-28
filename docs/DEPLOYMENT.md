@@ -1,7 +1,7 @@
 # Ductile Deployment Guide
 
 This document describes how to deploy a host-local Ductile instance as a
-systemd user service. It reflects the first reference deployment on
+systemd user service, or as a launchd user agent on macOS (§5a). It reflects the first reference deployment on
 `matt-ThinkPad-T14s-Gen-1` (2026-02-22) and is the canonical procedure for
 repeating this on other hosts.
 
@@ -194,6 +194,79 @@ Check status:
 systemctl --user status ductile-local
 journalctl --user -u ductile-local -f
 ```
+
+---
+
+## 5a. macOS LaunchAgent (user service)
+
+The Mac peer of §5: a per-user LaunchAgent running a hygiene-only gateway (no privsep;
+the root LaunchDaemon posture is §5b and `deploy/install-macos.sh`). Reference instance:
+the Mac M1, config `~/.config/ductile/`, API on `127.0.0.1:8082`.
+
+Build with `make build`, not a bare `go build`: on Darwin it stamps the version and
+codesigns the binary (`com.mattjoyce.ductile`), and `/healthz` reports that version.
+
+```bash
+cd /path/to/ductile
+make build && cp ./ductile ~/.local/bin/ductile
+```
+
+Create `~/Library/LaunchAgents/com.mattjoyce.ductile-local.plist`. launchd expands neither
+`$HOME` nor `~`, so write absolute paths (`/Users/YOU` below):
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.mattjoyce.ductile-local</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Users/YOU/.local/bin/ductile</string>
+        <string>system</string>
+        <string>start</string>
+        <string>--config</string>
+        <string>/Users/YOU/.config/ductile/</string>
+    </array>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+        <key>HOME</key>
+        <string>/Users/YOU</string>
+    </dict>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+    <key>StandardOutPath</key>
+    <string>/Users/YOU/Library/Logs/ductile-local.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/YOU/Library/Logs/ductile-local.log</string>
+    <key>ThrottleInterval</key>
+    <integer>5</integer>
+</dict>
+</plist>
+```
+
+Load it:
+```bash
+plutil -lint ~/Library/LaunchAgents/com.mattjoyce.ductile-local.plist
+launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.mattjoyce.ductile-local.plist
+```
+
+Operate:
+```bash
+launchctl print gui/$(id -u)/com.mattjoyce.ductile-local | rg 'state|pid'   # running?
+launchctl kickstart -k gui/$(id -u)/com.mattjoyce.ductile-local             # restart
+launchctl bootout gui/$(id -u)/com.mattjoyce.ductile-local                  # stop (stays stopped)
+tail -f ~/Library/Logs/ductile-local.log                                    # stdout + stderr
+```
+
+`KeepAlive` restarts the gateway whenever it exits, so `launchctl kill` is a restart, not a
+stop, and a gateway that refuses to boot crash-loops every 5 s (`ThrottleInterval`). Use
+`bootout` whenever the gateway must stay down, such as during the integrity migration in §8a.
 
 ---
 
@@ -430,6 +503,81 @@ binary on next start:
 cd /path/to/ductile && go build -o ~/.local/bin/ductile ./cmd/ductile && systemctl --user restart ductile-local
 ```
 
+On macOS (§5a):
+```bash
+cd /path/to/ductile && make build && cp ./ductile ~/.local/bin/ductile \
+  && launchctl kickstart -k gui/$(id -u)/com.mattjoyce.ductile-local
+```
+
+This in-place swap is only safe when the release notes ask for no migration. Read
+`CHANGELOG.md` first; an upgrade that changes `.checksums` follows §8a instead.
+
+### 8a. Upgrading across a `.checksums` format change
+
+The `.checksums` format moved from BLAKE3 (version 2) to SHA-256 (version 3); the same
+release began refusing token scopes that no route grants. Upgrading a gateway whose file is
+still version 2 needs the order below, for three reasons:
+
+- **The new binary refuses a version 2 `.checksums`.** The gateway won't boot on it, and
+  `config check` fails with `integrity check failed to run`. So the new binary cannot
+  pre-flight the live config of an old install. Rehearse on a copy instead.
+- **`config lock` is the migration.** Run by the new binary on a version 2 file, it
+  re-hashes the config files and every plugin in the old manifest, printing
+  `Migrating .checksums ... to SHA-256 (version 3).` then one `REHASH [plugin] <name>` per
+  plugin. It needs the vault nonce, so it must be able to read the age key. No REHASH
+  lines on a plugin-bearing install means the file was already version 3: nothing migrated.
+- **The old gateway cannot run on a version 3 file.** It re-reads `.checksums` on every
+  spawn of a plugin that receives secrets and rejects anything but version 2
+  (`unsupported checksums version: 3`). Once the live lock runs, those jobs fail until the
+  new binary is up. Stop the old gateway before the live lock; don't lock under it.
+
+Mac M1 (§5a) procedure. Other hosts swap the service commands; the order is the same.
+
+```bash
+cd /path/to/ductile && make build    # at the release tag; stage ./ductile, don't install
+NEW=$PWD/ductile
+CFG=~/.config/ductile
+TS=$(date -u +%Y%m%dT%H%M%SZ)
+AGENT=gui/$(id -u)/com.mattjoyce.ductile-local
+
+# 1. Rollback point, taken by the OLD binary while it still serves.
+ductile system backup --to ~/backups/ductile-pre-upgrade-$TS.tar.gz --scope config --config "$CFG"
+cp ~/.local/bin/ductile ~/backups/ductile-prev-$TS
+
+# 2. Rehearse on a copy (the old gateway keeps serving). Check that config.yaml's includes
+#    are relative, so the copy does not lock or read the live files by absolute path.
+REH=$(mktemp -d)/ductile && cp -Rp "$CFG" "$REH"
+"$NEW" config lock  --config "$REH/"    # expect Migrating ... + one REHASH [plugin] per plugin
+"$NEW" config check --config "$REH/"    # must pass: token scopes, principals, policy margin
+rm -rf "$(dirname "$REH")"
+
+# 3. Cutover: stop, swap, lock live, start. Keep the gap short; nothing runs while stopped.
+launchctl bootout "$AGENT"
+cp "$NEW" ~/.local/bin/ductile
+ductile config lock --config "$CFG"     # same Migrating + REHASH lines as the rehearsal
+ductile config check --config "$CFG"
+launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.mattjoyce.ductile-local.plist
+
+# 4. Verify.
+curl -s 127.0.0.1:8082/healthz          # "version" is the new release; plugins_loaded == pre-upgrade count
+rg 'API policy cost margin' ~/Library/Logs/ductile-local.log | tail -1   # the token policy loaded
+head -1 "$CFG/.checksums"               # version: 3
+```
+
+Then confirm the scope boundary with the narrowest token you hold: a `jobs:ro` token gets
+200 on `GET /jobs` and 403 on `POST /plugin/<name>/poll`; a bad token gets 401.
+
+`system selfcheck` against the running gateway reports FAIL on `pid_lock` and skips the DB
+checks. That is its WAL-safety guard, not a fault.
+
+**Rollback:** `launchctl bootout`, copy `~/backups/ductile-prev-$TS` back to
+`~/.local/bin/ductile`, restore `.checksums` from the step 1 backup (the old binary cannot
+read the version 3 file), then `launchctl bootstrap`. The DB is unchanged by this upgrade.
+
+**Docker:** `docker compose up --build -d` starts the new binary on the version 2 file, so it
+crash-loops. Build the image only, lock with a one-shot container from the new image
+(writable config mount; the service's mount is often `:ro`), then `up -d`.
+
 ## 9. Schema Migrations Before Deploy
 
 If a release adds additive SQLite schema, apply the matching migration script to
@@ -513,8 +661,7 @@ systemctl --user enable --now ductile-backup.timer
 ```
 
 launchd (Mac pattern) — equivalent `LaunchAgent` plist with `StartCalendarInterval`
-runs the same command sequence; see existing `com.mattjoyce.ductile-local.plist`
-as a template for the `ProgramArguments` shape.
+runs the same command sequence; see the §5a plist as a template for the `ProgramArguments` shape.
 
 Pre-migration backups before any breaking schema change are a separate manual
 invocation under `~/admin/ductile-backups/<instance>/pre-<slug>-<timestamp>/`
