@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- **Chore:** drop the `tool` directive for deadcode; run it pinned with `go run` (see CONTRIBUTING.md). `go.mod` no longer pulls `x/tools`, `x/mod`, `x/sync` or `x/telemetry`.
+
 ## 2026-06-30 — v1.0.1
 
 A maintenance release: one durability fix, plus a sweep that collapsed ~20 duplicate

@@ -72,6 +72,13 @@ go test -race -count=1 -shuffle=on -vet=all ./...
 If a gate cannot run in your environment or fails for an unrelated reason,
 say so explicitly in the PR. Do not silence findings.
 
+Dead code is checked by hand, not by a gate. Run the pinned tool so it stays out of
+`go.mod`:
+
+```bash
+go run golang.org/x/tools/cmd/deadcode@v0.43.0 -test ./...
+```
+
 ---
 
 ## Branching, commits, PRs
