@@ -182,26 +182,68 @@ cross-account EACCES). What we learned:
   (a second *unconfined* instance, card #106). The enforced gateway is the data plane, not the whole world.
 - **Vault-native plugin recipe (#107, PROVEN 2026-06-07):** see card #107 — read the stdin `secrets` map, manifest config_keys.required:[], register a kebab principal, set `vault_principal` + `requires_vault`, relocate+lock. First proof: discord_notify posts from the encrypted vault over stdin, uid 1001, fail-closed.
 
-### Redeploy / binary refresh (validated live 2026-06-07)
+### Redeploy / binary refresh (validated live 2026-06-07; v1.1.0 upgrade validated 2026-10-28)
 
-The repeatable way to push a new binary (validated on the live Thinkpad):
+The repeatable way to push a new binary onto the privsep host. The unit is the **system**
+service `ductile` and the config is `/etc/ductile`, owned by `ductile` mode `0700`. `make install`
+does not apply here, it targets `~/.local/bin` and a `--user` unit. Run every CLI call against the
+live config as the service user (`sudo -u ductile`), because a human user gets EACCES.
 
 ```bash
-cd /path/to/ductile && git pull --ff-only && go build -o ~/staging/ductile-new ./cmd/ductile
-sudo BIN_SRC=~/staging/ductile-new bash deploy/install.sh   # idempotent FHS layer (ADR)
+cd /path/to/ductile && git pull --ff-only && make build
+mkdir -p ~/staging && cp ductile ~/staging/ductile-new
+CFG=/etc/ductile/config.yaml
+
+# 1. Back up with the OLD binary. Write somewhere the service user can write, then move it home.
+sudo -u ductile ductile system backup --scope all --to /tmp/ductile-pre.tar.gz --config /etc/ductile
+sudo install -o "$USER" -m0600 /tmp/ductile-pre.tar.gz ~/staging/ && sudo rm /tmp/ductile-pre.tar.gz
+
+# 2. Pre-flight the NEW binary against the live config while the old gateway still serves.
+#    Only possible when .checksums is already the format the new binary reads. Coming from a
+#    BLAKE3 (version 2) install, rehearse on a copy instead, see DEPLOYMENT.md section 8a.
+sudo -u ductile ~/staging/ductile-new config check --config "$CFG"   # must say valid
+
+# 3. Swap the binary. Idempotent FHS layer, leaves the old process running from memory.
+sudo BIN_SRC=~/staging/ductile-new bash deploy/install.sh
+
+# 4. Re-lock ONLY if the release notes say the .checksums format changed (see below), then restart.
+sudo -u ductile ductile config lock --config "$CFG"
 sudo systemctl restart ductile
-sudo -u ductile ductile config check --config /etc/ductile/config.yaml   # VALID
-journalctl -u ductile -n 30 --no-pager                                   # "privsep enforcing"
+
+# 5. Verify.
+sudo -u ductile ductile config check --config "$CFG"                  # VALID
+journalctl -u ductile -n 40 --no-pager    # "privsep enforcing", "compose-time attestation on"
+curl -s localhost:8081/healthz            # status ok, plugins_loaded == your pre-deploy count
 # verify a job still drops to its account (live `ps` shows uid 1001/1002), wall-bite holds
 ```
 
 - **`deploy/install.sh` is safe to re-run:** idempotent; lays/asserts only the FHS *structure* + binary +
   unit; it does NOT touch config/vault/plugin code and does NOT chown `/var/lib/ductile` (no account-dir
   clobber). Confirmed live: created `/run/ductile`, account dirs intact, new binary `root:root 0755`.
-- **A binary swap needs NO re-lock** — plugin fingerprints are of the plugin code keyed by the vault
+  It does not stop or restart the service, step 4 does.
+- **A plain binary swap needs no re-lock.** Plugin fingerprints are of the plugin code keyed by the vault
   nonce, not the gateway binary; `config lock`/`plugin lock` only matter when config/plugin *bytes* change.
+- **A release that changes the `.checksums` format needs one `config lock`, before the restart.**
+  v1.1.0 is the first release to read SHA-256 (version 3) only, and it refuses to boot on a BLAKE3
+  (version 2) file. Follow [DEPLOYMENT.md section 8a](../DEPLOYMENT.md) for that upgrade, including
+  the rehearsal on a copy and stopping the old gateway before the live lock, because the old binary
+  cannot run on a version 3 file. If the host already ran a build with the SHA-256 change (v1.1.0
+  development builds from card 148.3 onward), `.checksums` is already version 3 and the lock is a plain
+  re-lock; it prints no `REHASH [plugin]` lines, which is how you tell nothing was migrated. The lock
+  needs the vault nonce, which the service user reads from `/etc/ductile/secret/age.key`, so no admin
+  token is involved.
+- **Check token scopes before the restart.** v1.1.0 refuses a token holding a scope no route grants, and
+  two tokens sharing a principal name. The step-2 `config check` with the new binary catches both while
+  the old gateway is still serving, and prints `token policy: ... decisions` as proof the policy loaded.
+  After restart the log has an `API policy cost margin` line.
+- **Do not chain a `cd` into `/etc/ductile` with `&&`.** Your user cannot enter it, the `cd` fails, and
+  the rest of the chain is silently skipped. Use absolute paths with `sudo -u ductile`.
+- **`selfcheck` against the running gateway reports FAIL.** `pid_lock` fails and the DB checks are skipped
+  (WAL safety). That is expected. Run it with the service stopped if you need the DB invariants.
+- **The vault admin token lives at `/etc/ductile/secret/vault-admin-token`** (ductile-owned, 0600), beside
+  `age.key`. Only the keyless vault routes (`vault set/roll/revoke`) need it. A deploy does not.
 - **#101 verified live:** `config check` on a config with `accounts:` removed but secrets kept fires
-  `config is VALID but privsep is UNCONFINED … a popped plugin can read the decrypted secrets`. And a
+  `config is VALID but privsep is UNCONFINED ... a popped plugin can read the decrypted secrets`. And a
   `run_as` with no `accounts:` is a hard config-load error (fail-closed, not per-job).
 - **#108 verified by unit tests:** `plugins.<name>.requires_vault: true` makes an unknown principal fail
-  the spawn closed (live demo skipped — it would break a plugin).
+  the spawn closed (live demo skipped, it would break a plugin).

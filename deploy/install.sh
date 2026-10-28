@@ -50,4 +50,8 @@ NOT placed by this installer (operator data): config, age key, vault.age, plugin
 Next: place those per docs/runbooks/privsep-thinkpad-enforce.md, run
   config lock && plugin lock --all   (BEFORE first enforce boot, else plugins downgrade to untrusted)
 then: systemctl enable --now ductile  and verify the wall-bite.
+
+Re-running this to refresh the binary? It does not stop or restart the service. If the release
+changes the .checksums format (v1.1.0 moved BLAKE3 to SHA-256), follow docs/DEPLOYMENT.md section 8a
+before restarting; the old binary cannot run on the new format. Otherwise: systemctl restart ductile.
 EOF
