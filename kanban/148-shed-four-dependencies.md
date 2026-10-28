@@ -25,7 +25,12 @@ One card, four independent slices. Each slice is its own commit and can land alo
   script or doc calls it today.
 - Done when `go mod tidy` removes those four and deadcode still runs from its script.
 
-## Slice 1: `github.com/google/uuid`
+## Slice 1: `github.com/google/uuid` (dropped)
+
+**Dropped 2026-10-28.** `modernc.org/sqlite` imports it through `modernc.org/libc`
+(`go mod why -m github.com/google/uuid`), so replacing our nine calls only moves it to
+`// indirect`: same module in the binary, same trust surface. Not worth owned code.
+
 
 - Only `uuid.NewString()` is used: 9 calls in 7 files (`configsnapshot`, `relay`, `router`,
   `api/handlers`, `dispatch`, `queue`, `state`).
@@ -84,7 +89,7 @@ card and get it reviewed before code.
 
 ## Done
 
-- `go.mod` lists neither `google/uuid`, `go-chi/chi`, `zeebo/blake3`, nor `klauspost/cpuid`,
+- `go.mod` lists neither `go-chi/chi`, `zeebo/blake3`, nor `klauspost/cpuid`,
   and no `tool` line.
 - The merge-grade gates in AGENTS.md section 9 pass, plus `scripts/test-docker`.
 - A real instance relocks and boots on SHA-256, verified on the Dell.
@@ -92,3 +97,4 @@ card and get it reviewed before code.
 ## History
 
 - 2026-10-28: carded from the dependency survey.
+- 2026-10-28: slice 1 dropped (uuid stays via sqlite); slice 0 approved on `deps/card148.0-deadcode-tool-pin`.
