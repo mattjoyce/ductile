@@ -137,9 +137,10 @@ every time.
 **Decisions for the principal**
 
 - Hard cut: **decided** (principal, 2026-10-28), with plugins re-hashed in place during the cut.
-- Version: **v1.1.0** (principal, 2026-10-28): no new capability, so not a major. Ships with card
-  145. The one-time relock is called out at the top of the CHANGELOG entry and in the boot error.
-  (Strict SemVer would make a boot refusal a major; the principal chose minor knowingly.)
+- Version: **v1.1.0** (principal, 2026-10-28): no new capability, and not a break. `config lock`
+  after a change is standard Ductile operator practice (the integrity gate demands it on almost
+  every edit unless disabled), so an upgrade that asks for one is routine. Ships with card 145.
+  The CHANGELOG entry and the boot error name the relock.
 
 **Out of scope, noticed:** `scopes_hash` in `docs/ARCHITECTURE.md` and `docs/CONFIG_REFERENCE.md`
 describes the retired `tokens.yaml` and nothing reads it.
