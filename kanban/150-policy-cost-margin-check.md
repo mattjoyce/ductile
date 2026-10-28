@@ -137,3 +137,17 @@ No CHANGELOG edit (the release entry is written separately).
 - [ ] The gate passes. The three flaky tests on card 149 are not edited; rerun on a flake.
 
 Do not tag, do not merge.
+
+## Review 1 (2026-10-28, approved)
+
+Round 1 (`or/deepseek/deepseek-v4.1-flash`, session `ses_e7df6c122ffeFiAYT0fYpjmi2n`) built A-E as
+specified. Dispatch exit 5 was a false positive: the reviewer's own `push -u` of another branch
+rewrote the shared `.git/config` mid-round. opencode changed no git config; the reviewer committed.
+Reviewer reran: gofmt, goimports, vet, gosec `-severity medium`, golangci-lint on touched packages
+(only the pre-existing `config_check_readability_test.go` errchecks), full race suite: green.
+
+Measured (TestPolicyMargin, 2 tokens x 14 capability rows):
+`token policy: worst decision 125/4194304 steps (0.0%), 782/1048576 bytes (0.1%) over 28 decisions; costliest: admin read for plugin/catalog/`.
+Margin limit 50%; the real policy uses about 0.1% of the byte bound.
+
+Deferred: `system status` exposure of the margin (follow-up).
