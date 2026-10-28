@@ -177,6 +177,127 @@ func TestNewPolicy_RefusesSharedPrincipalName(t *testing.T) {
 	}
 }
 
+// TestPolicyMargin decides every token against every capability-table row once
+// and records the costliest decision against the engine's bounds. The sweep is
+// tiny by construction (a handful of tokens, ~20 capabilities); the log line is
+// the measured number, not a guess.
+func TestPolicyMargin(t *testing.T) {
+	pol, err := NewPolicy([]TokenConfig{
+		{Name: "admin", Scopes: []string{"*"}},
+		{Name: "status", Scopes: []string{"jobs:status:ro"}},
+	})
+	if err != nil {
+		t.Fatalf("NewPolicy: %v", err)
+	}
+	m, err := pol.Margin(context.Background())
+	if err != nil {
+		t.Fatalf("Margin: %v", err)
+	}
+	if want := 2 * len(grants); m.Decisions != want {
+		t.Errorf("Decisions = %d, want %d (2 principals x %d capability rows)", m.Decisions, want, len(grants))
+	}
+	if m.Steps <= 0 {
+		t.Errorf("Steps = %d, want > 0", m.Steps)
+	}
+	if m.Bytes <= 0 {
+		t.Errorf("Bytes = %d, want > 0", m.Bytes)
+	}
+	bounds := pol.p.Bounds()
+	if m.MaxSteps != bounds.MaxSteps || m.MaxBytes != bounds.MaxBytes {
+		t.Errorf("bounds = %d/%d, want the Shearline bounds %d/%d",
+			m.MaxSteps, m.MaxBytes, bounds.MaxSteps, bounds.MaxBytes)
+	}
+	if err := m.Check(); err != nil {
+		t.Errorf("Check() = %v, want nil", err)
+	}
+	if got := m.String(); !strings.HasPrefix(got, "token policy: worst decision") {
+		t.Errorf("String() = %q, want prefix %q", got, "token policy: worst decision")
+	}
+	t.Logf("margin: %s", m.String())
+}
+
+// TestMarginCheckRefusesPastLimit pins the refusal boundary: strictly past half
+// of either bound is refused, exactly half is not.
+func TestMarginCheckRefusesPastLimit(t *testing.T) {
+	cases := []struct {
+		name string
+		m    Margin
+		want error
+	}{
+		{"steps past half", Margin{Decisions: 1, Steps: 60, MaxSteps: 100, Bytes: 1, MaxBytes: 100}, ErrPolicyMargin},
+		{"bytes past half", Margin{Decisions: 1, Steps: 1, MaxSteps: 100, Bytes: 60, MaxBytes: 100}, ErrPolicyMargin},
+		{"exactly half", Margin{Decisions: 1, Steps: 50, MaxSteps: 100, Bytes: 50, MaxBytes: 100}, nil},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			err := c.m.Check()
+			if c.want == nil {
+				if err != nil {
+					t.Fatalf("Check() = %v, want nil", err)
+				}
+				return
+			}
+			if !errors.Is(err, c.want) {
+				t.Fatalf("Check() = %v, want errors.Is(_, %v)", err, c.want)
+			}
+		})
+	}
+}
+
+// TestPolicyMarginNoTokens covers the empty policy: nothing to decide is not an
+// error, and a zero Policy (never loaded) is ErrNoPolicy.
+func TestPolicyMarginNoTokens(t *testing.T) {
+	pol, err := NewPolicy(nil)
+	if err != nil {
+		t.Fatalf("NewPolicy(nil): %v", err)
+	}
+	m, err := pol.Margin(context.Background())
+	if err != nil {
+		t.Fatalf("Margin: %v", err)
+	}
+	if m.Decisions != 0 {
+		t.Errorf("Decisions = %d, want 0", m.Decisions)
+	}
+	if err := m.Check(); err != nil {
+		t.Errorf("Check() = %v, want nil", err)
+	}
+	if got, want := m.String(), "token policy: no tokens, nothing to decide"; got != want {
+		t.Errorf("String() = %q, want %q", got, want)
+	}
+
+	var zero Policy
+	if _, err := zero.Margin(context.Background()); !errors.Is(err, ErrNoPolicy) {
+		t.Errorf("zero Policy Margin err = %v, want ErrNoPolicy", err)
+	}
+}
+
+// TestDecideReportsCost holds Decide to carrying the engine's cost on both an
+// allow and a deny: the margin is only meaningful if every answer is measured.
+func TestDecideReportsCost(t *testing.T) {
+	pol, err := NewPolicy([]TokenConfig{{Name: "status", Scopes: []string{"jobs:status:ro"}}})
+	if err != nil {
+		t.Fatalf("NewPolicy: %v", err)
+	}
+	ctx := context.Background()
+	allowed, err := pol.Decide(ctx, Principal{Name: "status"}, ActionRead, CapJobsStatus)
+	if err != nil {
+		t.Fatalf("Decide(allow): %v", err)
+	}
+	if !allowed.Allow {
+		t.Fatalf("status on jobs/status must be allowed\n%s", allowed.Why)
+	}
+	denied, err := pol.Decide(ctx, Principal{Name: "status"}, ActionWrite, CapSystemReload)
+	if err != nil {
+		t.Fatalf("Decide(deny): %v", err)
+	}
+	if denied.Allow {
+		t.Fatal("status on system/reload write must be denied")
+	}
+	if allowed.Steps <= 0 || denied.Steps <= 0 {
+		t.Errorf("both decisions must report Steps > 0: allow=%d deny=%d", allowed.Steps, denied.Steps)
+	}
+}
+
 func TestNewPolicy_IgnoresBlankScopes(t *testing.T) {
 	pol, err := NewPolicy([]TokenConfig{{Token: "t", Scopes: []string{" jobs:ro ", "", "  "}}})
 	if err != nil {

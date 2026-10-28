@@ -39,6 +39,9 @@ type Result struct {
 	Valid    bool    `json:"valid"`
 	Errors   []Issue `json:"errors,omitempty"`
 	Warnings []Issue `json:"warnings,omitempty"`
+	// PolicyMargin is the token policy's costliest decision against its bounds,
+	// rendered by auth.Margin.String(). Empty when no policy was evaluated.
+	PolicyMargin string `json:"policy_margin,omitempty"`
 }
 
 // Issue describes a single validation error or warning.
@@ -551,17 +554,13 @@ func (d *Doctor) warnSuspiciousSchedule(r *Result) {
 func FormatHuman(r *Result) string {
 	var b strings.Builder
 
-	if r.Valid && len(r.Warnings) == 0 {
+	switch {
+	case r.Valid && len(r.Warnings) == 0:
 		b.WriteString("Configuration valid.\n")
-		return b.String()
-	}
-
-	if r.Valid && len(r.Warnings) > 0 {
+	case r.Valid:
 		b.WriteString("Configuration valid")
 		fmt.Fprintf(&b, " (%d warning(s))\n", len(r.Warnings))
-	}
-
-	if !r.Valid {
+	default:
 		fmt.Fprintf(&b, "Configuration invalid (%d error(s), %d warning(s))\n", len(r.Errors), len(r.Warnings))
 	}
 
@@ -578,6 +577,12 @@ func FormatHuman(r *Result) string {
 		} else {
 			fmt.Fprintf(&b, "  WARN  [%s] %s\n", w.Category, w.Message)
 		}
+	}
+
+	// The policy cost margin is the report's last line when it was evaluated, so
+	// it is visible on a clean verdict too (card 150).
+	if r.PolicyMargin != "" {
+		b.WriteString(r.PolicyMargin + "\n")
 	}
 
 	return b.String()

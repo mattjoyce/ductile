@@ -163,14 +163,22 @@ var ErrNoPolicy = errors.New("auth: no policy loaded")
 type Policy struct {
 	p      policy.Policy
 	loaded bool
+	// principals is each token's principalName in token order. Margin sweeps
+	// them, so it is fixed at build time with the roles that name them.
+	principals []string
 }
 
 // Decision is one answer. Why is the engine's account of a denial: the rule
 // it walked, the literal it stopped at and the fact it did not find. It is
 // zero when allowed and when the decision errored.
+//
+// Steps and Bytes are the evaluation cost Shearline reports: zero on error;
+// for observation only, never compared across builds.
 type Decision struct {
 	Allow bool
 	Why   tarski.Absence
+	Steps int
+	Bytes int
 }
 
 // NewPolicy builds the Policy for a set of tokens: the lattice, the capability
@@ -186,7 +194,11 @@ func NewPolicy(tokens []TokenConfig) (Policy, error) {
 	if err != nil {
 		return Policy{}, fmt.Errorf("auth: load policy: %w", err)
 	}
-	return Policy{p: p, loaded: true}, nil
+	principals := make([]string, len(tokens))
+	for i, t := range tokens {
+		principals[i] = principalName(i, t)
+	}
+	return Policy{p: p, loaded: true, principals: principals}, nil
 }
 
 func standingFacts(tokens []TokenConfig) ([]tarski.Fact, error) {
@@ -232,5 +244,82 @@ func (pol Policy) Decide(ctx context.Context, p Principal, action, capability st
 	if err != nil {
 		return Decision{}, fmt.Errorf("auth: decide %s %s for %s: %w", action, capability, p.Name, err)
 	}
-	return Decision{Allow: d.Allow, Why: d.Why}, nil
+	return Decision{Allow: d.Allow, Why: d.Why, Steps: d.Steps, Bytes: d.Bytes}, nil
+}
+
+// MarginLimit is the share of either evaluation bound a token policy may use
+// at its costliest decision. A policy past it is a design problem, refused at
+// load rather than discovered under load.
+const MarginLimit = 0.5
+
+// ErrPolicyMargin marks a token policy whose costliest decision uses more than
+// MarginLimit of one of its evaluation bounds.
+var ErrPolicyMargin = errors.New("auth: token policy past its cost margin")
+
+// Margin is a token policy's costliest decision against its evaluation bounds.
+type Margin struct {
+	Decisions                     int    // decisions swept: principals x capability-table rows
+	Steps, Bytes                  int    // worst of each, over every decision
+	MaxSteps, MaxBytes            int    // Policy bounds
+	Principal, Action, Capability string // the decision with the most steps
+}
+
+// Margin sweeps every principal against every row of the capability table
+// exactly once and records the costliest decision of each kind. Any decision
+// error is returned wrapped: a *TooLarge surfaces this way and is a hard
+// refusal. A zero Policy returns ErrNoPolicy.
+func (pol Policy) Margin(ctx context.Context) (Margin, error) {
+	if !pol.loaded {
+		return Margin{}, ErrNoPolicy
+	}
+	bounds := pol.p.Bounds()
+	m := Margin{MaxSteps: bounds.MaxSteps, MaxBytes: bounds.MaxBytes}
+	for _, principal := range pol.principals {
+		for _, g := range grants {
+			d, err := pol.Decide(ctx, Principal{Name: principal}, g.action, g.capability)
+			if err != nil {
+				return Margin{}, fmt.Errorf("auth: policy margin: %w", err)
+			}
+			m.Decisions++
+			if d.Steps > m.Steps {
+				m.Steps = d.Steps
+				m.Principal, m.Action, m.Capability = principal, g.action, g.capability
+			}
+			if d.Bytes > m.Bytes {
+				m.Bytes = d.Bytes
+			}
+		}
+	}
+	return m, nil
+}
+
+// String renders the margin for a log line or `config check`: the costliest
+// decision of each kind against its bound, as a share and as a count.
+func (m Margin) String() string {
+	if m.Decisions == 0 {
+		return "token policy: no tokens, nothing to decide"
+	}
+	return fmt.Sprintf(
+		"token policy: worst decision %d/%d steps (%.1f%%), %d/%d bytes (%.1f%%) over %d decisions; costliest: %s %s for %s",
+		m.Steps, m.MaxSteps, share(m.Steps, m.MaxSteps),
+		m.Bytes, m.MaxBytes, share(m.Bytes, m.MaxBytes),
+		m.Decisions, m.Principal, m.Action, m.Capability)
+}
+
+// share is value as a percentage of bound, or 0 when bound is 0.
+func share(value, bound int) float64 {
+	if bound == 0 {
+		return 0
+	}
+	return 100 * float64(value) / float64(bound)
+}
+
+// Check reports whether either costliest decision uses more than MarginLimit of
+// its bound. A nil return is a policy with room; a non-nil one is refused at
+// load, naming the limit and the costliest decision.
+func (m Margin) Check() error {
+	if float64(m.Steps) > MarginLimit*float64(m.MaxSteps) || float64(m.Bytes) > MarginLimit*float64(m.MaxBytes) {
+		return fmt.Errorf("%w (limit %.0f%% of either bound): %s", ErrPolicyMargin, MarginLimit*100, m)
+	}
+	return nil
 }

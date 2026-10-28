@@ -893,6 +893,23 @@ func buildRuntime(cfg *config.Config, configPath string, configSource string, re
 			logger.Error("API policy build failed", "error", err)
 			return nil, fmt.Errorf("api policy: %w", err)
 		}
+		// Decide the policy against itself once at boot: the costliest decision
+		// against its evaluation bounds. A policy past the margin is refused here
+		// — a design problem discovered at load, not under load (card 150).
+		margin, err := apiPolicy.Margin(context.Background())
+		if err != nil {
+			logger.Error("API policy margin failed", "error", err)
+			return nil, fmt.Errorf("api policy margin: %w", err)
+		}
+		if err := margin.Check(); err != nil {
+			logger.Error("API policy past its cost margin", "error", err)
+			return nil, fmt.Errorf("api policy margin: %w", err)
+		}
+		logger.Info("API policy cost margin",
+			"decisions", margin.Decisions,
+			"steps", margin.Steps, "max_steps", margin.MaxSteps,
+			"bytes", margin.Bytes, "max_bytes", margin.MaxBytes,
+			"costliest", margin.Action+" "+margin.Capability)
 		binaryPath := ""
 		if execPath, err := os.Executable(); err == nil {
 			binaryPath = execPath

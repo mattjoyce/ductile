@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mattjoyce/ductile/internal/auth"
 	"github.com/mattjoyce/ductile/internal/config"
 	"github.com/mattjoyce/ductile/internal/doctor"
 	"github.com/mattjoyce/ductile/internal/fsown"
@@ -697,6 +698,7 @@ func runConfigCheck(args []string) int {
 	}
 
 	result := doc.Validate()
+	appendPolicyMarginFindings(result, cfg)
 	// Readability BEFORE integrity, deliberately. An unreadable .checksums makes
 	// the integrity check fail with a manifest error, and the operator goes to look
 	// at the manifest — which is fine. The permission problem underneath it is the
@@ -1062,4 +1064,53 @@ func appendIntegrityFindings(result *doctor.Result, cfg *config.Config, configPa
 		}
 		result.Warnings = append(result.Warnings, doctor.Issue{Category: "integrity", Message: msg})
 	}
+}
+
+// appendPolicyMarginFindings decides the token policy against itself once, at
+// `config check` time, and records how close its costliest decision is to the
+// policy engine's evaluation bounds (card 150). A policy past the margin is a
+// design problem: refused here and at boot, never discovered under load.
+//
+// The policy needs only each token's principal name and scopes, so no secret is
+// resolved: the secret_ref is the name a token acts as, exactly as the runtime
+// names it (card 94). The margin is observation, not an allow/deny — the
+// capability table still decides every request.
+func appendPolicyMarginFindings(result *doctor.Result, cfg *config.Config) {
+	if result == nil || cfg == nil || !cfg.API.Enabled || len(cfg.API.Auth.Tokens) == 0 {
+		return
+	}
+	tokens := make([]auth.TokenConfig, 0, len(cfg.API.Auth.Tokens))
+	for _, t := range cfg.API.Auth.Tokens {
+		tokens = append(tokens, auth.TokenConfig{Name: t.SecretRef, Scopes: t.Scopes})
+	}
+	pol, err := auth.NewPolicy(tokens)
+	if err != nil {
+		result.Valid = false
+		result.Errors = append(result.Errors, doctor.Issue{
+			Category: "api_policy",
+			Field:    "api.auth.tokens",
+			Message:  fmt.Sprintf("token policy could not be built: %v", err),
+		})
+		return
+	}
+	m, err := pol.Margin(context.Background())
+	if err != nil {
+		result.Valid = false
+		result.Errors = append(result.Errors, doctor.Issue{
+			Category: "api_policy",
+			Field:    "api.auth.tokens",
+			Message:  fmt.Sprintf("token policy margin: %v", err),
+		})
+		return
+	}
+	if err := m.Check(); err != nil {
+		result.Valid = false
+		result.Errors = append(result.Errors, doctor.Issue{
+			Category: "api_policy",
+			Field:    "api.auth.tokens",
+			Message:  err.Error(),
+		})
+		return
+	}
+	result.PolicyMargin = m.String()
 }
