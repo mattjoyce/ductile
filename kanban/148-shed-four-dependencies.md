@@ -118,27 +118,24 @@ every time.
 4. DSL fingerprint and confirmation code: `sha256:` and first 5 hex of SHA-256. No migration.
 5. **Hard cut.** The new binary refuses a `version: 2` manifest at boot, reload and
    `config check` with one error naming the fix:
-   `.checksums was written by an older ductile (BLAKE3); run 'ductile config lock' then 'ductile plugin lock --all'`.
+   `.checksums was written by an older ductile (BLAKE3); run 'ductile config lock'`.
    No BLAKE3 verify path survives, so the dependency leaves in the same PR.
-6. **Plugins are re-authorized, never re-blessed automatically.** `config lock` on a v2 manifest
-   must not copy old plugin hashes forward (today `PreservePluginFingerprints` does, which would
-   leave every plugin mismatching). It drops them and tells the operator to run
-   `plugin lock --all`. That keeps the operator's confirmation code as the act that trusts the
-   current plugin bytes; an upgrade that silently rehashed whatever is on disk would also bless
-   a tampered plugin. The `--all` preview cannot diff across algorithms: it lists every plugin as
-   "re-hashed (sha256), no prior record to compare" instead of "changed".
+6. **One `config lock` migrates everything.** Today `PreservePluginFingerprints` copies old
+   plugin hashes forward, which would leave every plugin mismatching. On a `version: 2` manifest,
+   `config lock` instead re-hashes every plugin that has a recorded fingerprint, under the new
+   algorithm, keeping its `enabled` flag. No `plugin lock --all` step. This trusts the plugin
+   bytes on disk at upgrade time: accepted, the instances are trusted infrastructure (principal,
+   2026-10-28). It prints the plugins it re-hashed.
 7. Open clearpass windows are invalidated (their seal no longer verifies). Check before code:
    the closer refuses to commit on a bad seal, so confirm a v2 window cannot wedge it. The
-   v2-to-v3 `config lock` should drop clearpass records along with the fingerprints.
+   v2-to-v3 `config lock` drops clearpass records.
 8. Rollback: an old binary cannot read a v3 manifest. `config lock` already keeps a backup
    (`config_manage.go:416`); the runbook says roll back by restoring that backup together with
    the old binary.
 
 **Decisions for the principal**
 
-- Hard cut, as above (recommended), or keep a BLAKE3 read path for one release. The overlap
-  keeps the dependency for that release and adds a second verify path to the integrity code.
-  With three instances and a relock runbook that already exists, the cut is cheaper.
+- Hard cut: **decided** (principal, 2026-10-28), with plugins re-hashed in place during the cut.
 - SemVer. An existing install refuses to boot until relocked: breaking, so a major under strict
   SemVer. Card 145 also adds a boot refusal. Ship both in one release and choose its number once.
 
@@ -146,7 +143,7 @@ every time.
 describes the retired `tokens.yaml` and nothing reads it.
 
 **Docs to update in the same PR:** AGENTS.md (3d, constraint 6), ARCHITECTURE, CONFIG_REFERENCE,
-GLOSSARY, OPERATOR_GUIDE (relock runbook gains `plugin lock --all`), SECRETS, REMOTE_EVENT_RELAY,
+GLOSSARY, OPERATOR_GUIDE (upgrade note: one `config lock`), SECRETS, REMOTE_EVENT_RELAY,
 `schemas/tokens.schema.json`, `skills/ductile/references/config.md`, the CLI skill template, CHANGELOG.
 
 ## Done
