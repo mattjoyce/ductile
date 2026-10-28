@@ -384,8 +384,15 @@ func TestBackupUIDWrittenAndPaired(t *testing.T) {
 	}
 	// The manifest carries the same UID for the pairing record.
 	body := string(tarReadFile(t, dest, "BACKUP_MANIFEST.txt"))
-	if !strings.Contains(body, "backup_uid: "+uid) {
-		t.Errorf("manifest must record backup_uid %q; got:\n%s", uid, body)
+	// Parse rather than substring-match: an all-digit uid is quoted by YAML.
+	var manifest struct {
+		BackupUID string `yaml:"backup_uid"`
+	}
+	if err := yaml.Unmarshal([]byte(body), &manifest); err != nil {
+		t.Fatalf("parse BACKUP_MANIFEST.txt: %v\n%s", err, body)
+	}
+	if manifest.BackupUID != uid {
+		t.Errorf("manifest backup_uid = %q, want %q; got:\n%s", manifest.BackupUID, uid, body)
 	}
 
 	// Two backups get distinct UIDs.
