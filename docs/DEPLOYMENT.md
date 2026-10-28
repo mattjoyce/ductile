@@ -373,6 +373,29 @@ volume (the tmpfiles.d equivalent), and bind-mount the `0600` age key from the h
 (no TPM/Keychain in a container). That is opt-in and intentionally undocumented as a
 default — the homelab floor is hygiene-only.
 
+**If the container runs as root.** The repo `Dockerfile` ends in `USER ductile`. An image that drops
+that line (some Unraid setups need root for bind mounts or the Docker socket) runs as uid 0, which
+implicitly holds `CAP_SETUID`. With no `accounts:` map the privsep boot gate refuses that, so
+declare it in `config.yaml`:
+
+```yaml
+service:
+  unconfined: true
+```
+
+Boot then logs `privsep UNCONFINED: plugins run at the gateway uid` and proceeds. Two consequences:
+
+- `ductile config check` (v1.1.0+) takes the service account from the config directory's owner and
+  reports `[readability]` errors if that account could not read `vault.age`, the age key or the
+  database. When the directory owner is not the account the container runs as (a uid left by SMB or
+  NFS writes, say), `config check` reports errors the gateway never hits. At boot the process opens the
+  files itself and passes, so judge a window by the boot log and `/healthz`.
+- The config directory is usually bind-mounted `:ro`, so `config lock`, `plugin lock` and
+  `plugin clearpass --close` run from a one-shot rw container, not `docker exec`.
+
+The full upgrade procedure for this host is
+[runbooks/unraid-docker-upgrade.md](runbooks/unraid-docker-upgrade.md).
+
 ---
 
 ## 5c. Privsep config reference
@@ -491,6 +514,11 @@ The prod Unraid instance (`192.168.20.4:8888`) is the boundary node for this net
 >
 > **Check the release notes for a `.checksums` format change before you restart.** If there is one,
 > follow [section 8a](#8a-upgrading-across-a-checksums-format-change) instead of the steps below.
+>
+> **Docker / Unraid:** do not use this section. Build the image, stop the container, lock the config,
+> then start the new one, in that order. See
+> [runbooks/unraid-docker-upgrade.md](runbooks/unraid-docker-upgrade.md). A release that changes the
+> `.checksums` format also follows §8a.
 
 When a new version is built:
 
@@ -541,7 +569,7 @@ still version 2 needs the order below, for three reasons:
   (`unsupported checksums version: 3`). Once the live lock runs, those jobs fail until the
   new binary is up. Stop the old gateway before the live lock; don't lock under it.
 
-Mac M1 (§5a) procedure. Other hosts swap the service commands; the order is the same.
+Mac M1 (§5a) procedure. Other hosts swap the service commands; the order is the same. Docker hosts: [runbooks/unraid-docker-upgrade.md](runbooks/unraid-docker-upgrade.md).
 
 ```bash
 cd /path/to/ductile && make build    # at the release tag; stage ./ductile, don't install
