@@ -151,3 +151,57 @@ func TestBindFailsFastOnOccupiedPort(t *testing.T) {
 		t.Fatalf("WaitServeStopped after failed Bind must return immediately, got %v", err)
 	}
 }
+
+// TestCORSMiddlewareWildcard verifies that when '*' is allowed,
+// a wildcard origin receives '*' and no credentialed headers,
+// complying with CORS specifications for wildcard allowances.
+func TestCORSMiddlewareWildcard(t *testing.T) {
+	called := false
+	handler := corsMiddleware([]string{"*"})(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		called = true
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	req := httptest.NewRequest(http.MethodGet, "/jobs", nil)
+	req.Header.Set("Origin", "https://any.example")
+	resp := httptest.NewRecorder()
+
+	handler.ServeHTTP(resp, req)
+
+	if !called {
+		t.Fatal("wildcard should pass through to next handler")
+	}
+	if got := resp.Header().Get("Access-Control-Allow-Origin"); got != "*" {
+		t.Fatalf("Access-Control-Allow-Origin = %q, want '*'", got)
+	}
+	if got := resp.Header().Get("Access-Control-Allow-Credentials"); got != "" {
+		t.Fatalf("Access-Control-Allow-Credentials = %q, want empty for wildcard", got)
+	}
+}
+
+// TestCORSMiddlewareExactMatchWithWildcard verifies that when '*' is allowed,
+// an exact match still receives credentialed headers, allowing specific domains
+// to be authenticated even when wildcard access is permitted.
+func TestCORSMiddlewareExactMatchWithWildcard(t *testing.T) {
+	called := false
+	handler := corsMiddleware([]string{"*", "https://allowed.example"})(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		called = true
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	req := httptest.NewRequest(http.MethodGet, "/jobs", nil)
+	req.Header.Set("Origin", "https://allowed.example")
+	resp := httptest.NewRecorder()
+
+	handler.ServeHTTP(resp, req)
+
+	if !called {
+		t.Fatal("exact match should pass through to next handler")
+	}
+	if got := resp.Header().Get("Access-Control-Allow-Origin"); got != "https://allowed.example" {
+		t.Fatalf("Access-Control-Allow-Origin = %q, want 'https://allowed.example'", got)
+	}
+	if got := resp.Header().Get("Access-Control-Allow-Credentials"); got != "true" {
+		t.Fatalf("Access-Control-Allow-Credentials = %q, want 'true'", got)
+	}
+}
