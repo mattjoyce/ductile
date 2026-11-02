@@ -16,7 +16,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/mattjoyce/ductile/internal/config"
-	"gopkg.in/yaml.v3"
+	"go.yaml.in/yaml/v3"
 )
 
 const (

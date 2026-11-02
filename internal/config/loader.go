@@ -18,7 +18,7 @@ import (
 	"github.com/mattjoyce/ductile/internal/scheduleexpr"
 	"github.com/mattjoyce/ductile/internal/secrets"
 	"github.com/mattjoyce/ductile/internal/vault"
-	"gopkg.in/yaml.v3"
+	"go.yaml.in/yaml/v3"
 )
 
 var envVarPattern = regexp.MustCompile(`\$\{([A-Za-z_][A-Za-z0-9_]*)\}`)

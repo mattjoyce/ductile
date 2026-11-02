@@ -9,8 +9,8 @@ require (
 	github.com/mattjoyce/shearline v0.4.0
 	github.com/mattjoyce/tarski v0.3.2
 	github.com/santhosh-tekuri/jsonschema/v6 v6.0.2
+	go.yaml.in/yaml/v3 v3.0.4
 	golang.org/x/sys v0.42.0
-	gopkg.in/yaml.v3 v3.0.1
 	modernc.org/sqlite v1.44.3
 )
 

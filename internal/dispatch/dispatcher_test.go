@@ -25,7 +25,7 @@ import (
 	"github.com/mattjoyce/ductile/internal/router/dsl"
 	"github.com/mattjoyce/ductile/internal/state"
 	"github.com/mattjoyce/ductile/internal/storage"
-	"gopkg.in/yaml.v3"
+	"go.yaml.in/yaml/v3"
 )
 
 func TestMain(m *testing.M) {

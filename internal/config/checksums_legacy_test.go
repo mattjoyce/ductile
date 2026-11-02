@@ -7,7 +7,7 @@ import (
 	"reflect"
 	"testing"
 
-	"gopkg.in/yaml.v3"
+	"go.yaml.in/yaml/v3"
 )
 
 func writeChecksumManifest(t *testing.T, dir string, manifest ChecksumManifest) {

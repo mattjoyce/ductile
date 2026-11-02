@@ -12,7 +12,7 @@ import (
 	"strings"
 	"testing"
 
-	"gopkg.in/yaml.v3"
+	"go.yaml.in/yaml/v3"
 	_ "modernc.org/sqlite"
 
 	"github.com/mattjoyce/ductile/internal/config"

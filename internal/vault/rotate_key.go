@@ -9,7 +9,7 @@ import (
 
 	"filippo.io/age"
 	"github.com/mattjoyce/ductile/internal/secrets"
-	"gopkg.in/yaml.v3"
+	"go.yaml.in/yaml/v3"
 )
 
 // RotateKey rotates the vault's age identity: it mints a fresh identity,

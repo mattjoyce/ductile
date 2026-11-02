@@ -11,7 +11,7 @@ import (
 	"sort"
 	"time"
 
-	"gopkg.in/yaml.v3"
+	"go.yaml.in/yaml/v3"
 )
 
 // ErrChecksumsLegacy marks a .checksums manifest written by an older ductile

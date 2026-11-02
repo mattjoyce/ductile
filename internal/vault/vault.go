@@ -14,7 +14,7 @@ import (
 
 	"github.com/mattjoyce/ductile/internal/fsown"
 	"github.com/mattjoyce/ductile/internal/secrets"
-	"gopkg.in/yaml.v3"
+	"go.yaml.in/yaml/v3"
 )
 
 // Vault owns the lifecycle of one store: the resident in-memory model plus the

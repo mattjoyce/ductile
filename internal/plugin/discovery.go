@@ -10,7 +10,7 @@ import (
 
 	"github.com/mattjoyce/ductile/internal/stopwatch"
 
-	"gopkg.in/yaml.v3"
+	"go.yaml.in/yaml/v3"
 )
 
 const (

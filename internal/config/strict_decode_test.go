@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"gopkg.in/yaml.v3"
+	"go.yaml.in/yaml/v3"
 )
 
 // cfgFromSources builds a Config carrying the given files as SourceFiles, so

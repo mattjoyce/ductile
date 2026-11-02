@@ -7,7 +7,7 @@ import (
 	"testing"
 
 	"github.com/mattjoyce/ductile/internal/config"
-	"gopkg.in/yaml.v3"
+	"go.yaml.in/yaml/v3"
 )
 
 // A version 2 (BLAKE3) .checksums is refused at load, and one `config lock`
