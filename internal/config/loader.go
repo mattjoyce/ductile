@@ -109,7 +109,9 @@ func load(configPath string, verifyScopes bool, validateConfig bool, applyPlugin
 	// (no env var, no default present), honour it for the encrypted includes.
 	// Expand a leading "~" now — the full expandTildePaths pass runs only
 	// after the include merge, which is too late for encrypted includes.
-	cfg.Secrets.AgeKeyFile = expandTilde(cfg.Secrets.AgeKeyFile)
+	if err := expandTildeField("secrets.age_key_file", &cfg.Secrets.AgeKeyFile); err != nil {
+		return nil, nil, err
+	}
 	if kr.Empty() && cfg.Secrets.AgeKeyFile != "" {
 		kr, err = resolveKeyring(configDir, cfg)
 		if err != nil {
@@ -144,7 +146,9 @@ func load(configPath string, verifyScopes bool, validateConfig bool, applyPlugin
 
 	// Expand "~" in path fields before defaults and resolution, so relative
 	// joins below never see a literal tilde.
-	expandTildePaths(cfg)
+	if err := expandTildePaths(cfg); err != nil {
+		return nil, nil, err
+	}
 
 	// Apply config defaults before validation
 	cfg = applyConfigDefaults(cfg)
@@ -205,6 +209,11 @@ func load(configPath string, verifyScopes bool, validateConfig bool, applyPlugin
 
 // DiscoverConfigDir finds the config directory by checking standard locations.
 // Priority order: --config-dir flag, $DUCTILE_CONFIG_DIR, ~/.config/ductile, /etc/ductile.
+//
+// This stays ductile's own (card 153 slice 2): yamlconfig.Discover selects a
+// regular file and returns its symlink-resolved path, while this selects a
+// directory that exists and returns it unresolved. Resolving would move the
+// absolute keys `config lock` writes into .checksums for a symlinked config dir.
 func DiscoverConfigDir() (string, error) {
 	// 1. Check environment variable
 	if dir := os.Getenv("DUCTILE_CONFIG_DIR"); dir != "" {
@@ -403,7 +412,10 @@ func loadEnvIncludes(path string, data []byte, kr *secrets.Keyring) error {
 	for i, includePath := range envCfg.EnvironmentVars.Include {
 		// Env includes are read during parse, before the post-merge
 		// expandTildePaths pass — expand here as well.
-		resolved := expandTilde(interpolateEnv(includePath))
+		resolved, err := expandTilde(interpolateEnv(includePath))
+		if err != nil {
+			return fmt.Errorf("environment_vars.include[%d]: %w", i, err)
+		}
 		if !filepath.IsAbs(resolved) {
 			resolved = filepath.Join(baseDir, resolved)
 		}
@@ -421,6 +433,13 @@ func loadEnvIncludes(path string, data []byte, kr *secrets.Keyring) error {
 	return nil
 }
 
+// loadEnvFile parses a .env file (decrypting it first if age-encrypted) and
+// exports each variable not already set in the process environment.
+//
+// The parse stays ductile's own (card 153 slice 2): yamlconfig.ParseDotEnv
+// returns a map, so a key defined twice in one file keeps its last value, while
+// this exports in line order and keeps the first (decision E). It also refuses
+// names outside [A-Za-z_][A-Za-z0-9_]* and invalid UTF-8, which this accepts.
 func loadEnvFile(path string, kr *secrets.Keyring) error {
 	// Read through the decrypting reader: a .env that holds secrets may be
 	// stored age-encrypted, and (per CONFIG_REFERENCE) env files are the

@@ -1,9 +1,6 @@
 package config
 
 import (
-	"crypto/hmac"
-	"crypto/sha256"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"os"
@@ -11,6 +8,7 @@ import (
 	"sort"
 	"time"
 
+	"github.com/mattjoyce/ashlar/yamlconfig"
 	"go.yaml.in/yaml/v3"
 )
 
@@ -35,15 +33,17 @@ type HashUpdateReport struct {
 }
 
 // ComputeFileHash returns the SHA-256 of a file as "sha256:<hex>".
+//
+// Ashlar (yamlconfig.ComputeFileHash) reads and digests the file: the path is
+// resolved through symlinks and must name a regular file, so a FIFO or device
+// is refused instead of read. The digest format is unchanged, so every
+// .checksums entry written before the swap still verifies.
 func ComputeFileHash(filePath string) (string, error) {
-	// #nosec G304 -- config paths are operator-controlled local inputs.
-	data, err := os.ReadFile(filePath)
+	hash, err := yamlconfig.ComputeFileHash(filePath)
 	if err != nil {
 		return "", fmt.Errorf("failed to read file: %w", err)
 	}
-
-	hash := sha256.Sum256(data)
-	return "sha256:" + hex.EncodeToString(hash[:]), nil
+	return hash, nil
 }
 
 // ComputeKeyedFileHash computes the HMAC-SHA256 of a file using a
@@ -51,19 +51,14 @@ func ComputeFileHash(filePath string) (string, error) {
 // fingerprint unforgeable without the key: an attacker who cannot read the
 // vault cannot produce a matching .checksums entry (closes ADR Threat B for a
 // non-key-holder). The key MUST be exactly 32 bytes; a wrong-length key is a
-// hard error rather than a silent fall-through to an unkeyed digest.
+// hard error rather than a silent fall-through to an unkeyed digest. Ashlar
+// (yamlconfig.ComputeKeyedFileHash) enforces the key length before it reads.
 func ComputeKeyedFileHash(filePath string, key []byte) (string, error) {
-	if len(key) != 32 {
-		return "", fmt.Errorf("keyed hash: key must be 32 bytes, got %d", len(key))
-	}
-	// #nosec G304 -- config paths are operator-controlled local inputs.
-	data, err := os.ReadFile(filePath)
+	hash, err := yamlconfig.ComputeKeyedFileHash(filePath, key)
 	if err != nil {
-		return "", fmt.Errorf("failed to read file: %w", err)
+		return "", fmt.Errorf("keyed hash: %w", err)
 	}
-	h := hmac.New(sha256.New, key)
-	_, _ = h.Write(data)
-	return "sha256:" + hex.EncodeToString(h.Sum(nil)), nil
+	return hash, nil
 }
 
 // VerifyFileHash verifies a file against an expected SHA-256 hash.
