@@ -1,0 +1,30 @@
+# config-shapes case 1: an accounts map and enforce, the Thinkpad shape
+# (docs/runbooks/privsep-thinkpad-enforce.md section 4). Needs a Linux root host
+# to create the accounts and give the gateway CAP_SETUID/CAP_SETGID.
+# run.sh substitutes the __...__ placeholders before use.
+service:
+  name: config-shapes-accounts-enforce
+  tick_interval: 1s
+  admission:
+    verify_integrity_on_boot: true
+    fail_on_drift: false
+    validate_config_on_boot: true
+state:
+  path: "./state/ductile.db"
+plugin_roots:
+  - "./plugins"
+secrets:
+  age_key_file: "age.key"
+  vault_file: "vault.age"
+accounts:
+  default:
+    uid: __WORKER_UID__
+    gid: __WORKER_GID__
+    state_dir: "__CASE_DIR__/accounts/default"
+  untrusted:
+    uid: __UNTRUSTED_UID__
+    gid: __UNTRUSTED_GID__
+    state_dir: "__CASE_DIR__/accounts/untrusted"
+include:
+  - api.yaml
+  - plugins.yaml

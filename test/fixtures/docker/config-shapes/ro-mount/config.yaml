@@ -1,0 +1,22 @@
+# config-shapes case 4: the Unraid shape (docs/runbooks/unraid-docker-upgrade.md).
+# The config directory is bind-mounted read-only into the gateway container, so
+# `config lock` runs in a one-shot read-write container. The state directory sits
+# beside the config directory and is mounted read-write. Needs Docker.
+service:
+  name: config-shapes-ro-mount
+  tick_interval: 1s
+  unconfined: true
+  admission:
+    verify_integrity_on_boot: true
+    fail_on_drift: true
+    validate_config_on_boot: true
+state:
+  path: "../state/ductile.db"
+plugin_roots:
+  - "./plugins"
+secrets:
+  age_key_file: "age.key"
+  vault_file: "vault.age"
+include:
+  - api.yaml
+  - plugins.yaml
