@@ -123,6 +123,29 @@ func TestCORSMiddlewareEmptyAllowList(t *testing.T) {
 	}
 }
 
+func TestCORSMiddlewareWildcardOrigin(t *testing.T) {
+	called := false
+	handler := corsMiddleware([]string{"*"})(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		called = true
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	req := httptest.NewRequest(http.MethodGet, "/jobs", nil)
+	req.Header.Set("Origin", "https://any.example")
+	resp := httptest.NewRecorder()
+
+	handler.ServeHTTP(resp, req)
+
+	if !called {
+		t.Fatal("wildcard allow list should pass through to next handler")
+	}
+	assertHeader(t, resp, "Access-Control-Allow-Origin", "*")
+
+	if got := resp.Header().Get("Access-Control-Allow-Credentials"); got != "" {
+		t.Fatalf("Access-Control-Allow-Credentials = %q, want empty when allow list is wildcard", got)
+	}
+}
+
 func assertHeader(t *testing.T, resp *httptest.ResponseRecorder, key, want string) {
 	t.Helper()
 	if got := resp.Header().Get(key); got != want {
