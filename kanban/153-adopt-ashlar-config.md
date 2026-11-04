@@ -400,3 +400,12 @@ Existing card 99 remains the posture follow-up. No new CLI is needed to fix comp
   and no host logged an unknown key. The Mac has four enabled plugins whose `${VAR}` is unset under
   launchd, so today they receive the literal placeholder. Dotenv ordering is not yet audited.
   (by @assistant)
+- 2026-11-04: Slices 1-3 built on `config/card153-ashlar-slices-1-3`. Sol's review blocked the merge:
+  Ashlar's hash functions trim the path, so a plugin entrypoint with a trailing space was
+  fingerprinted at one file and executed from another. A fix round is in progress. Matt ruled on
+  the three items G did not cover: leading-zero integers (`010`), `yes`/`no` booleans and
+  multi-document YAML are refused (TIGHTENED). (by @assistant)
+- 2026-11-04: Sol's re-check confirmed the trailing-space bypass fixed and found no runtime blocker.
+  Matt ruled on decision I: null over a mapping (an include with a bare `plugins:`) is rejected
+  (TIGHTENED); the operator fixes the file or drops the include. No Ashlar change needed. Slice 4
+  precondition: audit the three live hosts for null keys in includes before cutover. (by @assistant)
