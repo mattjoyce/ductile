@@ -10,11 +10,15 @@ package config
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
+
+	"github.com/mattjoyce/ashlar"
 )
 
 type parityBugCheck struct {
@@ -203,4 +207,29 @@ func TestParityScopeVerifierMatchesLoad(t *testing.T) {
 		t.Fatal(err)
 	}
 	both("edited after lock", false)
+}
+
+// TestParityNullOverMappingNamesBothFiles pins Matt's 2026-11-04 ruling on
+// decision I: a bare `plugins:` in an include, composed over the root's
+// plugins mapping, is refused as a composition error, and the error tells the
+// operator where both sides are, the root's mapping and the include's null,
+// by file:line:column.
+func TestParityNullOverMappingNamesBothFiles(t *testing.T) {
+	isolateParityEnv(t)
+	r := newParityRun(t, parityCaseByID(t, "merge/null-plugins-in-include"))
+	for _, m := range parityModes {
+		next := runAshlarLoad(r, m)
+		if next.err == nil {
+			t.Fatalf("%s: loadAshlar accepted a null over the plugins mapping", m.name)
+		}
+		if !errors.Is(next.err, ashlar.ErrComposition) {
+			t.Errorf("%s: error %v is not ashlar.ErrComposition", m.name, next.err)
+		}
+		msg := caseNormaliser(r.dir)(next.err.Error())
+		for _, want := range []string{"$CASE/config.yaml:10:3", "$CASE/null.yaml:1:9", "(/plugins)"} {
+			if !strings.Contains(msg, want) {
+				t.Errorf("%s: error does not name %s:\n  %s", m.name, want, msg)
+			}
+		}
+	}
 }

@@ -125,11 +125,10 @@ var (
 		waitsOn:  "Ashlar card yamlconfig-directory-include-policy",
 		note:     "Ashlar walks recursively and takes .yml and upper-case extensions",
 	}
-	gatedNull = parityClass{
-		code:     codeGated,
-		decision: "I: null and empty collection semantics are tested, not inferred",
-		waitsOn:  "slice 4 (ductile side, no Ashlar card): state the null-over-mapping rule and pin it with a test",
-		note:     "an explicit null over a mapping is a composition error in Ashlar and a no-op in load()",
+	tightNullOverMapping = parityClass{
+		code:     codeTightened,
+		decision: "I, ruled by Matt, 2026-11-04: an explicit null over a mapping is rejected (Ashlar's ErrComposition); the operator fixes the file or drops the include",
+		note:     "load() ignores the null and keeps the root's mapping. TestParityNullOverMappingNamesBothFiles pins that the error names both file locations",
 	}
 )
 
@@ -202,8 +201,8 @@ var parityGoldenRows = []goldenRow{
 	{"merge/include-false-replaces-true", "lenient", "field:/RemoteIngress/RequireKeyID", "true", "false", bugNonZeroWins},
 	{"merge/include-turns-api-off", "full", "outcome", "validation: invalid configuration: api.auth.tokens must be configured when API is enabled (or genesis a vault to bootstrap one — credential-ladder ADR)", "ok", bugNonZeroWins},
 	{"merge/include-turns-api-off", "lenient", "field:/API/Enabled", "true", "false", bugNonZeroWins},
-	{"merge/null-plugins-in-include", "full", "outcome", "ok", "ashlar composition at /plugins", gatedNull},
-	{"merge/null-plugins-in-include", "lenient", "outcome", "ok", "ashlar composition at /plugins", gatedNull},
+	{"merge/null-plugins-in-include", "full", "outcome", "ok", "ashlar composition at /plugins", tightNullOverMapping},
+	{"merge/null-plugins-in-include", "lenient", "outcome", "ok", "ashlar composition at /plugins", tightNullOverMapping},
 	{"posture/accounts-in-include", "full", "field:/Accounts", "null", "{\"default\":{\"GID\":4181,\"Home\":\"\",\"StateDir\":\"$CASE/accounts/default\",\"UID\":4181},\"untrusted\":{\"GID\":4182,\"Home\":\"\",\"StateDir\":\"$CASE/accounts/untrusted\",\"UID\":4182}}", bugDroppedKey},
 	{"posture/accounts-in-include", "lenient", "field:/Accounts", "null", "{\"default\":{\"GID\":4181,\"Home\":\"\",\"StateDir\":\"$CASE/accounts/default\",\"UID\":4181},\"untrusted\":{\"GID\":4182,\"Home\":\"\",\"StateDir\":\"$CASE/accounts/untrusted\",\"UID\":4182}}", bugDroppedKey},
 	{"posture/unconfined-in-include", "full", "field:/Service/Unconfined", "false", "true", bugDroppedKey},
