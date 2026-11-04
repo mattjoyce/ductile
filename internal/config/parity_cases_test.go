@@ -50,7 +50,12 @@ include:
 		{
 			id: "merge/include-dropped-keys",
 			files: map[string]string{
-				"config.yaml": parityRoot("include:\n  - extra.yaml\n"),
+				// The root pins max_workers so the legacy side does not fall back to
+				// the CPU-dependent default (max(1, NumCPU-1)), which would make
+				// the golden value differ between machines.
+				"config.yaml": "service:\n  name: parity\n  max_workers: 2\n" +
+					"state:\n  path: ./state.db\nplugin_roots:\n  - ./plugins\napi:\n  enabled: false\n" +
+					"include:\n  - extra.yaml\n",
 				"extra.yaml": `service:
   max_workers: 3
   strict_mode: true
