@@ -1,6 +1,6 @@
 ---
 id: 106
-status: todo
+status: wontfix
 priority: Normal
 blocked_by: []
 tags: [deployment, privsep, admin, unconfined, split, v1.0]
@@ -54,3 +54,7 @@ Members (move off the enforced gateway):
   unconfined, runs as a docker-group user) + docs/runbooks/ductile-admin-instance.md (the two-instance
   split + stand-up). REMAINING (operational, on the host): create the privileged user, write its config
   (the unconfinable plugins, no accounts map, its own port), start it, decommission the old --user gw. (by @assistant)
+
+## Closed 2026-11-01 (board trim)
+
+Overtaken by the hybrid trust tier (#111): unconfinable admin plugins run under the credentialed trusted account, not a second instance.

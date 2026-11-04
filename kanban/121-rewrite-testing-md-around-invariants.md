@@ -1,6 +1,6 @@
 ---
 id: 121
-status: todo
+status: wontfix
 priority: Normal
 tags: [testing, docs, naur-procida]
 ---
@@ -35,3 +35,7 @@ if all else were lost (Naur's test); no page is two Procida-types at once.
 ## Notes
 Supersedes the interim tier edits in PR #122 (fold/replace). The fixture index lives in
 `test/fixtures/docker/README.md`.
+
+## Closed 2026-11-01 (board trim)
+
+Doc rewrite with no owner or trigger; TESTING.md drift gets fixed when a card touches it.

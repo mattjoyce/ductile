@@ -1,6 +1,6 @@
 ---
 id: 113
-status: idea
+status: wontfix
 priority: Medium
 tags: [ux, setup, cli, config, design]
 ---
@@ -138,3 +138,7 @@ Standalone binary only makes sense for bootstrap scenarios (wizard must run befo
 - Config schema: `schemas/config.schema.json`
 - Example configs: `config/` directory
 - Config loader: `cmd/ductile/config.go`, `cmd/ductile/config_manage.go`
+
+## Closed 2026-11-01 (board trim)
+
+Idea only; no current user needs a setup wizard.

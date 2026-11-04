@@ -1,6 +1,6 @@
 ---
 id: 110
-status: todo
+status: wontfix
 priority: Normal
 blocked_by: []
 tags: [privsep, pipelines, webhooks, notify, vault, enforce, migration]
@@ -61,3 +61,7 @@ disabled/blocked plugin.
   the full privsep notify model end-to-end; the two findings (notify_on_complete gating; per-route
   vault_principal'd instance) corrected the initial "trivial carry" assumption. Remaining chains are
   per-chain wire-ups as their upstream plugins unblock. (by @assistant)
+
+## Closed 2026-11-01 (board trim)
+
+Overtaken by the hybrid trust tier (#111) and the live 40-plugin gateway; the per-chain migration is no longer the path.

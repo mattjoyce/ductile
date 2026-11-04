@@ -1,6 +1,6 @@
 ---
 id: 83
-status: backlog
+status: done
 priority: High
 tags: [privsep, epic]
 ---
@@ -182,3 +182,7 @@ privileged (`CAP_SETUID`) gateway dropping privilege at spawn.
   cost: a gateway holding `CAP_SETUID`+`CAP_SETGID` (not full root).
 - Constraints: solo/homelab → simplest correct floor, YAGNI. Go. TDD encouraged.
   Commit `<component>: <action> <what>`; never attribute AI.
+
+## Closed 2026-11-01 (board trim)
+
+Every child card is done or closed. Posture work continues as the three postures in docs/DEPLOYMENT_POSTURES.md.

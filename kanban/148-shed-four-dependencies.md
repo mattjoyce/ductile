@@ -1,6 +1,6 @@
 ---
 id: 148
-status: doing
+status: done
 priority: Normal
 tags: [dependencies, supply-chain, integrity, api]
 ---
@@ -163,3 +163,7 @@ GLOSSARY, OPERATOR_GUIDE (upgrade note: one `config lock`), SECRETS, REMOTE_EVEN
 - 2026-10-28: slice 3 design note written, awaiting review.
 - 2026-10-28: slice 3 design approved: hard cut, plugins re-hashed in place, ships in v1.1.0 with card 145.
 - 2026-10-28: slices 0 (#185) and 3 (#186) merged, slice 3 field-tested on the thinkpad (migrated, boots, plugins spawn); ship in v1.1.0. Slice 2 (chi) remains.
+
+## Narrative
+
+- 2026-11-01: Closed with the deadcode tool and BLAKE3 reductions shipped (#185, #186). UUID stays because SQLite requires it transitively. The principal agreed to retain chi: it is an established, actively maintained router with no third-party dependencies, and replacing its routing and middleware would add owned code without a demonstrated benefit. Slice 2 is dropped; the original proposal above remains as history. The original completion criterion requiring chi removal is superseded by this decision. Published client-IP middleware advisories and our use of RealIP warrant a focused update and trust-boundary review, tracked in jab0. (by @assistant)

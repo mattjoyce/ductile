@@ -1,6 +1,6 @@
 ---
 id: 143
-status: doing
+status: done
 priority: High
 blocked_by: []
 tags: [review, hickey, armstrong, privsep, ownership, lens-pass]
@@ -108,3 +108,7 @@ invariant, rather than trusting six write paths to each get it right forever.
 - Scenarios 7–9 of the posture fixture have never executed anywhere. Dell run required before push;
   file capabilities are silently stripped on a `nosuid` mount and the fixture's `getcap` check reads
   the xattr, not the runtime set.
+
+## Closed 2026-11-01 (board trim)
+
+Findings landed in #181 and the #167-#180 fixes; v1.0.0 and v1.1.0 shipped. A2 (doctor supervisor) was never carded and is dropped.

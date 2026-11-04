@@ -87,3 +87,9 @@ So `vault explain` is primarily a **key-holding / daemon** verb; its no-key stat
   vault authority is inside the encrypted blob (thin static tier; explain is a key-holding/daemon
   verb). Both reuse existing near-pure projections (gate/resolve for privsep; compose denial taxonomy
   + Store.Check for vault). Hard rule for vault: present authority shape, never secret values. (by @assistant)
+
+## Closed 2026-11-01 (board trim)
+
+Folded into card 153 slice 5: config explain also reports the resolved privsep posture.
+
+Reopened 2026-11-02: card 153 decision note defers posture presentation to this card.

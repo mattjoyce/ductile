@@ -1,6 +1,6 @@
 ---
 id: 103
-status: todo
+status: wontfix
 priority: High
 blocked_by: []
 tags: [privsep, thinkpad, deploy, phase2, fix-forward]
@@ -69,3 +69,7 @@ to admin-only.
   Phase 1 proved the wall with exemplar plugins; this restores real function. The cutover surfaced the
   architectural finding that the gateway mixed confinable data plugins with unconfinable admin
   automation — Phase 2 formalizes the split. (by @assistant)
+
+## Closed 2026-11-01 (board trim)
+
+Overtaken by the hybrid trust tier (#111): the Thinkpad runs one enforced gateway with 40 plugins loaded (healthz, 2026-11-01).

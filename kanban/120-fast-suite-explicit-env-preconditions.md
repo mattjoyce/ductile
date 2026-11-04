@@ -1,6 +1,6 @@
 ---
 id: 120
-status: review
+status: done
 priority: Normal
 tags: [testing, fast-tier, preconditions, privsep]
 ---
@@ -86,3 +86,7 @@ Rebased onto origin/main (a0ba9c7+). Shebang coverage checked: every named bash/
    attributed to this change. Watch CI.
 4. Still open for Done-when: one run as root without bash/python3 (e.g. `golang:alpine`). Card stays
    `doing` until that run.
+
+## Closed 2026-11-01 (board trim)
+
+Both guards merged (#184, #126). The root-without-interpreters run rides on card 153's Thinkpad Docker lane.

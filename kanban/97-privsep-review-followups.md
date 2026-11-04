@@ -1,6 +1,6 @@
 ---
 id: 97
-status: todo
+status: wontfix
 priority: Normal
 blocked_by: []
 tags: [privsep, review-followup, refactor]
@@ -48,3 +48,7 @@ each for a stated reason, not an oversight.
   validation, named secrets surface, sentinel split, vocab cleanup); these five were deferred with
   explicit risk/benefit reasons (T3 footgun, T5 risky-for-minor, T9 pre-existing, T15 no-fix, lint).
   Not blocking the PR. (by @assistant)
+
+## Closed 2026-11-01 (board trim)
+
+Deferred polish with stated reasons; no correctness issue left (T3 was promoted and handled separately).

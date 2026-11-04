@@ -1,6 +1,6 @@
 ---
 id: 107
-status: todo
+status: wontfix
 priority: High
 blocked_by: []
 tags: [vault, privsep, plugins, secrets, v1.0, dev-workstream]
@@ -97,3 +97,7 @@ Result: secret over stdin ✓, real downstream call ✓, dropped to uid 1001 ✓
 principal unknown" → spawn REFUSED (not a silent secret-less run) → reverted → healthy. #108 gate is
 real on the e2ccd96/3774150 binary. Plugin code committed to ductile-plugins @ a1934e5.
 `github_repo_sync` + the git/uv plugins are recipe-correct but RUNTIME-blocked under enforce → [[109-uv-shebang-plugins-under-privsep]].
+
+## Closed 2026-11-01 (board trim)
+
+Overtaken by the hybrid trust tier (#111): secret-holding plugins run on the trusted account. Reopen only if a plugin must be confined and keyed.
