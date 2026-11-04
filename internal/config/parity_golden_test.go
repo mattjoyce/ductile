@@ -97,7 +97,7 @@ var (
 	}
 	gatedEmptyEnv = parityClass{
 		code:     codeGated,
-		decision: "empty-env prerequisite: set-but-empty stays distinct from unset",
+		decision: "G (empty-env prerequisite): set-but-empty stays distinct from unset",
 		waitsOn:  "Ashlar card yamlconfig-empty-vs-unset-env",
 		note:     "Ashlar treats a set-but-empty variable as unresolved; load() substitutes the empty string",
 	}
