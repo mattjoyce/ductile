@@ -225,8 +225,8 @@ for name in $CASES; do
       if [[ "$(id -u)" -ne 0 ]] && sudo -n true 2>/dev/null; then
         fixture_log "accounts-enforce: not root, running this case under sudo"
         child_rc=0
-        CONFIG_SHAPES_CASES=accounts-enforce FIXTURE_NAME="${FIXTURE_NAME}-accounts-enforce" \
-          sudo -n --preserve-env=ROOT_DIR,FIXTURE_NAME,ARTIFACT_ROOT,CONFIG_SHAPES_CASES "$0" \
+        CONFIG_SHAPES_CASES=accounts-enforce ARTIFACT_DIR="$ARTIFACT_DIR/accounts-enforce-sudo" \
+          sudo -n --preserve-env=ROOT_DIR,FIXTURE_NAME,FIXTURE_DIR,ARTIFACT_ROOT,ARTIFACT_DIR,CONFIG_SHAPES_CASES "$0" \
           || child_rc=$?
         case "$child_rc" in
           0) fixture_log "accounts-enforce: passed under sudo" ;;
