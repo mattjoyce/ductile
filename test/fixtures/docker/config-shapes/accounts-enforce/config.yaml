@@ -20,11 +20,11 @@ accounts:
   default:
     uid: __WORKER_UID__
     gid: __WORKER_GID__
-    state_dir: "__CASE_DIR__/accounts/default"
+    state_dir: "__STATE_ROOT__/default"
   untrusted:
     uid: __UNTRUSTED_UID__
     gid: __UNTRUSTED_GID__
-    state_dir: "__CASE_DIR__/accounts/untrusted"
+    state_dir: "__STATE_ROOT__/untrusted"
 include:
   - api.yaml
   - plugins.yaml

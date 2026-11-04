@@ -100,13 +100,17 @@ exec su -s /bin/bash -c "\$cmd" $CASE1_SVC_USER
 EOF
   chmod 0755 "$wrapper"
 
-  local cfg="$work/config"
-  stage_case accounts-enforce "$cfg"
-  mkdir -p "$cfg/accounts/default" "$cfg/accounts/untrusted"
+  # Account state dirs live outside the config dir, as on the Thinkpad
+  # (/var/lib/ductile/accounts): the gateway keeps its config dir 0700, so a
+  # state dir beneath it is unreachable by the accounts (readability check).
+  local cfg="$work/config" state="$work/accounts"
+  STATE_ROOT="$state" stage_case accounts-enforce "$cfg"
+  mkdir -p "$state/default" "$state/untrusted"
+  chmod 0755 "$state"
   chown -R "$CASE1_SVC_UID:$CASE1_SVC_UID" "$cfg"
-  chown "$WORKER_UID:$WORKER_GID" "$cfg/accounts/default"
-  chown "$UNTRUSTED_UID:$UNTRUSTED_GID" "$cfg/accounts/untrusted"
-  chmod 0700 "$cfg/accounts/default" "$cfg/accounts/untrusted"
+  chown "$WORKER_UID:$WORKER_GID" "$state/default"
+  chown "$UNTRUSTED_UID:$UNTRUSTED_GID" "$state/untrusted"
+  chmod 0700 "$state/default" "$state/untrusted"
 
   local saved_bin="$BIN" sock="/tmp/dcs-enforce-$$.sock" api
   SOCKETS+=("$sock")

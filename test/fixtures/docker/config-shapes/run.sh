@@ -83,7 +83,7 @@ stage_case() {
   cp "$ROOT_DIR/plugins/echo/manifest.yaml" "$ROOT_DIR/plugins/echo/run.sh" "$dest/plugins/echo/"
   local f
   for f in "$dest"/*.yaml; do
-    sed -i.bak -e "s#__CASE_DIR__#$dest#g" \
+    sed -i.bak -e "s#__CASE_DIR__#$dest#g" -e "s#__STATE_ROOT__#${STATE_ROOT:-$dest/accounts}#g" \
       -e "s#__WORKER_UID__#${WORKER_UID:-4181}#g" -e "s#__WORKER_GID__#${WORKER_GID:-4181}#g" \
       -e "s#__UNTRUSTED_UID__#${UNTRUSTED_UID:-4182}#g" -e "s#__UNTRUSTED_GID__#${UNTRUSTED_GID:-4182}#g" "$f"
     rm -f "$f.bak"

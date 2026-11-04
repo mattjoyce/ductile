@@ -194,6 +194,7 @@ func substituteParityPlaceholders(t *testing.T, dir string) {
 			return err
 		}
 		text := strings.ReplaceAll(string(data), "__CASE_DIR__", dir)
+		text = strings.ReplaceAll(text, "__STATE_ROOT__", filepath.Join(dir, "accounts"))
 		for k, v := range parityPlaceholders {
 			text = strings.ReplaceAll(text, k, v)
 		}
