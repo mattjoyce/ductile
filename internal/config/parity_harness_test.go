@@ -2,12 +2,15 @@ package config
 
 // TestAshlarParity runs load() and loadAshlar() over the parity corpus in two
 // modes and requires every difference to be a reviewed golden entry
-// (parityGolden). It fails on a difference with no entry, on an entry coded
-// UNDECIDED, and on an entry whose difference no longer occurs. Entries coded
-// UNDECIDED-pending are logged, not failed: they are differences this slice
-// could not classify from the decision note, awaiting a code.
+// (parityGolden) whose pinned legacy and Ashlar values match what each loader
+// produced. It fails on a difference with no entry, on a pinned value that
+// moved, on an entry coded UNDECIDED, and on an entry whose difference no
+// longer occurs. GATED entries pass here and fail TestAshlarCutoverReadiness.
 //
-// To print the current difference set as golden entries:
+// Each case runs with a hermetic environment: every variable the case's files
+// reference is unset first, then the case's own variables are set.
+//
+// To print the current difference set as golden rows:
 //
 //	go test ./internal/config -run TestAshlarParity -parity.dump
 
@@ -16,35 +19,23 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io/fs"
 	"os"
+	"path/filepath"
 	"reflect"
+	"regexp"
 	"sort"
 	"strings"
 	"testing"
 
 	"github.com/mattjoyce/ashlar"
+	"go.yaml.in/yaml/v3"
 )
 
 var (
-	parityDump    = flag.Bool("parity.dump", false, "print the current parity differences as golden entries")
+	parityDump    = flag.Bool("parity.dump", false, "print the current parity differences as golden rows")
 	parityVerbose = flag.Bool("parity.verbose", false, "log both loaders' outcome for every case and mode")
 )
-
-// parityCode is the reason a difference is accepted (card 153 slice 3).
-type parityCode string
-
-const (
-	codeBugFixed  parityCode = "BUG-FIXED"         // a Problem-now bug load() has and Ashlar does not
-	codeTightened parityCode = "TIGHTENED"         // a decision-G tightening
-	codeWidened   parityCode = "WIDENED"           // decision H: Ashlar reads files load() does not
-	codeUndecided parityCode = "UNDECIDED"         // no decision; fails the harness
-	codePending   parityCode = "UNDECIDED-pending" // not classifiable from the decision note; reported
-)
-
-type parityEntry struct {
-	code parityCode
-	note string
-}
 
 // parityMode is one load() variant: lenient is LoadLenient, full is Load.
 type parityMode struct {
@@ -66,10 +57,31 @@ type paritySide struct {
 	err     error
 }
 
-func runLegacyLoad(path string, m parityMode, env map[string]string) paritySide {
+// parityRun is one case materialized: its root path, its directory (for
+// normalising paths out of values), and its environment plan.
+type parityRun struct {
+	path, dir string
+	set       map[string]string
+	unset     []string
+}
+
+func newParityRun(t *testing.T, c parityCase) parityRun {
+	t.Helper()
+	path := c.materialize(t)
+	dir := strings.TrimSuffix(path, string(filepath.Separator)+filepath.FromSlash(c.rootFile()))
+	var unset []string
+	for _, name := range referencedEnv(t, dir) {
+		if _, ok := c.env[name]; !ok {
+			unset = append(unset, name)
+		}
+	}
+	return parityRun{path: path, dir: dir, set: c.env, unset: unset}
+}
+
+func runLegacyLoad(r parityRun, m parityMode) paritySide {
 	var side paritySide
-	side.env = withParityEnv(env, func() {
-		side.cfg, _, side.err = load(path, m.verify, m.validate, m.defaults)
+	side.env = withParityEnv(r, func() {
+		side.cfg, _, side.err = load(r.path, m.verify, m.validate, m.defaults)
 	})
 	if side.cfg != nil {
 		for f := range side.cfg.SourceFiles {
@@ -79,11 +91,11 @@ func runLegacyLoad(path string, m parityMode, env map[string]string) paritySide 
 	return side
 }
 
-func runAshlarLoad(path string, m parityMode, env map[string]string) paritySide {
+func runAshlarLoad(r parityRun, m parityMode) paritySide {
 	var side paritySide
 	var res *ashlarLoad
-	side.env = withParityEnv(env, func() {
-		res, side.err = loadAshlar(path, m.verify, m.validate, m.defaults)
+	side.env = withParityEnv(r, func() {
+		res, side.err = loadAshlar(r.path, m.verify, m.validate, m.defaults)
 	})
 	if res != nil {
 		side.unknown = res.unknown
@@ -94,12 +106,15 @@ func runAshlarLoad(path string, m parityMode, env map[string]string) paritySide 
 	return side
 }
 
-// withParityEnv sets env, runs fn, and returns the variables fn added or
-// changed; the process environment is restored afterwards.
-func withParityEnv(env map[string]string, fn func()) map[string]string {
+// withParityEnv applies the run's environment plan, runs fn, and returns the
+// variables fn added or changed; the process environment is restored after.
+func withParityEnv(r parityRun, fn func()) map[string]string {
 	saved := environMap()
 	defer restoreEnviron(saved)
-	for k, v := range env {
+	for _, k := range r.unset {
+		_ = os.Unsetenv(k)
+	}
+	for k, v := range r.set {
 		_ = os.Setenv(k, v)
 	}
 	before := environMap()
@@ -135,46 +150,119 @@ func restoreEnviron(saved map[string]string) {
 	}
 }
 
-// parityDifference is one way the two sides differ. key is stable across runs;
-// detail is for the reader.
+// parityDifference is one way the two sides differ: a stable key and each
+// side's value, with the case directory replaced by $CASE.
 type parityDifference struct {
-	key, detail string
+	key, legacy, ashlar string
 }
 
-func diffParitySides(legacy, next paritySide) []parityDifference {
+func diffParitySides(r parityRun, legacy, next paritySide) []parityDifference {
+	norm := caseNormaliser(r.dir)
 	var out []parityDifference
 	for _, u := range next.unknown {
-		out = append(out, parityDifference{key: "unknown-key:" + u, detail: "decision C emulation pruned this key"})
-	}
-	switch {
-	case legacy.err == nil && next.err != nil:
-		return append(out, parityDifference{key: "outcome:ashlar-error:" + ashlarErrorClass(next.err), detail: next.err.Error()})
-	case legacy.err != nil && next.err == nil:
-		return append(out, parityDifference{key: "outcome:legacy-error", detail: legacy.err.Error()})
-	case legacy.err != nil:
-		return out
-	}
-	for _, p := range diffJSON("", canonicalConfig(legacy.cfg), canonicalConfig(next.cfg)) {
-		out = append(out, parityDifference{key: "field:" + p.path, detail: p.detail})
-	}
-	if l, n := sortedCopy(legacy.files), sortedCopy(next.files); !reflect.DeepEqual(l, n) {
-		out = append(out, parityDifference{key: "files", detail: fmt.Sprintf("legacy=%v ashlar=%v", l, n)})
+		out = append(out, parityDifference{key: "unknown-key:" + u, legacy: "ignored", ashlar: "collected (v0.4.0 DecodeStrict refuses)"})
 	}
 	for _, name := range unionKeys(legacy.env, next.env) {
 		lv, lok := legacy.env[name]
 		nv, nok := next.env[name]
 		if lok != nok || lv != nv {
-			out = append(out, parityDifference{key: "env:" + name, detail: fmt.Sprintf("legacy=%q(%t) ashlar=%q(%t)", lv, lok, nv, nok)})
+			out = append(out, parityDifference{key: "env:" + name, legacy: envValue(lv, lok), ashlar: envValue(nv, nok)})
 		}
+	}
+	lc, nc := classifyParityError(legacy.err, norm), classifyParityError(next.err, norm)
+	if lc.class != nc.class {
+		out = append(out, parityDifference{key: "outcome", legacy: lc.detail, ashlar: nc.detail})
+	}
+	if legacy.err != nil || next.err != nil {
+		return out
+	}
+	for _, p := range diffJSON("", canonicalConfig(legacy.cfg), canonicalConfig(next.cfg)) {
+		out = append(out, parityDifference{key: "field:" + p.path, legacy: norm(p.legacy), ashlar: norm(p.ashlar)})
+	}
+	if l, n := relFiles(legacy.files, norm), relFiles(next.files, norm); l != n {
+		out = append(out, parityDifference{key: "files", legacy: l, ashlar: n})
 	}
 	return out
 }
 
-// ashlarErrorClass names an error by its Ashlar category and pointer, or
-// "ductile" when it is not an Ashlar error. Paths and messages stay out of the
-// key so it is stable across machines.
-func ashlarErrorClass(err error) string {
-	classes := []struct {
+func envValue(v string, set bool) string {
+	if !set {
+		return "(not exported)"
+	}
+	return fmt.Sprintf("%q", v)
+}
+
+func relFiles(files []string, norm func(string) string) string {
+	out := make([]string, len(files))
+	for i, f := range files {
+		out[i] = norm(f)
+	}
+	sort.Strings(out)
+	return strings.Join(out, " ")
+}
+
+// caseNormaliser replaces the case directory, with or without its leading
+// slash (Ashlar's origins are root-relative), by $CASE.
+func caseNormaliser(dir string) func(string) string {
+	return func(s string) string {
+		s = strings.ReplaceAll(s, dir, "$CASE")
+		return strings.ReplaceAll(s, strings.TrimPrefix(dir, "/"), "$CASE")
+	}
+}
+
+// parityUnsetVarName matches the variable load()'s validation names when a
+// plugin config holds an unresolved ${VAR}. It walks a map, so with two unset
+// variables the one it names changes between runs; the harness masks it.
+var parityUnsetVarName = regexp.MustCompile(`\$\{[A-Za-z_][A-Za-z0-9_]*\} is not set`)
+
+// parityErrorShape is an error's cause class, which decides equality between
+// the two loaders, and a detail string, which golden entries pin.
+type parityErrorShape struct{ class, detail string }
+
+// classifyParityError sorts an error into a cause class both loaders share:
+// ok, validation (load()'s own validation, run by both), not-found,
+// include-cycle, syntax, duplicate-key, trailing-content, type,
+// unknown-field, unresolved, composition, or ductile (any other loader-stage
+// error, compared by message). Legacy loader-stage errors are plain
+// fmt.Errorf values, so this test-only classifier reads their text.
+func classifyParityError(err error, norm func(string) string) parityErrorShape {
+	if err == nil {
+		return parityErrorShape{"ok", "ok"}
+	}
+	msg := parityUnsetVarName.ReplaceAllString(norm(firstLine(err.Error())), "${…} is not set")
+	if strings.HasPrefix(msg, "invalid configuration: ") || strings.HasPrefix(msg, "configuration validation failed: ") {
+		return parityErrorShape{"validation:" + msg, "validation: " + msg}
+	}
+	var aerr *ashlar.Error
+	if errors.As(err, &aerr) {
+		name := ashlarCategory(err)
+		return parityErrorShape{name, "ashlar " + name + " at " + string(aerr.Pointer)}
+	}
+	var te *yaml.TypeError
+	switch {
+	case errors.As(err, &te):
+		return parityErrorShape{"type", "yaml type error: " + norm(strings.Join(te.Errors, "; "))}
+	case strings.Contains(msg, "circular dependency"):
+		return parityErrorShape{"include-cycle", "legacy include cycle"}
+	case errors.Is(err, fs.ErrNotExist) || strings.Contains(msg, "file not found"):
+		return parityErrorShape{"not-found", "legacy not found"}
+	case strings.Contains(msg, "already defined"):
+		return parityErrorShape{"duplicate-key", "legacy duplicate key"}
+	case strings.HasPrefix(msg, "failed to parse YAML: "):
+		return parityErrorShape{"syntax", "legacy YAML syntax error"}
+	}
+	return parityErrorShape{"ductile:" + msg, "ductile: " + msg}
+}
+
+func firstLine(s string) string {
+	line, _, _ := strings.Cut(s, "\n")
+	return line
+}
+
+// ashlarCategory names the most specific Ashlar sentinel err matches. A decode
+// ErrValidation is a type mismatch, the same class as a yaml.v3 TypeError.
+func ashlarCategory(err error) string {
+	for _, c := range []struct {
 		name string
 		err  error
 	}{
@@ -185,19 +273,14 @@ func ashlarErrorClass(err error) string {
 		{"unresolved", ashlar.ErrUnresolved},
 		{"syntax", ashlar.ErrSyntax},
 		{"composition", ashlar.ErrComposition},
-		{"validation", ashlar.ErrValidation},
+		{"type", ashlar.ErrValidation},
 		{"not-found", ashlar.ErrNotFound},
-	}
-	for _, c := range classes {
+	} {
 		if errors.Is(err, c.err) {
-			var aerr *ashlar.Error
-			if errors.As(err, &aerr) && aerr.Pointer != "" {
-				return c.name + ":" + string(aerr.Pointer)
-			}
 			return c.name
 		}
 	}
-	return "ductile"
+	return "ashlar"
 }
 
 // canonicalConfig is cfg as a JSON tree with the fields the card excludes from
@@ -217,7 +300,7 @@ func canonicalConfig(cfg *Config) any {
 	return tree
 }
 
-type jsonDifference struct{ path, detail string }
+type jsonDifference struct{ path, legacy, ashlar string }
 
 // diffJSON lists the paths at which two JSON trees differ, descending through
 // objects and equal-length arrays.
@@ -246,7 +329,7 @@ func diffJSON(at string, a, b any) []jsonDifference {
 	if at == "" {
 		at = "/"
 	}
-	return []jsonDifference{{path: at, detail: fmt.Sprintf("legacy=%s ashlar=%s", compactJSON(a), compactJSON(b))}}
+	return []jsonDifference{{path: at, legacy: compactJSON(a), ashlar: compactJSON(b)}}
 }
 
 func compactJSON(v any) string {
@@ -282,86 +365,12 @@ func sortedCopy(in []string) []string {
 	return out
 }
 
-// isolateParityEnv points HOME at an empty directory and clears the age key
-// override, so the operator's own ~/.config/ductile cannot leak into a run.
+// isolateParityEnv points HOME at an empty directory and clears the variables
+// load() reads directly, so the operator's own ~/.config/ductile and
+// environment cannot leak into a run.
 func isolateParityEnv(t *testing.T) {
 	t.Helper()
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv(ageKeyEnvVar, "")
 	t.Setenv("DUCTILE_CONFIG_DIR", "")
-}
-
-// outcomeName labels a pair of results for the coverage tally.
-func outcomeName(legacy, next paritySide) string {
-	switch {
-	case legacy.err == nil && next.err == nil:
-		return "both loaded"
-	case legacy.err != nil && next.err != nil:
-		return "both refused"
-	case legacy.err != nil:
-		return "only ashlar loaded"
-	default:
-		return "only legacy loaded"
-	}
-}
-
-func TestAshlarParity(t *testing.T) {
-	isolateParityEnv(t)
-	seen := make(map[string]bool)
-	tally := make(map[string]int)
-	var dump []string
-	pending := 0
-	corpus := parityCorpus(t)
-	for _, c := range corpus {
-		path := c.materialize(t)
-		for _, m := range parityModes {
-			legacy := runLegacyLoad(path, m, c.env)
-			next := runAshlarLoad(path, m, c.env)
-			tally[m.name+": "+outcomeName(legacy, next)]++
-			if *parityVerbose {
-				t.Logf("%s %s: %s\n    legacy: %v\n    ashlar: %v", c.id, m.name, outcomeName(legacy, next), legacy.err, next.err)
-			}
-			for _, d := range diffParitySides(legacy, next) {
-				key := c.id + " " + m.name + " " + d.key
-				seen[key] = true
-				entry, ok := parityGolden[key]
-				switch {
-				case *parityDump:
-					dump = append(dump, fmt.Sprintf("\t%q: {codeX, %q},", key, d.detail))
-				case !ok:
-					t.Errorf("unrecorded difference %s\n    %s", key, d.detail)
-				case entry.code == codeUndecided:
-					t.Errorf("UNDECIDED difference %s: %s", key, entry.note)
-				case entry.code == codePending:
-					pending++
-					t.Logf("UNDECIDED-pending %s: %s", key, entry.note)
-				}
-			}
-		}
-	}
-	if *parityDump {
-		t.Logf("current differences:\n%s", strings.Join(dump, "\n"))
-		return
-	}
-	for key := range parityGolden {
-		if !seen[key] {
-			t.Errorf("golden entry no longer occurs (remove it, or restore the case): %s", key)
-		}
-	}
-	outcomes := mapKeys(boolKeys(tally))
-	sort.Strings(outcomes)
-	var lines []string
-	for _, o := range outcomes {
-		lines = append(lines, fmt.Sprintf("%s=%d", o, tally[o]))
-	}
-	t.Logf("parity: %d cases x %d modes; %s; %d golden entries, %d UNDECIDED-pending",
-		len(corpus), len(parityModes), strings.Join(lines, ", "), len(parityGolden), pending)
-}
-
-func boolKeys(m map[string]int) map[string]bool {
-	out := make(map[string]bool, len(m))
-	for k := range m {
-		out[k] = true
-	}
-	return out
 }

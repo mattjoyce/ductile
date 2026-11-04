@@ -2,7 +2,12 @@ package config
 
 // The corpus TestAshlarParity runs both loaders over (card 153 slice 3):
 //   - every YAML raw-string literal in this package's other tests that has at
-//     least one top-level Config key, each loaded as a one-file config;
+//     least one top-level Config key and no include list, each loaded as a
+//     one-file config. A literal with an include list is one file of a
+//     directory a test builds around it; alone, both loaders stop at the
+//     missing include, which proves nothing, so it is left out and counted
+//     (parityLiteralCases). The directory tests that matter are rebuilt whole
+//     in parityDirectoryTestCases;
 //   - every config directory under test/fixtures/docker (config-shapes holds
 //     the three posture shapes and the ro-mount shape);
 //   - the files `ductile config init` writes;
@@ -19,6 +24,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -43,8 +49,9 @@ var parityPlaceholders = map[string]string{
 }
 
 // parityCase is one corpus entry: a tree of files (from src, then files), the
-// root file to load, environment variables set for the run, and the files to
-// age-encrypt with a key written beside the root.
+// root file to load, environment variables set for the run, the files to
+// age-encrypt with a key written beside the root, vault secrets to seed (which
+// also writes the key), and scope files to lock into .checksums.
 type parityCase struct {
 	id      string
 	src     string
@@ -53,6 +60,52 @@ type parityCase struct {
 	env     map[string]string
 	encrypt []string
 	ageKey  bool
+	vault   map[string]string
+	lock    []string
+}
+
+// parityEnvRef matches a ${NAME} reference; parityDotEnvName matches the name
+// on a KEY=VALUE line, dashes included because load() accepts them.
+var (
+	parityEnvRef     = regexp.MustCompile(`\$\{([A-Za-z_][A-Za-z0-9_]*)\}`)
+	parityDotEnvName = regexp.MustCompile(`(?m)^[ \t]*(?:export[ \t]+)?([A-Za-z_][A-Za-z0-9_-]*)[ \t]*=`)
+)
+
+// parityEnvGlobals are the variables load() reads directly.
+var parityEnvGlobals = []string{ageKeyEnvVar, "DUCTILE_CONFIG_DIR"}
+
+// referencedEnv lists every variable a materialized case can read: each
+// ${NAME} in any of its files, each name a .env file in it defines, and the
+// variables load() reads directly. A hermetic run unsets all of them except
+// the ones the case sets.
+func referencedEnv(t *testing.T, dir string) []string {
+	t.Helper()
+	names := make(map[string]bool)
+	for _, g := range parityEnvGlobals {
+		names[g] = true
+	}
+	err := filepath.WalkDir(dir, func(p string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return err
+		}
+		data, err := os.ReadFile(p)
+		if err != nil {
+			return err
+		}
+		for _, m := range parityEnvRef.FindAllSubmatch(data, -1) {
+			names[string(m[1])] = true
+		}
+		if strings.HasSuffix(p, ".env") {
+			for _, m := range parityDotEnvName.FindAllSubmatch(data, -1) {
+				names[string(m[1])] = true
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("scan %s for environment references: %v", dir, err)
+	}
+	return sortedCopy(mapKeys(names))
 }
 
 func (c parityCase) rootFile() string {
@@ -78,8 +131,16 @@ func (c parityCase) materialize(t *testing.T) string {
 		writeParityFile(t, filepath.Join(dir, rel), []byte(content))
 	}
 	substituteParityPlaceholders(t, dir)
-	if c.ageKey || len(c.encrypt) > 0 {
+	switch {
+	case c.vault != nil:
+		seedVault(t, dir, c.vault)
+	case c.ageKey || len(c.encrypt) > 0:
 		writeParityAgeKey(t, dir, c.encrypt)
+	}
+	if len(c.lock) > 0 {
+		if _, err := GenerateChecksumsWithReport(dir, c.lock, false); err != nil {
+			t.Fatalf("lock %v in %s: %v", c.lock, c.id, err)
+		}
 	}
 	return filepath.Join(dir, c.rootFile())
 }
@@ -166,20 +227,22 @@ func writeParityAgeKey(t *testing.T, dir string, encrypt []string) {
 	}
 }
 
-// parityCorpus returns every case, sorted by id.
-func parityCorpus(t *testing.T) []parityCase {
+// parityCorpus returns every case, sorted by id, and the number of literals
+// left out as fragments of a directory setup.
+func parityCorpus(t *testing.T) ([]parityCase, int) {
 	t.Helper()
-	cases := parityLiteralCases(t)
+	cases, skipped := parityLiteralCases(t)
 	cases = append(cases, parityFixtureCases(t)...)
 	cases = append(cases, parityConfigInitCase())
 	cases = append(cases, parityHandBuiltCases()...)
+	cases = append(cases, parityDirectoryTestCases()...)
 	sort.Slice(cases, func(i, j int) bool { return cases[i].id < cases[j].id })
 	for i := 1; i < len(cases); i++ {
 		if cases[i].id == cases[i-1].id {
 			t.Fatalf("duplicate parity case id %q", cases[i].id)
 		}
 	}
-	return cases
+	return cases, skipped
 }
 
 // configTopLevelKeys is the set of YAML keys Config decodes at the top level.
@@ -198,8 +261,9 @@ func configTopLevelKeys() map[string]bool {
 // parityLiteralCases extracts every raw-string literal from this package's
 // other test files that parses as a YAML mapping with a Config key. The id is
 // the source file plus a hash of the literal, so moving a test does not move
-// its golden entries but editing the literal does.
-func parityLiteralCases(t *testing.T) []parityCase {
+// its golden entries but editing the literal does. Literals with an include
+// list are skipped and counted.
+func parityLiteralCases(t *testing.T) (cases []parityCase, skipped int) {
 	t.Helper()
 	paths, err := filepath.Glob("*_test.go")
 	if err != nil {
@@ -207,7 +271,6 @@ func parityLiteralCases(t *testing.T) []parityCase {
 	}
 	known := configTopLevelKeys()
 	seen := make(map[string]bool)
-	var cases []parityCase
 	fset := token.NewFileSet()
 	for _, p := range paths {
 		if strings.HasPrefix(p, "parity") || p == "helpers_parity_test.go" {
@@ -223,7 +286,11 @@ func parityLiteralCases(t *testing.T) []parityCase {
 				return true
 			}
 			text, err := strconv.Unquote(lit.Value)
-			if err != nil || !isConfigShapedYAML(text, known) {
+			if err != nil {
+				return true
+			}
+			shaped, includes := configShapedYAML(text, known)
+			if !shaped {
 				return true
 			}
 			sum := sha256.Sum256([]byte(text))
@@ -232,6 +299,10 @@ func parityLiteralCases(t *testing.T) []parityCase {
 				return true
 			}
 			seen[id] = true
+			if includes {
+				skipped++
+				return true
+			}
 			cases = append(cases, parityCase{
 				id:    "literal/" + strings.TrimSuffix(p, "_test.go") + "/" + id,
 				files: map[string]string{"config.yaml": text},
@@ -239,20 +310,23 @@ func parityLiteralCases(t *testing.T) []parityCase {
 			return true
 		})
 	}
-	return cases
+	return cases, skipped
 }
 
-func isConfigShapedYAML(text string, known map[string]bool) bool {
+// configShapedYAML reports whether text is a YAML mapping with a Config key,
+// and whether it carries an include list (a fragment of a directory setup).
+func configShapedYAML(text string, known map[string]bool) (shaped, includes bool) {
 	var doc map[string]any
 	if err := yaml.Unmarshal([]byte(text), &doc); err != nil {
-		return false
+		return false, false
 	}
 	for k := range doc {
 		if known[k] {
-			return true
+			shaped = true
 		}
 	}
-	return false
+	_, includes = doc["include"]
+	return shaped, includes
 }
 
 // parityFixtureCases is every directory under test/fixtures/docker holding a

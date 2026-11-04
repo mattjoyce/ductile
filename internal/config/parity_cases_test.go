@@ -118,16 +118,29 @@ include:
 		{
 			id: "merge/lists-append-across-files",
 			files: map[string]string{
-				"config.yaml": parityRoot(`api:
+				"config.yaml": `service:
+  name: parity
+state:
+  path: ./state.db
+plugin_roots:
+  - ./plugins
+api:
   enabled: false
   allowed_origins: [https://a.example]
+remote_ingress:
+  listen_path: /relay
+  peers:
+    - {name: one, enabled: false, secret_ref: one}
 include:
   - more.yaml
-`),
+`,
 				"more.yaml": `plugin_roots:
   - ./more-plugins
 api:
   allowed_origins: [https://b.example]
+remote_ingress:
+  peers:
+    - {name: two, enabled: false, secret_ref: two}
 `,
 			},
 		},
