@@ -15,10 +15,48 @@ WORKER_GID=4181
 UNTRUSTED_UID=4182
 UNTRUSTED_GID=4182
 
+CASE1_ACCOUNTS=("$CASE1_SVC_USER:$CASE1_SVC_UID" "dcdefault:$WORKER_UID" "dcuntrusted:$UNTRUSTED_UID")
+
+# case1_refuse_collisions fails before anything is created when any account
+# name, group name, uid or gid this case would create already exists, so the
+# cleanup can never delete an account it did not make.
+case1_refuse_collisions() {
+  local entry name id
+  for entry in "${CASE1_ACCOUNTS[@]}"; do
+    name="${entry%%:*}"
+    id="${entry##*:}"
+    if getent passwd "$name" >/dev/null || getent group "$name" >/dev/null ||
+      getent passwd "$id" >/dev/null || getent group "$id" >/dev/null; then
+      fixture_fail "accounts-enforce: refusing to run — account or id $name/$id already exists on this host; this case creates and deletes it"
+    fi
+  done
+}
+
+# case1_make_user creates a group and a user and records each the moment it
+# exists, so an early failure still deletes exactly what this case made.
 case1_make_user() {
   local user="$1" id="$2"
-  getent group "$user" >/dev/null || groupadd -g "$id" "$user"
-  getent passwd "$user" >/dev/null || useradd -u "$id" -g "$id" -M -s /usr/sbin/nologin "$user"
+  groupadd -g "$id" "$user" || fixture_fail "accounts-enforce: groupadd $user failed"
+  CASE1_CREATED+=("group:$user")
+  useradd -u "$id" -g "$id" -M -s /usr/sbin/nologin "$user" || fixture_fail "accounts-enforce: useradd $user failed"
+  CASE1_CREATED+=("user:$user")
+}
+
+# case1_cleanup removes the work dir and, newest first, only the accounts and
+# groups this case recorded as created. run.sh's EXIT trap calls it.
+case1_cleanup() {
+  local i entry
+  if [[ -n "$CASE1_WORK" ]]; then
+    rm -rf "$CASE1_WORK"
+  fi
+  for ((i = ${#CASE1_CREATED[@]} - 1; i >= 0; i--)); do
+    entry="${CASE1_CREATED[$i]}"
+    case "$entry" in
+      user:*) userdel "${entry#user:}" 2>/dev/null || true ;;
+      group:*) groupdel "${entry#group:}" 2>/dev/null || true ;;
+    esac
+  done
+  CASE1_CREATED=()
 }
 
 case_accounts_enforce() {
@@ -38,14 +76,16 @@ case_accounts_enforce() {
     fi
   done
 
-  local work
+  case1_refuse_collisions
+  local work entry
   work="$(mktemp -d)"
+  CASE1_WORK="$work"
   work="$(cd "$work" && pwd -P)"
+  CASE1_WORK="$work"
   chmod 0755 "$work"
-  CASE1_CLEANUP="rm -rf '$work'; for u in dcdefault dcuntrusted $CASE1_SVC_USER; do userdel \"\$u\" 2>/dev/null || true; groupdel \"\$u\" 2>/dev/null || true; done"
-  case1_make_user "$CASE1_SVC_USER" "$CASE1_SVC_UID"
-  case1_make_user dcdefault "$WORKER_UID"
-  case1_make_user dcuntrusted "$UNTRUSTED_UID"
+  for entry in "${CASE1_ACCOUNTS[@]}"; do
+    case1_make_user "${entry%%:*}" "${entry##*:}"
+  done
 
   local cap_bin="$work/ductile-cap" wrapper="$work/ductile-svc"
   cp "$HOST_BIN" "$cap_bin"

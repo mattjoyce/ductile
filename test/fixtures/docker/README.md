@@ -30,8 +30,11 @@ Fixtures, each with its live-only property:
   edited after its lock exactly as boot does (#174). It is the baseline for
   the Ashlar loader cutover (card 153), and its config files are in the Go
   parity corpus. No-accounts and unconfined run natively (no-accounts needs a
-  non-root user); accounts + enforce needs Linux root; ro-mount needs Docker.
-  A case without its prerequisites prints SKIP, which is not a pass.
+  non-root user); accounts + enforce needs Linux root and refuses to run if
+  its accounts or ids already exist; ro-mount needs Docker. A case without its
+  prerequisites prints SKIP and the fixture exits 77, which the runner reports
+  as not passed; `CONFIG_SHAPES_CASES="no-accounts unconfined"` requests the
+  cases a host can run.
 - `privsep-artifact-ownership` — privileged CLI writes remain readable by the
   service account; both mismatched boot-gate combinations refuse; a genuinely
   non-root gateway carrying only `CAP_SETUID`/`CAP_SETGID` reaches enforce and

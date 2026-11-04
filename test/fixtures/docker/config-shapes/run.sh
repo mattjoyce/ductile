@@ -15,8 +15,10 @@
 #   ro-mount          case 4: Docker. Config bind-mounted :ro into the gateway;
 #                     the lock runs in a one-shot read-write container.
 #
-# A case whose prerequisites are missing prints SKIP; a skip is not a pass.
-# CONFIG_SHAPES_CASES="unconfined no-accounts" runs a subset.
+# A case whose prerequisites are missing prints SKIP; a skip is not a pass, so
+# the fixture exits 77 when any requested case skipped (the runner reports any
+# non-zero exit as not passed). CONFIG_SHAPES_CASES="unconfined no-accounts"
+# requests a subset, which passes when every requested case ran and passed.
 #
 # #174 (`config check` must agree with boot admission on integrity): the
 # unconfined case edits config.yaml after the lock and requires `config check`
@@ -43,8 +45,10 @@ API_TOKEN_VALUE="config-shapes-api-admin-token"
 PID=""
 CONTAINERS=()
 SOCKETS=()
-CASE1_CLEANUP=""
+CASE1_WORK=""
+CASE1_CREATED=()
 SKIPPED=()
+EXIT_SKIPPED=77
 SCENARIO_LOG="$ARTIFACT_DIR/scenario.log"
 exec > >(tee "$SCENARIO_LOG") 2>&1
 
@@ -60,9 +64,7 @@ cleanup() {
   for s in "${SOCKETS[@]+"${SOCKETS[@]}"}"; do
     rm -f "$s"
   done
-  if [[ -n "$CASE1_CLEANUP" ]]; then
-    eval "$CASE1_CLEANUP"
-  fi
+  case1_cleanup
 }
 trap cleanup EXIT
 
@@ -223,7 +225,7 @@ for name in $CASES; do
 done
 
 if [[ "${#SKIPPED[@]}" -gt 0 ]]; then
-  fixture_log "done with SKIPPED cases: ${SKIPPED[*]} — those shapes were NOT verified here"
-else
-  fixture_log "success — every config shape checked, locked, booted and reloaded"
+  fixture_log "NOT PASSED: skipped ${SKIPPED[*]} — those shapes were NOT verified (exit $EXIT_SKIPPED)"
+  exit "$EXIT_SKIPPED"
 fi
+fixture_log "success — every requested config shape checked, locked, booted and reloaded: $CASES"
