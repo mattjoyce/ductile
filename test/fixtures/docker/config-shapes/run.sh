@@ -218,7 +218,25 @@ for name in $CASES; do
   case "$name" in
     no-accounts) case_no_accounts ;;
     unconfined) case_unconfined ;;
-    accounts-enforce) case_accounts_enforce ;;
+    accounts-enforce)
+      # Case 1 needs root, and case 2 must not run as root, so when this run is
+      # not root but has passwordless sudo (GitHub runners, the Dell), case 1
+      # runs alone in a child under sudo; a laptop without it skips (exit 77).
+      if [[ "$(id -u)" -ne 0 ]] && sudo -n true 2>/dev/null; then
+        fixture_log "accounts-enforce: not root, running this case under sudo"
+        child_rc=0
+        CONFIG_SHAPES_CASES=accounts-enforce FIXTURE_NAME="${FIXTURE_NAME}-accounts-enforce" \
+          sudo -n --preserve-env=ROOT_DIR,FIXTURE_NAME,ARTIFACT_ROOT,CONFIG_SHAPES_CASES "$0" \
+          || child_rc=$?
+        case "$child_rc" in
+          0) fixture_log "accounts-enforce: passed under sudo" ;;
+          "$EXIT_SKIPPED") SKIPPED+=(accounts-enforce) ;;
+          *) fixture_fail "accounts-enforce failed under sudo (rc=$child_rc)" ;;
+        esac
+      else
+        case_accounts_enforce
+      fi
+      ;;
     ro-mount) case_ro_mount ;;
     *) fixture_fail "unknown case $name" ;;
   esac
