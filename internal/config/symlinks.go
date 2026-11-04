@@ -4,8 +4,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-
-	"github.com/mattjoyce/ashlar/yamlconfig"
 )
 
 // SymlinkWarning captures a detected symlink in a config-related path.
@@ -61,20 +59,20 @@ func CollectConfigPaths(configPath string, cfg *Config) ([]string, error) {
 
 // DetectSymlinks returns warnings for any paths that resolve through a symlink.
 //
-// Ashlar (yamlconfig.DetectSymlinks) does the resolution. Two consequences
-// callers can rely on: a path that does not exist is skipped rather than
-// failing the whole check (a symlink check on a missing file has nothing to
-// report; the loader reports the missing file itself), and each warning's
-// Path is the cleaned absolute form of the input. The result is never nil, so
-// a caller that renders it as JSON sees [] rather than null.
+// It checks each path exactly as given. This body stays ductile's own (card
+// 153 slice 2 fix round): yamlconfig.DetectSymlinks trims whitespace and
+// expands "~" first, so it can check a different file from the one ductile
+// opens and miss a symlink at the real path.
 func DetectSymlinks(paths []string) ([]SymlinkWarning, error) {
-	found, err := yamlconfig.DetectSymlinks(paths)
-	if err != nil {
-		return nil, fmt.Errorf("failed to resolve symlinks: %w", err)
-	}
-	warnings := make([]SymlinkWarning, 0, len(found))
-	for _, w := range found {
-		warnings = append(warnings, SymlinkWarning{Path: w.Path, Resolved: w.Resolved})
+	warnings := make([]SymlinkWarning, 0)
+	for _, path := range paths {
+		resolved, err := filepath.EvalSymlinks(path)
+		if err != nil {
+			return nil, fmt.Errorf("failed to resolve symlinks for %q: %w", path, err)
+		}
+		if filepath.Clean(resolved) != filepath.Clean(path) {
+			warnings = append(warnings, SymlinkWarning{Path: path, Resolved: resolved})
+		}
 	}
 	return warnings, nil
 }

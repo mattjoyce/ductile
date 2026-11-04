@@ -2267,20 +2267,22 @@ func TestExpandTildeForms(t *testing.T) {
 // TestExpandTildeRejectsUserForm pins card 153's decision: "~user" is refused
 // (it used to pass through untouched and be joined under the config dir).
 func TestExpandTildeRejectsUserForm(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
-	for _, in := range []string{"~user/x", "~otheruser", "~root/.ssh"} {
-		if got, err := expandTilde(in); err == nil {
-			t.Errorf("expandTilde(%q) = %q, want an error", in, got)
+	for _, home := range []string{t.TempDir(), ""} {
+		t.Setenv("HOME", home)
+		for _, in := range []string{"~user/x", "~otheruser", "~root/.ssh", "~1000/x", "~.hidden", "~_svc", "~-x"} {
+			if got, err := expandTilde(in); err == nil {
+				t.Errorf("HOME=%q: expandTilde(%q) = %q, want an error", home, in, got)
+			}
 		}
 	}
 }
 
 // TestExpandTildeWithoutHomeLeavesPathUntouched pins the fallback kept from
-// the old helper: with no resolvable home directory nothing is expanded and
-// nothing is refused.
+// the old helper: with no resolvable home directory "~" and "~/..." are not
+// expanded. The ~user refusal does not depend on HOME (see above).
 func TestExpandTildeWithoutHomeLeavesPathUntouched(t *testing.T) {
 	t.Setenv("HOME", "")
-	for _, in := range []string{"~", "~/x", "~user/x"} {
+	for _, in := range []string{"~", "~/x"} {
 		got, err := expandTilde(in)
 		if err != nil {
 			t.Errorf("expandTilde(%q) with no HOME: unexpected error %v", in, err)

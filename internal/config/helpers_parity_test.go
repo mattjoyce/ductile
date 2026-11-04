@@ -212,6 +212,7 @@ func TestExpandTildeParityWithLegacy(t *testing.T) {
 	inputs := []string{
 		"~", "~/", "~/x", "~/a/b/../c", "~//x", "~/./x",
 		"/abs/~/x", "relative/~", "", "./~", "x~", "/~", " ~/x",
+		`~\x`, "~/x ", "~ x", "~", "~~",
 	}
 	for _, in := range inputs {
 		want := legacyExpandTilde(in)
@@ -226,37 +227,42 @@ func TestExpandTildeParityWithLegacy(t *testing.T) {
 	}
 }
 
-// TestExpandTildeDeltas pins every input on which the Ashlar-backed helper and
-// the frozen oracle disagree. "~user" is card 153's recorded decision; the
-// other two are unrecorded side effects of yamlconfig.ExpandPath, pinned here
-// so a reviewer sees them and any further drift fails this test.
+// TestExpandTildeDeltas pins the one input class on which expandTilde and the
+// frozen oracle disagree: "~user" is refused (card 153 slice 2's approved
+// change), whether or not HOME resolves. Everything else, including the
+// Windows "~\" form, trailing whitespace and a non-clean HOME, matches the old
+// helper exactly (the fix round removed yamlconfig.ExpandPath's trimming,
+// cleaning and "~\" expansion).
 func TestExpandTildeDeltas(t *testing.T) {
+	for _, home := range []string{t.TempDir(), ""} {
+		t.Setenv("HOME", home)
+		if legacy := legacyExpandTilde("~user/x"); legacy != "~user/x" {
+			t.Fatalf("oracle changed: legacyExpandTilde(~user/x) = %q", legacy)
+		}
+		_, err := expandTilde("~user/x")
+		if err == nil {
+			t.Fatalf(`HOME=%q: expandTilde("~user/x") succeeded; the card decided to refuse it`, home)
+		}
+		if !strings.Contains(err.Error(), `"~user/x"`) {
+			t.Errorf("HOME=%q: error %q does not quote the operator's path", home, err)
+		}
+	}
+
 	home := t.TempDir()
 	t.Setenv("HOME", home)
-
-	// Decision (card 153 slice 2): "~user" is refused instead of passed through.
-	if legacy := legacyExpandTilde("~user/x"); legacy != "~user/x" {
-		t.Fatalf("oracle changed: legacyExpandTilde(~user/x) = %q", legacy)
-	}
-	if _, err := expandTilde("~user/x"); err == nil {
-		t.Error(`expandTilde("~user/x") succeeded; the card decided to refuse it`)
-	}
-
-	// Unrecorded: ExpandPath accepts the Windows separator form "~\" on every
-	// OS and expands it; the old helper left it untouched.
-	if legacy := legacyExpandTilde(`~\x`); legacy != `~\x` {
-		t.Fatalf(`oracle changed: legacyExpandTilde(~\x) = %q`, legacy)
-	}
-	if got, err := expandTilde(`~\x`); err != nil || got != filepath.Join(home, "x") {
-		t.Errorf(`expandTilde("~\x") = %q, %v; want %q`, got, err, filepath.Join(home, "x"))
+	for in, want := range map[string]string{
+		`~\x`:  `~\x`,
+		"~/x ": filepath.Join(home, "x "),
+		"~ x":  "~ x",
+	} {
+		if got, err := expandTilde(in); err != nil || got != want {
+			t.Errorf("expandTilde(%q) = %q, %v; want %q, the old helper's answer", in, got, err, want)
+		}
 	}
 
-	// Unrecorded: ExpandPath trims surrounding whitespace from a "~" path.
-	if legacy := legacyExpandTilde("~/x "); legacy != filepath.Join(home, "x ") {
-		t.Fatalf("oracle changed: legacyExpandTilde(~/x ) = %q", legacy)
-	}
-	if got, err := expandTilde("~/x "); err != nil || got != filepath.Join(home, "x") {
-		t.Errorf(`expandTilde("~/x ") = %q, %v; want %q`, got, err, filepath.Join(home, "x"))
+	t.Setenv("HOME", home+"/")
+	if got, err := expandTilde("~"); err != nil || got != home+"/" {
+		t.Errorf(`expandTilde("~") with HOME=%q = %q, %v; want HOME verbatim`, home+"/", got, err)
 	}
 }
 
@@ -313,31 +319,18 @@ func TestDetectSymlinksParityWithLegacy(t *testing.T) {
 	}
 }
 
-// TestDetectSymlinksSkipsMissingPath pins card 153's decision: a missing path
-// is skipped (the old helper failed the whole check), while the remaining
-// paths are still checked.
-func TestDetectSymlinksSkipsMissingPath(t *testing.T) {
+// TestDetectSymlinksMissingPathFails pins that DetectSymlinks kept ductile's
+// body: a missing path fails the check, as it always did. The card's
+// "skip a missing path" delta came with yamlconfig.DetectSymlinks, which the
+// fix round dropped because it normalises the path before checking it.
+func TestDetectSymlinksMissingPathFails(t *testing.T) {
 	t.Parallel()
-	dir := t.TempDir()
-	missing := filepath.Join(dir, "absent.yaml")
+	missing := filepath.Join(t.TempDir(), "absent.yaml")
 	if _, err := legacyDetectSymlinks([]string{missing}); err == nil {
 		t.Fatal("oracle changed: legacy DetectSymlinks accepted a missing path")
 	}
-
-	realFile := filepath.Join(dir, "real.yaml")
-	if err := os.WriteFile(realFile, []byte("x: 1\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	link := filepath.Join(dir, "link.yaml")
-	if err := os.Symlink(realFile, link); err != nil {
-		t.Fatal(err)
-	}
-	got, err := DetectSymlinks([]string{missing, link})
-	if err != nil {
-		t.Fatalf("DetectSymlinks with a missing path: %v", err)
-	}
-	if len(got) != 1 || got[0].Path != link {
-		t.Fatalf("DetectSymlinks = %v; want exactly one warning for %s", got, link)
+	if got, err := DetectSymlinks([]string{missing}); err == nil {
+		t.Fatalf("DetectSymlinks accepted a missing path: %v", got)
 	}
 }
 

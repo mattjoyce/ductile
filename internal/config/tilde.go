@@ -3,34 +3,49 @@ package config
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
-
-	"github.com/mattjoyce/ashlar/yamlconfig"
 )
 
 // expandTilde expands a leading "~/" (or a bare "~") to the user's home
-// directory through Ashlar (yamlconfig.ExpandPath). A path that does not start
-// with "~" is returned untouched, so relative paths keep their later
-// config-dir-relative join.
+// directory. Any other path is returned exactly as written, so relative paths
+// keep their later config-dir-relative join. When the home directory cannot be
+// determined "~" and "~/..." are returned unchanged, leaving the
+// pre-expansion behaviour (config-dir-relative join) as the fallback.
 //
-// The "~user" form is refused with an error: half-supporting it would be worse
-// than refusing it, and leaving it untouched used to create a directory named
-// "~user" under the config dir. When the home directory cannot be determined
-// the path is returned unchanged, keeping the pre-expansion behaviour
-// (config-dir-relative join) as the fallback; a "~user" path then goes through
-// unchanged too, because no expansion is attempted.
+// The "~user" form ("~" followed by a POSIX portable username character) is
+// refused, whether or not a home directory resolves: half-supporting it would
+// be worse than refusing it, and passing it through created a directory named
+// "~user" under the config dir (card 153 slice 2, the one approved change).
+//
+// This body stays ductile's own: yamlconfig.ExpandPath also trims whitespace,
+// cleans the result and expands the Windows "~\" form, none of which ductile
+// did (card 153 slice 2 fix round).
 func expandTilde(path string) (string, error) {
-	if !strings.HasPrefix(path, "~") {
+	if isTildeUserForm(path) {
+		return "", fmt.Errorf("unsupported ~user home-directory form in path %q; use ~/ or an absolute path", path)
+	}
+	if path != "~" && !strings.HasPrefix(path, "~/") {
 		return path, nil
 	}
-	if home, err := os.UserHomeDir(); err != nil || home == "" {
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" {
 		return path, nil
 	}
-	expanded, err := yamlconfig.ExpandPath(path)
-	if err != nil {
-		return "", err
+	if path == "~" {
+		return home, nil
 	}
-	return expanded, nil
+	return filepath.Join(home, path[2:]), nil
+}
+
+// isTildeUserForm reports whether path starts with "~" followed by a character
+// from the POSIX portable username set [A-Za-z0-9._-].
+func isTildeUserForm(path string) bool {
+	if len(path) < 2 || path[0] != '~' {
+		return false
+	}
+	c := path[1]
+	return c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || c == '.' || c == '_' || c == '-'
 }
 
 // expandTildeField expands one path field in place, naming the field in any
