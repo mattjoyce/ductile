@@ -58,6 +58,11 @@ func CollectConfigPaths(configPath string, cfg *Config) ([]string, error) {
 }
 
 // DetectSymlinks returns warnings for any paths that resolve through a symlink.
+//
+// It checks each path exactly as given. This body stays ductile's own (card
+// 153 slice 2 fix round): yamlconfig.DetectSymlinks trims whitespace and
+// expands "~" first, so it can check a different file from the one ductile
+// opens and miss a symlink at the real path.
 func DetectSymlinks(paths []string) ([]SymlinkWarning, error) {
 	warnings := make([]SymlinkWarning, 0)
 	for _, path := range paths {

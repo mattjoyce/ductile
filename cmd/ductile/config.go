@@ -18,7 +18,7 @@ import (
 	"github.com/mattjoyce/ductile/internal/fsown"
 	"github.com/mattjoyce/ductile/internal/state"
 	"github.com/mattjoyce/ductile/internal/storage"
-	"gopkg.in/yaml.v3"
+	"go.yaml.in/yaml/v3"
 )
 
 // loadStopwatchSnapshot opens the state DB read-only-ish (storage opens

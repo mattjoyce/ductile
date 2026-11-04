@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 	"time"
 
@@ -2200,7 +2201,6 @@ state:
 plugin_roots:
   - ~/ductile-tilde-test/plugins
   - ./plugins
-  - ~otheruser/plugins
 secrets:
   age_key_file: ~/ductile-tilde-test/age.key
   vault_file: ~/ductile-tilde-test/vault.age
@@ -2225,9 +2225,6 @@ environment_vars:
 	if got := loaded.PluginRoots[0]; got != filepath.Join(tilde, "plugins") {
 		t.Errorf("plugin_roots[0]: got %q", got)
 	}
-	if got := loaded.PluginRoots[2]; got != "~otheruser/plugins" {
-		t.Errorf("~user form must stay untouched, got %q", got)
-	}
 	if got := loaded.Secrets.AgeKeyFile; got != filepath.Join(tilde, "age.key") {
 		t.Errorf("age_key_file: got %q", got)
 	}
@@ -2251,14 +2248,101 @@ func TestExpandTildeForms(t *testing.T) {
 	cases := map[string]string{
 		"~":          home,
 		"~/x":        filepath.Join(home, "x"),
-		"~user/x":    "~user/x",
 		"/abs/~/x":   "/abs/~/x",
 		"relative/~": "relative/~",
 		"":           "",
 	}
 	for in, want := range cases {
-		if got := expandTilde(in); got != want {
+		got, err := expandTilde(in)
+		if err != nil {
+			t.Errorf("expandTilde(%q): unexpected error %v", in, err)
+			continue
+		}
+		if got != want {
 			t.Errorf("expandTilde(%q): want %q, got %q", in, want, got)
 		}
+	}
+}
+
+// TestExpandTildeRejectsUserForm pins card 153's decision: "~user" is refused
+// (it used to pass through untouched and be joined under the config dir).
+func TestExpandTildeRejectsUserForm(t *testing.T) {
+	for _, home := range []string{t.TempDir(), ""} {
+		t.Setenv("HOME", home)
+		for _, in := range []string{"~user/x", "~otheruser", "~root/.ssh", "~1000/x", "~.hidden", "~_svc", "~-x"} {
+			if got, err := expandTilde(in); err == nil {
+				t.Errorf("HOME=%q: expandTilde(%q) = %q, want an error", home, in, got)
+			}
+		}
+	}
+}
+
+// TestExpandTildeWithoutHomeLeavesPathUntouched pins the fallback kept from
+// the old helper: with no resolvable home directory "~" and "~/..." are not
+// expanded. The ~user refusal does not depend on HOME (see above).
+func TestExpandTildeWithoutHomeLeavesPathUntouched(t *testing.T) {
+	t.Setenv("HOME", "")
+	for _, in := range []string{"~", "~/x"} {
+		got, err := expandTilde(in)
+		if err != nil {
+			t.Errorf("expandTilde(%q) with no HOME: unexpected error %v", in, err)
+			continue
+		}
+		if got != in {
+			t.Errorf("expandTilde(%q) with no HOME = %q, want it untouched", in, got)
+		}
+	}
+}
+
+// TestLoadRejectsTildeUserFormNamingField proves the rejection reaches the
+// operator with the offending field named, for a scalar, a list element, the
+// pre-merge age key expansion, and an env include.
+func TestLoadRejectsTildeUserFormNamingField(t *testing.T) {
+	cases := []struct {
+		name      string
+		yaml      string
+		wantField string
+	}{
+		{
+			name:      "plugin_roots element",
+			yaml:      "plugin_roots:\n  - ./plugins\n  - ~otheruser/plugins\n",
+			wantField: "plugin_roots[1]",
+		},
+		{
+			name:      "state.path",
+			yaml:      "state:\n  path: ~otheruser/state.db\nplugin_roots:\n  - ./plugins\n",
+			wantField: "state.path",
+		},
+		{
+			name:      "secrets.age_key_file",
+			yaml:      "secrets:\n  age_key_file: ~otheruser/age.key\nplugin_roots:\n  - ./plugins\n",
+			wantField: "secrets.age_key_file",
+		},
+		{
+			name:      "environment_vars.include",
+			yaml:      "environment_vars:\n  include:\n    - ~otheruser/.env\nplugin_roots:\n  - ./plugins\n",
+			wantField: "environment_vars.include[0]",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("HOME", t.TempDir())
+			t.Setenv(ageKeyEnvVar, "")
+			dir := t.TempDir()
+			body := "service:\n  name: test\napi:\n  enabled: false\n" + tc.yaml
+			if err := os.WriteFile(filepath.Join(dir, "config.yaml"), []byte(body), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			_, err := LoadLenient(filepath.Join(dir, "config.yaml"))
+			if err == nil {
+				t.Fatalf("LoadLenient accepted a ~user path in %s", tc.wantField)
+			}
+			if !strings.Contains(err.Error(), tc.wantField) {
+				t.Fatalf("error %q does not name field %q", err.Error(), tc.wantField)
+			}
+			if !strings.Contains(err.Error(), "~otheruser") {
+				t.Fatalf("error %q does not quote the operator's path", err.Error())
+			}
+		})
 	}
 }

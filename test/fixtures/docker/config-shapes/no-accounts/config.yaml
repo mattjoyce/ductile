@@ -1,0 +1,20 @@
+# config-shapes case 2: no accounts map and no override (the Mac, and the
+# `USER ductile` container). A non-root gateway with no uid-drop capability
+# boots UNCONFINED and says so (cmd/ductile/runtime.go, posture log line).
+service:
+  name: config-shapes-no-accounts
+  tick_interval: 1s
+  admission:
+    verify_integrity_on_boot: true
+    fail_on_drift: false
+    validate_config_on_boot: true
+state:
+  path: "./state/ductile.db"
+plugin_roots:
+  - "./plugins"
+secrets:
+  age_key_file: "age.key"
+  vault_file: "vault.age"
+include:
+  - api.yaml
+  - plugins.yaml

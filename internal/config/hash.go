@@ -11,7 +11,7 @@ import (
 	"sort"
 	"time"
 
-	"gopkg.in/yaml.v3"
+	"go.yaml.in/yaml/v3"
 )
 
 // ErrChecksumsLegacy marks a .checksums manifest written by an older ductile
@@ -35,6 +35,12 @@ type HashUpdateReport struct {
 }
 
 // ComputeFileHash returns the SHA-256 of a file as "sha256:<hex>".
+//
+// It reads filePath exactly as given. The bytes hashed must be the bytes at
+// the path ductile will open or exec: yamlconfig.ComputeFileHash trims
+// whitespace and expands "~" first, so "run.sh " would be fingerprinted as
+// "run.sh" while "run.sh " runs (card 153 slice 2 fix round). That is why this
+// body stays ductile's own.
 func ComputeFileHash(filePath string) (string, error) {
 	// #nosec G304 -- config paths are operator-controlled local inputs.
 	data, err := os.ReadFile(filePath)
@@ -51,7 +57,8 @@ func ComputeFileHash(filePath string) (string, error) {
 // fingerprint unforgeable without the key: an attacker who cannot read the
 // vault cannot produce a matching .checksums entry (closes ADR Threat B for a
 // non-key-holder). The key MUST be exactly 32 bytes; a wrong-length key is a
-// hard error rather than a silent fall-through to an unkeyed digest.
+// hard error rather than a silent fall-through to an unkeyed digest. Like
+// ComputeFileHash it reads filePath exactly as given.
 func ComputeKeyedFileHash(filePath string, key []byte) (string, error) {
 	if len(key) != 32 {
 		return "", fmt.Errorf("keyed hash: key must be 32 bytes, got %d", len(key))

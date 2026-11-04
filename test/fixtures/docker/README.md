@@ -23,6 +23,18 @@ Fixtures, each with its live-only property:
 - `plugin-crash-leaves-deterministic-state` — a plugin subprocess dies by
   uncatchable SIGKILL mid-job: the job lands terminal `failed`, the daemon
   keeps serving AND dispatching, no non-terminal queue rows remain.
+- `config-shapes` — the three privsep posture shapes (accounts + enforce; no
+  accounts and no override; `service.unconfined: true`) and the ro-mount
+  (Unraid) shape each pass `config check`, `config lock`, `system start` to
+  `/healthz` and one `/system/reload`, and `config check` refuses a tree
+  edited after its lock exactly as boot does (#174). It is the baseline for
+  the Ashlar loader cutover (card 153), and its config files are in the Go
+  parity corpus. No-accounts and unconfined run natively (no-accounts needs a
+  non-root user); accounts + enforce needs Linux root and refuses to run if
+  its accounts or ids already exist; ro-mount needs Docker. A case without its
+  prerequisites prints SKIP and the fixture exits 77, which the runner reports
+  as not passed; `CONFIG_SHAPES_CASES="no-accounts unconfined"` requests the
+  cases a host can run.
 - `privsep-artifact-ownership` — privileged CLI writes remain readable by the
   service account; both mismatched boot-gate combinations refuse; a genuinely
   non-root gateway carrying only `CAP_SETUID`/`CAP_SETGID` reaches enforce and
@@ -37,7 +49,8 @@ Fixtures, each with its live-only property:
   enqueued, invalid → 403.
 
 Conventions: short `/tmp/...` unix-socket paths (sun_path limit); unique
-listen ports per fixture (18081/18181/18381/18471/18561/18681);
+listen ports per fixture (18081/18181/18381/18471/18561/18681, and
+18781-18784 for the config-shapes cases);
 `service.unconfined: true` unless the fixture tests privsep (#86) — root-run
 hosts refuse to boot otherwise; bootstrap configs must not reference a
 `secret_ref` that has not been minted yet.
