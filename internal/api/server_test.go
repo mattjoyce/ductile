@@ -151,3 +151,37 @@ func TestBindFailsFastOnOccupiedPort(t *testing.T) {
 		t.Fatalf("WaitServeStopped after failed Bind must return immediately, got %v", err)
 	}
 }
+
+// TestCORSMiddlewareWildcard verifies that when AllowedOrigins contains "*",
+// arbitrary origins are permitted, but Access-Control-Allow-Credentials is NOT set.
+func TestCORSMiddlewareWildcard(t *testing.T) {
+	handler := corsMiddleware([]string{"https://exact.example", "*"})(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	// Case 1: Exact match should still get credentials.
+	reqExact := httptest.NewRequest(http.MethodGet, "/jobs", nil)
+	reqExact.Header.Set("Origin", "https://exact.example")
+	respExact := httptest.NewRecorder()
+	handler.ServeHTTP(respExact, reqExact)
+
+	if got := respExact.Header().Get("Access-Control-Allow-Origin"); got != "https://exact.example" {
+		t.Errorf("exact match Access-Control-Allow-Origin = %q, want %q", got, "https://exact.example")
+	}
+	if got := respExact.Header().Get("Access-Control-Allow-Credentials"); got != "true" {
+		t.Errorf("exact match Access-Control-Allow-Credentials = %q, want %q", got, "true")
+	}
+
+	// Case 2: Wildcard match should be allowed but NOT get credentials.
+	reqWildcard := httptest.NewRequest(http.MethodGet, "/jobs", nil)
+	reqWildcard.Header.Set("Origin", "https://wildcard.example")
+	respWildcard := httptest.NewRecorder()
+	handler.ServeHTTP(respWildcard, reqWildcard)
+
+	if got := respWildcard.Header().Get("Access-Control-Allow-Origin"); got != "*" {
+		t.Errorf("wildcard match Access-Control-Allow-Origin = %q, want %q", got, "*")
+	}
+	if got := respWildcard.Header().Get("Access-Control-Allow-Credentials"); got != "" {
+		t.Errorf("wildcard match Access-Control-Allow-Credentials = %q, want empty", got)
+	}
+}
