@@ -371,6 +371,7 @@ func (s *Server) mountVaultRoutes(r chi.Router) {
 // corsMiddleware returns a middleware that sets CORS headers for requests whose
 // Origin matches an entry in allowedOrigins. Credentialed headers are only sent
 // for listed origins; an empty list disables cross-origin credential sharing.
+// If the wildcard '*' is allowed, credential headers are omitted per CORS specs.
 func corsMiddleware(allowedOrigins []string) func(http.Handler) http.Handler {
 	const (
 		allowedMethods = "GET, POST, PUT, DELETE, OPTIONS"
@@ -380,8 +381,11 @@ func corsMiddleware(allowedOrigins []string) func(http.Handler) http.Handler {
 	)
 
 	allowed := make(map[string]struct{}, len(allowedOrigins))
+	var allowWildcard bool
 	for _, o := range allowedOrigins {
-		if o != "" {
+		if o == "*" {
+			allowWildcard = true
+		} else if o != "" {
 			allowed[o] = struct{}{}
 		}
 	}
@@ -394,16 +398,23 @@ func corsMiddleware(allowedOrigins []string) func(http.Handler) http.Handler {
 				return
 			}
 
-			if _, ok := allowed[origin]; !ok {
+			_, exactMatch := allowed[origin]
+			if !exactMatch && !allowWildcard {
 				next.ServeHTTP(w, r)
 				return
 			}
 
 			h := w.Header()
 			h.Add("Vary", "Origin")
-			h.Set("Access-Control-Allow-Origin", origin)
-			h.Set("Access-Control-Allow-Credentials", "true")
 			h.Set("Access-Control-Expose-Headers", exposedHeaders)
+
+			if exactMatch {
+				h.Set("Access-Control-Allow-Origin", origin)
+				h.Set("Access-Control-Allow-Credentials", "true")
+			} else {
+				h.Set("Access-Control-Allow-Origin", "*")
+				// Do not set Access-Control-Allow-Credentials for wildcard
+			}
 
 			if r.Method == http.MethodOptions && r.Header.Get("Access-Control-Request-Method") != "" {
 				h.Add("Vary", "Access-Control-Request-Method")
