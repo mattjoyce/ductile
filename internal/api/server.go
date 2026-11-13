@@ -380,8 +380,11 @@ func corsMiddleware(allowedOrigins []string) func(http.Handler) http.Handler {
 	)
 
 	allowed := make(map[string]struct{}, len(allowedOrigins))
+	var hasWildcard bool
 	for _, o := range allowedOrigins {
-		if o != "" {
+		if o == "*" {
+			hasWildcard = true
+		} else if o != "" {
 			allowed[o] = struct{}{}
 		}
 	}
@@ -394,15 +397,26 @@ func corsMiddleware(allowedOrigins []string) func(http.Handler) http.Handler {
 				return
 			}
 
-			if _, ok := allowed[origin]; !ok {
+			var allowOrigin string
+			var allowCredentials bool
+
+			if _, ok := allowed[origin]; ok {
+				allowOrigin = origin
+				allowCredentials = true
+			} else if hasWildcard {
+				allowOrigin = "*"
+				allowCredentials = false
+			} else {
 				next.ServeHTTP(w, r)
 				return
 			}
 
 			h := w.Header()
 			h.Add("Vary", "Origin")
-			h.Set("Access-Control-Allow-Origin", origin)
-			h.Set("Access-Control-Allow-Credentials", "true")
+			h.Set("Access-Control-Allow-Origin", allowOrigin)
+			if allowCredentials {
+				h.Set("Access-Control-Allow-Credentials", "true")
+			}
 			h.Set("Access-Control-Expose-Headers", exposedHeaders)
 
 			if r.Method == http.MethodOptions && r.Header.Get("Access-Control-Request-Method") != "" {

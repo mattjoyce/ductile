@@ -151,3 +151,53 @@ func TestBindFailsFastOnOccupiedPort(t *testing.T) {
 		t.Fatalf("WaitServeStopped after failed Bind must return immediately, got %v", err)
 	}
 }
+
+// TestCORSMiddlewareWildcard verifies that a wildcard match returns Access-Control-Allow-Origin: * without Access-Control-Allow-Credentials
+func TestCORSMiddlewareWildcard(t *testing.T) {
+	called := false
+	handler := corsMiddleware([]string{"*"})((http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		called = true
+		w.WriteHeader(http.StatusOK)
+	})))
+
+	req := httptest.NewRequest(http.MethodGet, "/jobs", nil)
+	req.Header.Set("Origin", "https://any.example")
+	resp := httptest.NewRecorder()
+
+	handler.ServeHTTP(resp, req)
+
+	if !called {
+		t.Fatal("wildcard allowed origin should pass through to next handler")
+	}
+	if got := resp.Header().Get("Access-Control-Allow-Origin"); got != "*" {
+		t.Fatalf("Access-Control-Allow-Origin = %q, want * for wildcard match", got)
+	}
+	if got := resp.Header().Get("Access-Control-Allow-Credentials"); got != "" {
+		t.Fatalf("Access-Control-Allow-Credentials = %q, want empty for wildcard match", got)
+	}
+}
+
+// TestCORSMiddlewareWildcardAndExactMatch verifies if both * and an exact origin are allowed, the exact match still receives credentials.
+func TestCORSMiddlewareWildcardAndExactMatch(t *testing.T) {
+	called := false
+	handler := corsMiddleware([]string{"*", "https://exact.example"})((http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		called = true
+		w.WriteHeader(http.StatusOK)
+	})))
+
+	req := httptest.NewRequest(http.MethodGet, "/jobs", nil)
+	req.Header.Set("Origin", "https://exact.example")
+	resp := httptest.NewRecorder()
+
+	handler.ServeHTTP(resp, req)
+
+	if !called {
+		t.Fatal("exact match should pass through to next handler")
+	}
+	if got := resp.Header().Get("Access-Control-Allow-Origin"); got != "https://exact.example" {
+		t.Fatalf("Access-Control-Allow-Origin = %q, want https://exact.example for exact match", got)
+	}
+	if got := resp.Header().Get("Access-Control-Allow-Credentials"); got != "true" {
+		t.Fatalf("Access-Control-Allow-Credentials = %q, want true for exact match", got)
+	}
+}
