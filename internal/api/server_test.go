@@ -123,6 +123,40 @@ func TestCORSMiddlewareEmptyAllowList(t *testing.T) {
 	}
 }
 
+func TestCORSMiddlewareWildcard(t *testing.T) {
+	handler := corsMiddleware([]string{"https://exact.example", "*"})
+
+	// Test exact match (should have credentials)
+	t.Run("exact match", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/jobs", nil)
+		req.Header.Set("Origin", "https://exact.example")
+		resp := httptest.NewRecorder()
+
+		handler(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.WriteHeader(http.StatusOK)
+		})).ServeHTTP(resp, req)
+
+		assertHeader(t, resp, "Access-Control-Allow-Origin", "https://exact.example")
+		assertHeader(t, resp, "Access-Control-Allow-Credentials", "true")
+	})
+
+	// Test wildcard match (should NOT have credentials)
+	t.Run("wildcard match", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/jobs", nil)
+		req.Header.Set("Origin", "https://other.example")
+		resp := httptest.NewRecorder()
+
+		handler(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.WriteHeader(http.StatusOK)
+		})).ServeHTTP(resp, req)
+
+		assertHeader(t, resp, "Access-Control-Allow-Origin", "*")
+		if got := resp.Header().Get("Access-Control-Allow-Credentials"); got != "" {
+			t.Fatalf("Access-Control-Allow-Credentials = %q, want empty for wildcard match", got)
+		}
+	})
+}
+
 func assertHeader(t *testing.T, resp *httptest.ResponseRecorder, key, want string) {
 	t.Helper()
 	if got := resp.Header().Get(key); got != want {
